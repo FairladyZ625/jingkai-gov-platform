@@ -1,0 +1,36 @@
+# 与原型 config/accounts.js 的授权矩阵一致。
+apps: [policy, enterprise, meeting, document, kb, skills, computer]
+roles:
+  admin:
+    name: 管理员
+    desc: 管理账号、角色授权、模型接入与留痕
+    mask: false
+    grants:
+      "*": [view, operate, approve, admin]
+  leader:
+    name: 审签领导
+    desc: 使用应用并处理审签、入库确认及技能审核
+    mask: false
+    grants:
+      "*": [view, operate, approve]
+  member:
+    name: 经办人员
+    desc: 办理业务、使用资料库并创建和共享技能
+    mask: false
+    grants:
+      policy: [view, operate]
+      enterprise: [view, operate]
+      meeting: [view, operate]
+      document: [view, operate]
+      kb: [view, operate]
+      skills: [view, operate]
+      computer: [view, operate]
+  partner:
+    name: 外部协作者
+    desc: 查看获授权的应用及脱敏资料，并可使用技能中心
+    mask: true
+    grants:
+      policy: [view]
+      enterprise: [view]
+      kb: [view]
+      skills: [view, operate]
