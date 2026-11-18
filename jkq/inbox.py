@@ -1,6 +1,8 @@
 """收件箱按当前用户聚合。实例入口通过 jkq.routers.ROUTERS 注册 router。"""
 from contextlib import asynccontextmanager
 import json
+import time
+import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -14,6 +16,9 @@ from haiknow_sdk import DataError
 from . import feed
 from .admin import usage
 from .reviews_api import list_pending, STATUSES
+
+FEED_MAX_LIMIT = 200
+FEED_MAX_OFFSET = 2 ** 31 - 1
 
 
 class TodoPatch(BaseModel):
@@ -65,12 +70,34 @@ def completed_reviews(service, user):
         yield {**review_item(review), 'at': feed.local_time(json.loads(decision)['createdAt'])}
 
 
+def actionable_reviews(service, user):
+    # 与 core 的「待我确认」口径一致：有 approve、非本人提交、未指派他人。
+    for review in list_pending(service, user)['items']:
+        if ('approve' not in service.rbac.actions(user, review['appId'])
+                or review['submitter'] == user.id or review.get('assignee') not in (None, user.id)):
+            continue
+        record = service._record(service.store._db, user, review['appId'], review['recordId'], review['version'])
+        if record.get('submitter') == user.id:
+            continue
+        yield review
+
+
+def add_todo(db, owner, app, title, sender, *, ref=None, at=None, ident=None):
+    """业务模块在自己的事务里给某人派待办（#34 诉求闭环等生产方使用）。"""
+    ensure_tables(db)
+    ident = ident or uuid.uuid4().hex
+    db.execute('insert into jkq_todos(id, owner, app, title, sender, at, ref) values (?,?,?,?,?,?,?)',
+               (ident, owner, app, title, sender, time.time() if at is None else at,
+                json.dumps(ref or {}, ensure_ascii=False)))
+    return ident
+
+
 def inbox_page(service, user, box):
     boxes = {'review': [], 'todo': [], 'done': []}
     with service.store._lock:
         for item in todos_for(service.store._db, user.id):
             boxes['done' if item['done'] else 'todo'].append(item)
-        boxes['review'].extend(review_item(r) for r in list_pending(service, user)['items'])
+        boxes['review'].extend(review_item(r) for r in actionable_reviews(service, user))
         boxes['done'].extend(completed_reviews(service, user))
         for note in service.list_notifications(user)['items'] + service.list_messages(user)['items']:
             done = note['acknowledged'] if note.get('requiresAcknowledgement') else note['read']
@@ -86,18 +113,20 @@ def inbox_page(service, user, box):
     return {'items': items, 'total': len(items), 'counts': counts}
 
 
+def ensure_tables(db):
+    db.execute("""create table if not exists jkq_todos (
+        id text primary key, owner text not null, app text not null, title text not null,
+        sender text not null, at real not null, ref text not null default '{}',
+        done integer not null default 0 check(done in (0,1)))""")
+    db.execute('create index if not exists jkq_todos_owner on jkq_todos(owner, at)')
+    feed.ensure_table(db)
+
+
 @asynccontextmanager
 async def init_tables(app):
     store = app.state.platform.store
     with store._lock, store._db:
-        store._db.execute("""create table if not exists jkq_todos (
-            id text primary key, owner text not null, app text not null, title text not null,
-            sender text not null, at real not null, ref text not null default '{}',
-            done integer not null default 0 check(done in (0,1)))""")
-        store._db.execute('create index if not exists jkq_todos_owner on jkq_todos(owner, at)')
-
-        store._db.execute("""create table if not exists jkq_feed (
-            id text primary key, project text not null, title text not null, at real not null)""")
+        ensure_tables(store._db)
     yield
 
 
@@ -137,7 +166,8 @@ def inbox(request: Request, box: str = 'review', user=Depends(current_user)):
 
 
 @router.get('/api/v1/feed')
-def team_feed(request: Request, limit: int = Query(50, ge=1), offset: int = Query(0, ge=0),
+def team_feed(request: Request, limit: int = Query(50, ge=1, le=FEED_MAX_LIMIT),
+              offset: int = Query(0, ge=0, le=FEED_MAX_OFFSET),
               user=Depends(current_user)):
     store = request.app.state.platform.store
     with store._lock:

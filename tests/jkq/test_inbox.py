@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from jkq.admin.usage import usage_page
-from jkq.feed import feed_page
+from jkq.feed import feed_page, publish
+from jkq.inbox import add_todo
 
 
 def test_gateway_attempts():
@@ -50,16 +51,38 @@ def client(request, monkeypatch):
     (config / 'projects.yaml').write_bytes(seed.read_bytes())
     users = config / 'users.yaml'
     users.write_text(users.read_text().replace('sample-project', 'jkq'))
+    roles = config / 'roles.yaml'
+    spec = json.loads(roles.read_text())
+    for ident, role in spec['roles'].items():
+        role.setdefault('name', ident)
+    roles.write_text(json.dumps(spec))
     request.getfixturevalue('cheap_password_hash')
     monkeypatch.setenv('HAIKNOW_SECRET', 'test-session-signing')
+    # #12 之后实例禁止卫华演示登录：先用 core 把隔离账号写进身份库，再关掉演示登录启动实例，
+    # 用请求头切换会话，账号、项目与权限仍来自身份库。
+    from haiknow_core.main import create_app as core_app
+    with TestClient(core_app()):
+        pass
+    monkeypatch.setenv('HAIKNOW_DEMO_LOGIN', '0')
     if router not in routers.ROUTERS:
         monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, router))
-    with TestClient(create_app()) as client:
+    from fastapi import HTTPException, Request
+    from haiknow_core.main import current_user
+
+    def header_user(request: Request):
+        user = request.app.state.platform.directory.user(request.headers.get('x-test-user', ''))
+        if user is None:
+            raise HTTPException(401, '未登录')
+        return user
+
+    app = create_app()
+    app.dependency_overrides[current_user] = header_user
+    with TestClient(app) as client:
         yield client
 
 
 def login(client, user):
-    assert client.post('/api/auth/login', json={'user_id': user}).status_code == 200
+    client.headers['x-test-user'] = user
 
 
 def test_inbox_transitions_and_ownership(client):
@@ -81,9 +104,8 @@ def test_inbox_transitions_and_ownership(client):
     login(client, 'samplereviewer')
     store = client.app.state.platform.store
     with store._db as db:
-        db.executemany('insert into jkq_todos(id,owner,app,title,sender,at) values (?,?,?,?,?,?)', [
-            ('mine', 'samplereviewer', 'meeting', '核对纪要', 'u', 5),
-            ('other', 'sampleoperator', 'meeting', '确认记录', 'u', 5)])
+        add_todo(db, 'samplereviewer', 'meeting', '核对纪要', 'u', at=5, ident='mine', ref={'meetingId': 'M1'})
+        add_todo(db, 'sampleoperator', 'meeting', '确认记录', 'u', at=5, ident='other')
     assert [r['id'] for r in client.get(base + '/todos').json()['items']] == ['mine']
     boxes = [client.get(f'{base}/inbox?box={box}').json() for box in ('review', 'todo')]
     assert boxes[0]['counts']['pending'] == sum(len(b['items']) for b in boxes) == 2
@@ -97,9 +119,11 @@ def test_inbox_transitions_and_ownership(client):
     assert done['counts'] == dict(review=1, todo=0, done=1, pending=1)
     assert done['items'][0]['id'] == 'mine'
     assert len([r for r in store.audit_list() if r['action'] == 'todo.patch']) == 1
-    decision = client.post(f"{base}/reviews/{review.json()['id']}/decisions",
-                           json={'version': 1, 'decision': 'confirm'})
-    assert decision.status_code == 200, decision.text
+    # 审签路由在 #18 内自行解析会话，这里直接走同一业务函数完成确认。
+    from jkq import reviews_api
+    platform = client.app.state.platform
+    reviews_api.decide(platform.data, platform.directory.user('samplereviewer'), review.json()['id'],
+                       {'version': 1, 'decision': 'approve'})
     assert client.get(base + '/inbox?box=done').json()['counts'] == dict(review=0, todo=0, done=2, pending=0)
 
 
@@ -131,13 +155,19 @@ def test_usage_and_feed_http(client):
     assert (err.status_code, err.json()['error']['code']) == (403, 'FORBIDDEN')
     assert client.get('/api/v1/feed').json() == {'items': [], 'total': 0}
     with client.app.state.platform.store._db as db:
-        db.executemany('insert into jkq_feed values (?,?,?,?)',
-                       [(str(n), 'jkq', '团队动态', n) for n in range(54)])
+        for n in range(54):
+            publish(db, 'jkq', '团队动态', at=n, ident=str(n))
+        publish(db, 'other-project', '别组动态', at=99)
     page = client.get('/api/v1/feed').json()
     assert page['total'] == 54 and len(page['items']) == 50
     assert client.get('/api/v1/feed?limit=1&offset=1').json()['items'][0]['id'] == '52'
     assert client.get('/api/v1/feed?offset=-1').status_code == 422
     assert client.get('/api/v1/feed?limit=0').status_code == 422
+    assert client.get('/api/v1/feed?limit=200').json()['total'] == 54
+    for query in ('limit=201', 'offset=2147483648', 'offset=9223372036854775808'):
+        err = client.get('/api/v1/feed?' + query)
+        assert (err.status_code, err.json()['error']['code']) == (422, 'INVALID_REQUEST')
+    assert client.get('/api/v1/feed?offset=2147483647').json() == {'items': [], 'total': 54}
     login(client, 'sampleadmin')
     assert client.get('/api/v1/admin/usage').json() == {'items': [], 'total': 0}
     store = client.app.state.platform.store
@@ -145,6 +175,36 @@ def test_usage_and_feed_http(client):
     for dim, key in [('app', 'app1'), ('model', 'model1'), ('user', 'user1')]:
         assert client.get('/api/v1/admin/usage', params={'groupBy': dim}).json() == {
             'items': [{dim: key, 'calls': 1, 'input': 8, 'output': 5}], 'total': 1}
+
+
+def review_counts(client, uid):
+    login(client, uid)
+    return client.get('/api/v1/inbox?box=review').json()['counts']
+
+
+def test_review_box_only_counts_actionable_reviews(client):
+    login(client, 'sampleoperator')
+    ids = []
+    for assignee in ('samplereviewer', None):
+        record = client.post('/api/v1/apps/sample-app/records', json={
+            'project': 'jkq', 'type': 'example', 'data': {}}).json()
+        body = {'appId': 'sample-app', 'recordId': record['id'], 'version': 1}
+        if assignee:
+            body['assignee'] = assignee
+        review = client.post('/api/v1/reviews', json=body)
+        assert review.status_code == 201, review.text
+        ids.append(review.json()['id'])
+    assigned, open_review = ids
+    # 提交人不能审自己的记录，角标不计。
+    assert review_counts(client, 'sampleoperator')['review'] == 0
+    login(client, 'samplereviewer')
+    assert {i['id'] for i in client.get('/api/v1/inbox?box=review').json()['items']} == {assigned, open_review}
+    # 指派给别人的审签不进第二位审核员的待审和角标。
+    login(client, 'sampleextra')
+    page = client.get('/api/v1/inbox?box=review').json()
+    assert assigned not in {i['id'] for i in page['items']}
+    assert page['counts']['pending'] == page['counts']['review'] + page['counts']['todo']
+    assert page['counts']['review'] == len(page['items'])
 
 
 class BadgeMismatch(AssertionError):
