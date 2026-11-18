@@ -148,7 +148,12 @@ def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monke
             response = client.get(path)
             assert response.status_code == 200, path
             body = response.json()
-            assert {entry["id"] for entry in body["apps"]} == {"fixture-public"}, path
+            ids = {entry["id"] for entry in body["apps"]}
+            if path == "/api/v1/admin/grants":
+                # 管理后台授权矩阵另含全局 * 与已配置应用，只要求隐藏内部应用（#128 × #135）。
+                assert "fixture-public" in ids and hidden.isdisjoint(ids), path
+            else:
+                assert ids == {"fixture-public"}, path
             assert all(hidden.isdisjoint(grants) for grants in body.get("grants", {}).values()), path
         me = client.get("/api/v1/me")
         assert me.status_code == 200
