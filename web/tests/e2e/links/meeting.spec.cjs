@@ -36,9 +36,11 @@ test('会议录音经真实 HTTP 整理、登记企业诉求并回读', async ({
   const title = `T41 公开演示会议 ${randomUUID()}`;
 
   const listed = watch(page, 'GET', meetings);
-  await page.evaluate(() => JKShell.openApp('meeting', 'home', { upload: true }));
+  await page.evaluate(() => JKShell.openApp('meeting', 'all'));
   expect((await listed).status()).toBe(200);
-  await page.locator('#mfile').setInputFiles(path.resolve(__dirname, '../../../../apps/meeting/samples/demo.webm'));
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '上传录音', exact: true }).click();
+  await (await chooser).setFiles(path.resolve(__dirname, '../../../../apps/meeting/samples/demo.webm'));
   const upload = page.getByRole('dialog').filter({ hasText: '登记这份录音' });
   await upload.locator('#ut').fill(title);
   await upload.locator('#up').fill(name);
@@ -151,7 +153,8 @@ test('会议录音经真实 HTTP 整理、登记企业诉求并回读', async ({
   const success = page.locator('.toast.ok').filter({ hasText: '已登记到企业台账' });
   await expect(success).toBeVisible();
   await success.getByRole('button', { name: '去看看' }).click();
-  await expect(page.locator('[data-view="enterprise"]')).toBeVisible();
+  const issueRow = page.locator(`[data-view="enterprise"] [data-op="enterprise.issue-${issue.id}"]`);
+  await expect(issueRow).toContainText(expected.title);
   const read = await page.request.get(enterprise + '/issues', { params: { entId: ent.id } });
   expect(read.status()).toBe(200);
   expect((await read.json()).items).toEqual([expect.objectContaining({ id: issue.id, ...expected, from: '会议' })]);

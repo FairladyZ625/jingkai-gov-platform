@@ -386,6 +386,10 @@
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.cur ? `「${S.cur.title}」会上定了哪些事？` : '还有哪些会议待办没认领？');
         if (a === 'pickFile') { if (ev.target.id !== 'mfile') $('#mfile').click(); return; }
+        if (a === 'newUpload' && M.isHttp()) {
+          S.tab = 'flow'; S.step = 0; S.src = 'upload'; S.setup = null; render();
+          $('#mfile').click(); return;
+        }
         if (a === 'sampleUpload' || a === 'newUpload') return uploadModal(null);
         if (a === 'recStart') return recStart();
         if (a === 'recStop') return recStop();
