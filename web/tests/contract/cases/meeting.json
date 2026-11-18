@@ -1,7 +1,7 @@
 {
   "routes": [
     { "method": "GET", "path": "/api/apps/meeting/meetings",
-      "response": {"items": ["@meeting"], "templates": [{"id": "string", "name": "string"}], "hotwords": ["string"]} },
+      "response": {"items": ["@meetingListItem"], "templates": [{"id": "string", "name": "string", "sections": ["string"]}], "hotwords": ["string"]} },
     { "method": "POST", "path": "/api/apps/meeting/meetings",
       "response": {"item": "@meeting"},
       "body": {"title": "契约测试会议", "type": "企业座谈会", "participants": ["测试主持"], "file": "contract-demo.m4a"},
@@ -15,13 +15,13 @@
       "response": {"job": "@meetingJob"},
       "params": {"id": "{{job.job.id}}"} },
     { "method": "GET", "path": "/api/apps/meeting/meetings/{id}",
-      "response": {"item": "@meeting", "minutes": "?@minutes"},
+      "response": {"item": "@meetingDetail", "minutes": "?@minutes"},
       "params": {"id": "{{fixture.meetingId}}"},
       "save": "ready" },
     { "method": "PATCH", "path": "/api/apps/meeting/meetings/{id}",
-      "response": {"item": "@meeting", "minutes": "?@minutes"},
+      "response": {"item": "@meetingDetail", "minutes": "?@minutes"},
       "body": {"minutes": "{{ready.minutes}}"},
-      "params": {"id": "{{fixture.meetingId}}"} },
+      "params": {"id": "{{meeting.item.id}}"} },
     { "method": "POST", "path": "/api/apps/meeting/meetings/{id}/todos/commit",
       "response": {"committed": ["string"], "skipped": ["string"]},
       "body": {"ids": ["contract-missing"]},
@@ -29,7 +29,7 @@
     { "method": "POST", "path": "/api/apps/meeting/meetings/{id}/link",
       "response": {"issue": "@enterpriseIssue"},
       "body": {"entId": "{{fixture.enterpriseId}}", "title": "会议契约测试诉求"},
-      "params": {"id": "{{fixture.meetingId}}"} }
+      "params": {"id": "{{meeting.item.id}}"} }
   ],
   "errors": [
     { "method": "GET", "path": "/api/v1/jobs/{id}",

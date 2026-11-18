@@ -16,7 +16,7 @@
       "body": {"task": "apply", "ent": "{{fixture.enterpriseId}}", "from": "契约测试"},
       "save": "run" },
     { "method": "GET", "path": "/api/apps/computer/runs/{id}",
-      "response": {"item": {"id": "string", "title": "string", "task": "string", "status": "string", "system": {"name": "string", "url": "string"}, "steps": ["object"], "log": ["object"], "shots": ["string"], "result": "?object"}},
+      "response": {"item": "@computerRun"},
       "params": {"id": "{{run.item.id}}"} },
     { "method": "PATCH", "path": "/api/apps/computer/runs/{id}",
       "response": {"item": "@computerRun"},

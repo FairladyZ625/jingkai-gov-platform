@@ -1,7 +1,7 @@
 {
   "routes": [
     { "method": "POST", "path": "/api/v1/skills/draft",
-      "response": {"draft": {"name": "string", "icon": "string", "summary": "string", "base": "string", "spec": "object", "questions": ["string"]}},
+      "response": {"draft": {"name": "string", "icon": "string", "summary": "string", "base": "string", "spec": "@skillSpec", "questions": ["string"]}},
       "body": {"text": "根据政策资料核对申报材料是否齐全"},
       "save": "draft" },
     { "method": "POST", "path": "/api/v1/skills",
@@ -12,7 +12,7 @@
       "response": {"item": "@skill", "runs": ["object"]},
       "params": {"id": "{{skill.item.id}}"} },
     { "method": "GET", "path": "/api/v1/skills/meta/options",
-      "response": {"models": [{"id": "string", "name": "string"}], "spaces": ["string"], "tools": [{"id": "string"}], "computerTasks": [{"id": "string"}], "users": [{"id": "string", "name": "string"}], "myDept": "string"} },
+      "response": {"models": [{"id": "string", "name": "string"}], "spaces": ["string"], "tools": [{"id": "string", "label": "string", "needs?": "string"}], "computerTasks": [{"id": "string", "label": "string"}], "users": [{"id": "string", "name": "string", "dept": "string"}], "myDept": "string"} },
     { "method": "PATCH", "path": "/api/v1/skills/{id}",
       "response": {"item": "@skill"},
       "body": {"summary": "修改后的契约测试"},

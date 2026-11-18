@@ -33,7 +33,7 @@
     if (!u || u.password !== b.password) X.err(401, 'BAD_CREDENTIALS', '账号或密码不正确');
     if (u.status !== 'active') X.err(403, 'ACCOUNT_DISABLED', '该账号已停用，请联系管理员');
     S().session = { userId: u.id, at: X.now() }; S().me = u.id; u.lastLogin = X.now();
-    log('登录'); return { user: pub(u), role: X.roleOf(u), grants: effective(u) };
+    log('登录'); return { user: pub(u) };
   });
   X.first('POST', '/api/v1/auth/logout', () => { if (S().session) log('退出登录'); S().session = null; return { ok: true }; });
   X.first('GET', '/api/v1/auth/session', () => ({ user: S().session ? pub(me()) : null }));
