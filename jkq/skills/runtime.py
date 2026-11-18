@@ -101,7 +101,7 @@ def run_step(provider, user, step, spec, inputs, prior, name, key):
     if kind == "kb":
         query = render(step.get("query", name), inputs, unresolved)
         if unresolved or is_blank(query):
-            return {"note": "知识库查询条件待确认，已跳过。"}
+            return {"skipped": True, "note": "知识库查询条件待确认，已跳过。"}
         params = {"q": str(query), "limit": 4}
         if "space" in step:
             params["space"] = kb_space_id(step["space"])
@@ -109,7 +109,7 @@ def run_step(provider, user, step, spec, inputs, prior, name, key):
     if kind == "tool":
         args = render(step.get("args", {}), inputs, unresolved)
         if unresolved:
-            return {"note": f"{step['tool']} 的参数待确认，已跳过。"}
+            return {"skipped": True, "note": f"{step['tool']} 的参数待确认，已跳过。"}
         # 稳定步骤键可供工具桥去重。同一技能的多次运行各有自己的键。
         return provider.tool(user, step["tool"], args, key)
     if kind == "computer":
@@ -136,14 +136,14 @@ def execute(execution, skill, raw_inputs, user, provider, authorize):
                      for field in fields if field["key"] in missing)
     prior = []
     citations = []
+    tools = []
     seen = set()
     model = None
     computer = None
-    if not spec["steps"]:
-        authorize()
     for index, step in enumerate(spec["steps"]):
         kind = step["type"]
-        authorize()
+        user = authorize() or user
+        provider.require_sources(user, citations, tools)
         result = execution.step(
             f"{index + 1}:{kind}",
             lambda key: run_step(provider, user, step, spec, inputs, prior, skill["name"], key),
@@ -162,10 +162,13 @@ def execute(execution, skill, raw_inputs, user, provider, authorize):
         if "note" in result:
             lines.append(f"> {result['note']}")
         if kind == "tool" and "result" in result:
+            if "access" in result:
+                tools.append(result["access"])
             value = result["result"]
             rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
             lines.append(f"- {step_label(step)}：{rendered}")
 
+    provider.require_sources(authorize() or user, citations, tools)
     if citations:
         if lines[-1]:
             lines.append("")

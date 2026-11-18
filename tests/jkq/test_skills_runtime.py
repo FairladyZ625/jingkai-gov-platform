@@ -1,13 +1,13 @@
 """技能运行时的纯逻辑、真实 HTTP 与 core 持久队列回归。"""
 
 import json
+import re
 import time
 
 import pytest
 
 from jkq.skills.drafting import draft, match
 from jkq.skills.runtime import execute, prepare_skill
-from jkq.skills.runtime_provider import MockSkillProvider
 from jkq.skills.spec import SkillError, validate_spec
 
 ROOT = "/api/v1/skills"
@@ -31,7 +31,61 @@ INPUTS = {"ent": "示例企业", "count": 0, "flag": False}
 HIT = {"id": "doc-1", "title": "公开样例文件", "snippet": "样例条款", "space": "policy"}
 
 
-class RecordingProvider(MockSkillProvider):
+class SampleSkillProvider:
+    def require_sources(self, user, hits, tools=()):
+        pass
+
+    def search(self, user, params):
+        return {"hits": [], "total": 0, "terms": [], "facets": {}}
+
+    def ask(self, user, params):
+        return {"answer": "未找到可以引用的知识库片段。", "confidence": "none", "citations": []}
+
+    def draft(self, user, prompt, text, knowledge):
+        name = re.sub(r"^(?:帮我|请)?(?:做|创建|制作)(?:一个|个)?技能[：:，,\s]*", "", text)
+        name = name.strip("。！?？ ")[:24] or "知识整理助手"
+        format_name = "要点"
+        for keyword, output in (("表格", "表格"), ("清单", "清单"), ("公文", "公文")):
+            if keyword in text:
+                format_name = output
+                break
+        return {
+            "name": name,
+            "summary": text,
+            "spec": {
+                "triggers": [name],
+                "inputs": [{"key": "materials", "label": "已有材料", "type": "textarea", "required": True}],
+                "steps": [{"type": "kb", "query": name}, {"type": "model"}],
+                "output": {"title": name, "format": format_name},
+                "prompt": f"{text}\n已有材料：{{{{materials}}}}\n请写结论与出处，缺项标为待确认。",
+            },
+            "questions": ["可以提供哪些输入材料？", "结果要依据哪个知识库？"],
+        }
+
+    def generate(self, user, model, request):
+        # 样例 provider 只展示收到的材料，不编造业务判断或知识库依据。
+        details = [(field, " ".join(str(value).splitlines())) for field, value in request["inputs"].items()]
+        format_name = request["format"]
+        if format_name == "表格":
+            rows = ["| 字段 | 内容 |", "| --- | --- |"]
+            for field, value in details or [("已有材料", "待确认")]:
+                cell = value.replace("\\", "\\\\").replace("|", r"\|")
+                rows.append(f"| {field} | {cell} |")
+            markdown = "\n".join(rows)
+        elif format_name == "清单":
+            markdown = "\n".join(f"- [ ] {field}：{value}" for field, value in details) or "- [ ] 已有材料：待确认"
+        elif format_name == "公文":
+            paragraphs = "\n\n".join(f"**{field}**：{value}" for field, value in details) or "已有材料待确认。"
+            markdown = f"#### 一、已有材料\n\n{paragraphs}"
+        else:
+            markdown = "\n".join(f"- {field}：{value}" for field, value in details) or "缺少可用于形成结论的输入。"
+        return {"model": model, "markdown": markdown}
+
+    def tool(self, user, name, args, idempotency_key):
+        return {"note": f"{name} 尚未接入业务工具桥，未执行实际业务操作。"}
+
+
+class RecordingProvider(SampleSkillProvider):
     def __init__(self):
         self.calls = []
 
@@ -65,7 +119,7 @@ def test_legacy_tool_step_is_a_declaration():
 
 
 def test_mock_draft_is_valid_and_match_only_uses_nonempty_triggers():
-    provider = MockSkillProvider()
+    provider = SampleSkillProvider()
     result = draft(provider, None, "帮我做个技能：整理资料表格")
     assert result["name"] == "整理资料表格"
     assert result["summary"] and result["questions"]
@@ -114,7 +168,7 @@ def api_factory(request):
     def connect(provider=None):
         client = make_client()
         install_crud(client.app, current_user)
-        install(client.app, current_user, provider=provider)
+        install(client.app, current_user, provider=provider if provider is not None else SampleSkillProvider())
         return client
 
     return connect
@@ -281,7 +335,7 @@ def test_draft_to_trial_renders_requested_markdown(api_factory, keyword, format_
     ("draft", {"text": "整理资料\udfff"}),
 ], ids=["skill-name", "nested-value", "nested-key", "draft-text"])
 def test_invalid_unicode_in_run_trial_and_draft_returns_400(api_factory, path, body):
-    class NoDraftCalls(MockSkillProvider):
+    class NoDraftCalls(SampleSkillProvider):
         def ask(self, user, params):
             pytest.fail("不可编码的文本不应进入起草 provider")
 
@@ -306,7 +360,7 @@ def test_run_and_trial_reject_undeclared_tools_before_any_step(api_factory):
 
 
 def test_draft_contract_and_invalid_model_output(api_factory):
-    class InvalidDraft(MockSkillProvider):
+    class InvalidDraft(SampleSkillProvider):
         def draft(self, user, prompt, text, knowledge):
             result = super().draft(user, prompt, text, knowledge)
             result["spec"]["steps"] = [{"type": "unknown"}]
@@ -351,3 +405,249 @@ def test_match_respects_published_visibility_and_unavailable_endpoints(api_facto
         login(api, "sampleobserver")
         assert api.post(f"{ROOT}/match", json={"text": "整理资料"}).json()["items"] == []
         error(api.post(f"{ROOT}/{sid}/run", json={"inputs": INPUTS}), 403, "FORBIDDEN")
+
+
+PUBLIC_QUERY = "算力券 封顶"
+PUBLIC_SOURCE = "KB-P3950424"
+
+
+@pytest.fixture
+def instance(isolated_platform, cheap_password_hash, monkeypatch):
+    pytest.importorskip("fastapi")
+    import os
+    import secrets
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from jkq.app import create_app
+
+    repo = Path(__file__).resolve().parents[2]
+    password = secrets.token_urlsafe(12)
+    for name in ("HAIKNOW_ROOT", "JKQ_WEB_DIR", "JKQ_MOCK_GOV_URL", "JKQ_KB_VECTOR_SEARCH"):
+        monkeypatch.delenv(name, raising=False)
+    for name in tuple(os.environ):
+        if name.startswith(("JKQ_CLOUD_MODEL_", "JKQ_DEEPSEEK_MODEL_",
+                            "JKQ_LOCAL_MODEL_", "JKQ_OVERSEAS_MODEL_")):
+            monkeypatch.delenv(name)
+    for name in ("ADMIN", "LEADER", "MEMBER", "PARTNER"):
+        monkeypatch.setenv(f"JKQ_DEMO_{name}_PASSWORD", password)
+    base = "http://127.0.0.1:18000/v1"
+    monkeypatch.setenv("JKQ_LOCAL_MODEL_BASE_URL", base)
+    monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", base)
+    monkeypatch.setenv("JKQ_LOCAL_MODEL_NAME", "acceptance-local")
+    monkeypatch.setenv("JKQ_MODEL_PROVIDER", "local")
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("HAIKNOW_SECRET", password)
+    monkeypatch.setenv("HAIKNOW_CONFIG_DIR", str(repo / "config"))
+    monkeypatch.setenv("HAIKNOW_APPS_DIR", str(repo / "apps"))
+    with TestClient(create_app()) as api:
+        def sign_in(username="wangmin"):
+            response = api.post("/api/v1/auth/login", json={"username": username, "password": password})
+            assert response.status_code == 200, response.text
+
+        yield api, sign_in
+
+
+def model_transport(api, reply):
+    import httpx
+
+    calls = []
+
+    def upstream(request):
+        body = json.loads(request.content)
+        assert body["model"] == "acceptance-local"
+        assert request.url.path == "/v1/chat/completions"
+        data = json.loads(body["messages"][-1]["content"])
+        calls.append(data)
+        content = reply(data)
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    api.app.state.jkq_models.transport = httpx.MockTransport(upstream)
+    return calls
+
+
+def test_instance_run_executes_real_kb_then_configured_model_then_business_tool(instance):
+    api, sign_in = instance
+    error(api.get(ROOT), 401, "UNAUTHENTICATED")
+    sign_in()
+    meeting = api.post("/api/v1/apps/meeting/records", json={
+        "project": "jkq", "type": "meeting", "data": {"title": "公开演练会议概要"},
+    })
+    assert meeting.status_code == 201, meeting.text
+    draft_skill = {
+        "name": "知识库与会议汇总",
+        "spec": {"triggers": ["汇总公开材料"], "tools": ["meeting.list"],
+                 "inputs": [{"key": "scope", "label": "核查范围", "required": True}],
+                 "steps": [{"type": "kb", "space": "policy", "query": PUBLIC_QUERY},
+                           {"type": "model"}, {"type": "tool", "tool": "meeting.list"}]},
+    }
+    calls = model_transport(api, lambda payload: "可查阅公开政策依据 [1]。")
+    sid = create(api, draft_skill)
+    accepted = api.post(f"{ROOT}/{sid}/run", json={"inputs": {"unused": "输入隐私标记"}})
+    assert accepted.status_code == 202, accepted.text
+    job = poll(api, accepted.json()["job"]["id"])
+    assert [step["status"] for step in job["steps"]] == ["done", "done", "done"]
+    result = job["result"]
+    assert result["model"] == "acceptance-local"
+    assert result["missing"] == ["scope"]
+    assert "核查范围：**待确认**" in result["markdown"]
+    for value in ("可查阅公开政策依据", "公开演练会议概要", meeting.json()["id"]):
+        assert value in result["markdown"]
+    assert result["citations"][0]["id"] == PUBLIC_SOURCE
+    assert [step["type"] for step in calls[0]["prior"]] == ["kb"]
+    assert calls[0]["prior"][0]["result"]["hits"][0]["id"] == PUBLIC_SOURCE
+
+    # 管理审计实际读取平台库。普通提交人只有任务详情权限。
+    audit_path = "/api/v1/audit?app=skills"
+    error(api.get(audit_path), 403, "FORBIDDEN")
+    sign_in("admin")
+    error(api.get(f"{ROOT}/jobs/{job['id']}"), 404, "NOT_FOUND")
+    audit = api.get(audit_path)
+    assert audit.status_code == 200, audit.text
+    entries = audit.json()["items"]
+    recorded = [row for row in reversed(entries) if row["detail"].get("jobId") == job["id"]]
+    assert [row["action"] for row in recorded] == [
+        "job.submit", "job.running", *["job.step.running", "job.step.done"] * 3, "job.done",
+    ]
+    assert all(row["userId"] == "u-wangmin" and set(row["detail"]) == {"jobId", "attempt"} for row in recorded)
+    assert any(row["action"] == "ai.chat" and row["detail"]["model"] == "acceptance-local" for row in entries)
+    assert any(row["action"] == "skill.tool" and row["detail"] == {"tool": "meeting.list"} for row in entries)
+    assert all(marker not in audit.text for marker in ("输入隐私标记", "公开演练会议概要", PUBLIC_SOURCE))
+
+
+def test_instance_tools_preserve_original_permissions_and_masking(instance):
+    api, sign_in = instance
+    sign_in()
+    company = api.post("/api/v1/apps/enterprise/records", json={
+        "project": "jkq", "type": "enterprise.company",
+        "data": {"item": {"name": "公开演练企业", "contact": "联系人脱敏标记"}},
+    })
+    assert company.status_code == 201, company.text
+    skill = {"name": "企业信息与政策匹配", "spec": {"steps": [
+        {"type": "tool", "tool": "enterprise.get", "args": {"id": company.json()["id"]}},
+        {"type": "tool", "tool": "policy.match", "args": {"entId": "E002"}},
+    ]}}
+    body, headers = {"skill": skill}, {"Idempotency-Key": "apps-check"}
+    accepted = api.post(f"{ROOT}/trial", json=body, headers=headers)
+    assert accepted.status_code == 202, accepted.text
+    job = poll(api, accepted.json()["job"]["id"])
+    assert [step["status"] for step in job["steps"]] == ["done", "done"]
+    assert "公开演练企业" in job["result"]["markdown"]
+    assert "联系人脱敏标记" not in job["result"]["markdown"]
+    assert "匹配兑现事项" in job["result"]["markdown"] or '"results"' in job["result"]["markdown"]
+
+    assert api.put("/api/v1/me/role", json={"role": "partner"}).status_code == 200
+    error(api.get(f"{ROOT}/jobs/{job['id']}"), 403, "FORBIDDEN")
+    error(api.post(f"{ROOT}/trial", json=body, headers=headers), 403, "FORBIDDEN")
+
+
+@pytest.mark.parametrize("mode,revocation", [
+    ("run", "grant"), ("trial", "grant"), ("run", "document"), ("trial", "document"),
+])
+def test_instance_rechecks_source_on_poll_and_idempotent_replay(instance, mode, revocation):
+    api, sign_in = instance
+    sign_in()
+    skill = {"name": "公开资料查找", "spec": {"steps": [
+        {"type": "kb", "space": "policy", "query": PUBLIC_QUERY},
+    ]}}
+    path, body = (f"{ROOT}/{create(api, skill)}/run", {}) if mode == "run" else (
+        f"{ROOT}/trial", {"skill": skill},
+    )
+    before = api.get(ROOT).json()["items"]
+    headers = {"Idempotency-Key": "source-check"}
+    accepted = api.post(path, json=body, headers=headers)
+    assert accepted.status_code == 202, accepted.text
+    jid = accepted.json()["job"]["id"]
+    result = poll(api, jid)["result"]
+    citation = result["citations"][0]
+    assert citation["id"] == PUBLIC_SOURCE and citation["snippet"] in result["markdown"]
+    assert api.post(path, json=body, headers=headers).json()["job"]["id"] == jid
+    assert api.get(ROOT).json()["items"] == before
+
+    if revocation == "document":
+        response = api.delete(f"/api/v1/kb/docs/{PUBLIC_SOURCE}")
+        assert response.status_code == 200, response.text
+    else:
+        store = api.app.state.platform.store
+        with store._lock, store._db as db:
+            db.execute("delete from role_grants where role_id='member' and app_id='kb'")
+    for response in (api.get(f"{ROOT}/jobs/{jid}"), api.post(path, json=body, headers=headers)):
+        error(response, 403, "FORBIDDEN")
+        assert citation["snippet"] not in response.text and "result" not in response.json()
+
+
+def test_instance_draft_consumes_verified_knowledge_and_validates_model_json(instance):
+    api, sign_in = instance
+    sign_in()
+    skill = {"name": "整理算力券依据", "summary": "核对公开政策",
+             "spec": {"steps": [{"type": "kb", "space": "policy", "query": PUBLIC_QUERY},
+                                {"type": "model"}]},
+             "questions": ["要核对哪个申报期？"]}
+
+    def reply(payload):
+        if "passages" in payload:
+            excerpt = next(sentence for sentence in payload["passages"][0]["sentences"] if "2000万元" in sentence)
+            return json.dumps([{"passage": 1, "quote": excerpt}])
+        return json.dumps(skill)
+
+    calls = model_transport(api, reply)
+    response = api.post(f"{ROOT}/draft", json={"text": PUBLIC_QUERY})
+    assert response.status_code == 200, response.text
+    drafted = response.json()["draft"]
+    assert drafted["name"] == skill["name"] and drafted["summary"] == skill["summary"]
+    assert drafted["questions"] == skill["questions"]
+    assert drafted["spec"] == validate_spec(skill["spec"])
+    assert calls[0]["question"] == PUBLIC_QUERY
+    [ref] = calls[1]["knowledge"]["citations"]
+    assert ref["id"] == PUBLIC_SOURCE and ref["snippet"] in calls[1]["knowledge"]["answer"]
+    assert api.get(ROOT).json()["items"] == []
+
+    model_transport(api, lambda payload: "未按约定返回 JSON")
+    error(api.post(f"{ROOT}/draft", json={"text": "💡"}), 502, "INVALID_SKILL_DRAFT")
+
+
+def test_instance_permissions_skip_and_unavailable_are_distinct(instance):
+    api, sign_in = instance
+    sign_in("hejun")
+    steps = [{"type": "tool", "tool": "meeting.list"}]
+    denied = api.post(f"{ROOT}/trial", json={"skill": {"name": "汇总会议", "spec": {"steps": steps}}})
+    assert denied.status_code == 202, denied.text
+    job = poll(api, denied.json()["job"]["id"], expected="failed")
+    assert job["errorCode"] == "FORBIDDEN" and job["result"] is None
+    assert job["steps"][0]["status"] == "failed"
+    error(api.post(f"{ROOT}/trial", json={
+        "skill": {"name": "汇总会议", "spec": {"steps": steps, "tools": []}},
+    }), 403, "TOOL_NOT_ALLOWED")
+
+    sign_in()
+    skipped = api.post(f"{ROOT}/trial", json={"skill": {"name": "查企业", "spec": {
+        "inputs": [{"key": "ent", "required": True}],
+        "steps": [{"type": "tool", "tool": "enterprise.get", "args": {"id": "{{ent}}"}}],
+    }}})
+    job = poll(api, skipped.json()["job"]["id"])
+    assert job["steps"][0]["status"] == "skipped" and job["result"]["missing"] == ["ent"]
+    assert "待确认" in job["result"]["markdown"]
+
+    unavailable = api.post(f"{ROOT}/trial", json={
+        "skill": {"name": "验证模型缺失", "spec": {"model": "mock", "steps": [{"type": "model"}]}},
+    })
+    assert unavailable.status_code == 202, unavailable.text
+    job = poll(api, unavailable.json()["job"]["id"], expected="failed")
+    assert job["errorCode"] == "NOT_CONFIGURED" and job["result"] is None
+
+
+def test_instance_match_and_deferred_routes(instance):
+    api, sign_in = instance
+    sign_in()
+    sid = create(api)
+    path = f"{ROOT}/match"
+    assert api.post(path, json={"text": "整理资料"}).json()["items"] == []
+    skills = api.app.state.skills
+    user = skills.platform.directory.user("u-wangmin")
+    skills.save(user, skills.load(user, sid), {"status": "published"})
+    assert api.post(path, json={"text": "请整理资料"}).json()["skill"]["id"] == sid
+    assert api.post(path, json={"text": "无触发词"}).json() == {"items": [], "skill": None, "score": 0}
+    error(api.get(f"{ROOT}/{sid}/manifest"), 501, "NOT_IMPLEMENTED")
+    error(api.post(f"{ROOT}/{sid}/promote", json={}), 501, "NOT_IMPLEMENTED")

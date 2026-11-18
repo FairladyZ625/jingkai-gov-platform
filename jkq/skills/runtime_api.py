@@ -16,12 +16,13 @@ from haiknow_sdk import DataError
 from .api import SkillRoute
 from .drafting import draft, match, request_text
 from .runtime import execute, prepare_skill, step_label
-from .runtime_provider import MockSkillProvider
+from .runtime_provider import SkillProvider
 from .spec import SkillError, invalid
 
 APP = "skills"
 PROJECT = "jkq"
 OPERATION = "skill.execute"
+OPERATION_VERSION = "2"
 
 
 def require_utf8_json(value):
@@ -72,6 +73,16 @@ class JobPlatform:
         return SimpleNamespace(user=user)
 
 
+class SkillJobService(JobService):
+    def _save(self, doc, action, *, actor=None):
+        super()._save(doc, action, actor=actor)
+        # SkillStore 已附接平台库。队列状态和元数据审计在同一事务提交。
+        self.store._db.execute(
+            "INSERT INTO platform.audit(ts, app_id, user_id, action, detail) "
+            "SELECT ts, app_id, user_id, action, detail FROM main.audit WHERE id=last_insert_rowid()"
+        )
+
+
 def runnable_skill(skills, user, sid):
     item = skills.load(user, sid)["data"]
     actions = skills.platform.rbac.actions(user, APP)
@@ -84,10 +95,13 @@ def runnable_skill(skills, user, sid):
 
 def job_view(job):
     payload = job["input"]
-    checkpoints = {step["name"]: step["status"] for step in job["steps"]}
+    checkpoints = {step["name"]: step for step in job["steps"]}
     steps = []
     for index, step in enumerate(payload["skill"]["spec"]["steps"]):
-        state = checkpoints.get(f"{index + 1}:{step['type']}", "pending")
+        checkpoint = checkpoints.get(f"{index + 1}:{step['type']}", {})
+        state = checkpoint.get("status", "pending")
+        if state == "done" and (checkpoint.get("result") or {}).get("skipped"):
+            state = "skipped"
         steps.append({"label": step_label(step), "type": step["type"],
                       "status": "run" if state == "running" else state})
     status = {"queued": "running", "cancelling": "running", "cancelled": "failed"}.get(
@@ -97,29 +111,35 @@ def job_view(job):
     if job["status"] == "cancelled":
         message = "任务已取消"
     return {"id": job["id"], "status": status, "steps": steps, "result": job["result"],
-            "trial": payload["ref"] is None, "error": message}
+            "trial": payload["ref"] is None, "error": message,
+            "errorCode": job["error"]["code"].upper() if job["error"] else None}
 
 
 def install(app, current_user, *, provider=None):
     skills = app.state.skills
     if provider is None:
-        provider = MockSkillProvider()
-    jobs = JobService(JobPlatform(skills), app)
+        provider = SkillProvider(app)
+    jobs = SkillJobService(JobPlatform(skills), app)
     router = APIRouter(prefix="/api/v1/skills", route_class=RuntimeRoute)
 
     def operation(execution, payload):
         user = execution.context.user
 
         def authorize():
+            current = skills.platform.directory.user(user.id)
+            if current is None:
+                raise SkillError(401, "UNAUTHENTICATED", "任务提交人已不可用")
+            skills.records.app(current, APP, "operate")
             if payload["ref"] is not None:
-                try:
-                    runnable_skill(skills, user, payload["ref"])
-                except SkillError as exc:
-                    raise DataError(exc.error["code"].lower(), str(exc), **exc.error["details"]) from exc
+                runnable_skill(skills, current, payload["ref"])
+            return current
 
-        return execute(execution, payload["skill"], payload["inputs"], user, provider, authorize)
+        try:
+            return execute(execution, payload["skill"], payload["inputs"], user, provider, authorize)
+        except SkillError as exc:
+            raise DataError(exc.error["code"].lower(), str(exc), **exc.error["details"]) from exc
 
-    jobs.operations[(APP, OPERATION)] = ("1", operation)
+    jobs.operations[(APP, OPERATION)] = (OPERATION_VERSION, operation)
     previous = app.router.lifespan_context
 
     @asynccontextmanager
@@ -130,6 +150,15 @@ def install(app, current_user, *, provider=None):
                 yield state
             finally:
                 await asyncio.to_thread(jobs.stop)
+
+    def visible_job(user, job):
+        if job["result"] is not None:
+            if job["version"] != OPERATION_VERSION:
+                raise SkillError(409, "INVALID_STATE", "该任务结果由旧版运行时生成，请重新运行")
+            tools = [checkpoint["result"]["access"] for checkpoint in job["steps"]
+                     if (checkpoint.get("result") or {}).get("access")]
+            provider.require_sources(user, job["result"]["citations"], tools)
+        return {"job": job_view(job)}
 
     def submit(user, key, ref, skill, body):
         inputs = body.get("inputs", {})
@@ -142,8 +171,7 @@ def install(app, current_user, *, provider=None):
             "input": {"ref": ref, "skill": prepare_skill(skill), "inputs": inputs},
         }
         require_utf8_json(request)
-        job = jobs.submit(user, request)
-        return {"job": job_view(job)}
+        return visible_job(user, jobs.submit(user, request))
 
     @router.post("/{sid}/run", status_code=202)
     def run(sid: str, body: dict, user=Depends(current_user), idempotency_key: str | None = Header(None)):
@@ -167,7 +195,7 @@ def install(app, current_user, *, provider=None):
             raise SkillError(404, "NOT_FOUND", "任务不存在")
         if job["input"]["ref"] is not None:
             runnable_skill(skills, user, job["input"]["ref"])
-        return {"job": job_view(job)}
+        return visible_job(user, job)
 
     @router.post("/draft")
     def create_draft(body: dict, user=Depends(current_user)):

@@ -7,6 +7,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from .inbox import router as inbox_router
 from .kb import install as install_kb
 from .models import install as install_models
+from .skills import api as skills_api, runtime_api as skills_runtime
 from .transcribe import router as transcribe_router
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
@@ -37,6 +38,8 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(health)
     install_kb(app, app.state.platform, current_user)
     install_models(app)
+    skills_api.install(app, current_user)
+    skills_runtime.install(app, current_user)
     for router in ROUTERS:
         app.include_router(router)
     routes[:] = routes[core_route_count:] + routes[:core_route_count]
