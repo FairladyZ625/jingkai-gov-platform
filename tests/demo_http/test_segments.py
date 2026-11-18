@@ -13,11 +13,14 @@ SCRIPT = Path(__file__).resolve().parents[2] / "prototype/v4/config/demo-script.
 TITLES = re.findall(r"\{ title: '([^']+)', steps:", SCRIPT.read_text(encoding="utf-8"))
 assert len(TITLES) == 12
 
-# 已知缺口只按具体段落登记，新增段落或改名均须更新对应动作。
-WAITING = {
-    "企业走访": "PR #116 走访建议与写入确认，Issue #42 四应用 HTTP",
-    "公文协作": "PR #111 版本比对、#112 送审、#126 操作员计划",
-    "技能中心": "PR #109 起草与 #118 分享",
+# 只对尚未挂载的上游接口跳过。路由已接入时，业务错误直接使该段失败。
+DEPENDENCIES = {
+    "企业走访": {"/api/apps/enterprise/companies/{company_id}/visits": "#116 走访确认"},
+    "公文协作": {"/api/apps/document/compare": "#111 版本比对",
+                 "/api/apps/document/drafts/{identity}/submit": "#112 公文送审",
+                 "/api/v1/operator/plan": "#126 操作员计划"},
+    "技能中心": {"/api/v1/skills/draft": "#109 一句话起草",
+                 "/api/v1/skills/{sid}/share": "#118 技能分享"},
 }
 
 
@@ -32,11 +35,14 @@ def login(c, username, password):
 
 @pytest.mark.parametrize("title", TITLES, ids=TITLES)
 def test_segment(server, title):
-    if title in WAITING:
-        pytest.skip(WAITING[title])
     url, password = server
     with httpx.Client(base_url=url, trust_env=False) as c:
         me = login(c, "wangmin", password)
+        if title in DEPENDENCIES:
+            paths = data(c.get("/openapi.json"))["paths"]
+            missing = [reason for path, reason in DEPENDENCIES[title].items() if path not in paths]
+            if missing:
+                pytest.skip("等待上游接口：" + "、".join(missing))
         if title == "开场":
             assert me["role"]["id"] == "member"
             assert data(c.get("/api/v1/me"))["user"]["username"] == "wangmin"
@@ -49,6 +55,38 @@ def test_segment(server, title):
             if response.status_code == 404 and "/api/apps/policy/match" not in data(c.get("/openapi.json"))["paths"]:
                 pytest.skip("PR #127 挂载政策匹配路由")
             assert data(response)["results"]
+        elif title == "企业走访":
+            base = "/api/apps/enterprise"
+            company = data(c.post(base + "/companies", json={"name": "走访演示企业", "employees": 4}))["item"]
+            path = base + "/companies/" + company["id"]
+            visit = data(c.post(path + "/visits", json={"notes": "职工现有5人。"}))
+            assert data(c.get(path))["item"]["employees"] == 4
+            proposal = next(p for p in visit["proposals"] if p["field"] == "employees")
+            data(c.post(base + "/proposals/" + proposal["id"] + "/decision", json={"decision": "accept"}))
+            assert data(c.get(path))["item"]["employees"] == 5
+        elif title == "公文协作":
+            plan = data(c.post("/api/v1/operator/plan", json={"text": "起草一份数据券申报延期通知"}))
+            assert plan["intent"] and plan["steps"]
+            base = "/api/apps/document"
+            draft = data(c.post(base + "/drafts", json={"templateId": "T06", "inputs": {
+                "orig": "公开演示申报通知", "oldEnd": "2026-11-20", "newEnd": "2026-11-25",
+            }}))["item"]
+            ref = draft["id"]
+            path = base + "/drafts/" + ref
+            content = dict(draft["versions"][-1]["content"], title="关于延长示例材料受理期限的通知")
+            data(c.put(path, json={"content": content}))
+            diff = data(c.post(base + "/compare", json={"a": {"id": ref, "v": 0}, "b": {"id": ref, "v": 1}}))
+            assert diff["stats"]["add"] > 0
+            review = data(c.post(path + "/submit", json={"assignee": "u-liyang"}))
+            assert review["item"]["status"] == "审签中"
+        elif title == "技能中心":
+            base = "/api/v1/skills"
+            draft = data(c.post(base + "/draft", json={"text": "核对数据券申报材料齐不齐"}))["draft"]
+            skill = data(c.post(base, json={key: draft[key] for key in ("name", "spec", "summary")}))["item"]
+            path = base + "/" + skill["id"]
+            data(c.post(path + "/share", json={"scope": "people", "people": ["u-liyang"], "perm": "use"}))
+            login(c, "liyang", password)
+            assert data(c.get(path))["item"]["name"] == draft["name"]
         elif title == "会议纪要":
             base = "/api/apps/meeting/meetings"
             audio = SCRIPT.parents[3] / "apps/meeting/samples/demo.webm"
