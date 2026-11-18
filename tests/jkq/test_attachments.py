@@ -1,5 +1,6 @@
 import shutil
 import sqlite3
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from urllib.parse import unquote
@@ -163,10 +164,25 @@ def sample_pdf(text):
     return bytes(data)
 
 
+def _has_working_pdftotext():
+    if shutil.which("pdftotext") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-f", "1", "-l", "1", "-enc", "UTF-8", "-", "-"],
+            input=sample_pdf(b"sample"),
+            capture_output=True,
+            timeout=4,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 @pytest.mark.parametrize(("text", "app"), [(b"[2026]8#", "policy"), (b"sample", None)])
 def test_pdf_body(text, app):
-    if shutil.which("pdftotext") is None:
-        pytest.skip("需要 pdftotext 才能核验 PDF 正文文号")
+    if not _has_working_pdftotext():
+        pytest.skip("需要可用的 pdftotext 才能核验 PDF 正文文号")
     item, route = prepare("file", "材料.pdf", sample_pdf(text), MANIFESTS)
     assert route["app"] == app
     if app:
