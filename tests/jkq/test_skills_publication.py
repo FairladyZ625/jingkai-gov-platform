@@ -84,7 +84,8 @@ def test_review(api, reviewer, choice):
     queue = api.get("/api/v1/reviews", headers={"x-test-user": reviewer}).json()["items"]
     assert [entry["id"] for entry in queue] == [review["id"]]
     error(call(api, "POST", path + "/review", "sampleextra", {"decision": choice}), 403, "FORBIDDEN")
-    error(call(api, "POST", path + "/review", reviewer, {"decision": "reject", "reason": " "}), 400, "INVALID_REQUEST")
+    for rejection in ({"decision": "reject"}, {"decision": "reject", "reason": " "}):
+        error(call(api, "POST", path + "/review", reviewer, rejection), 400, "INVALID_REQUEST")
     if choice == "approve":
         resp = api.post("/api/v1/reviews/" + review["id"] + "/decisions", headers={"x-test-user": reviewer},
                         json={"decision": choice, "version": review["version"]})
