@@ -31,12 +31,15 @@ def install_platform(app: FastAPI) -> None:
     from haiknow_core.main import current_user  # 登录依赖只在这里指定
 
     from . import admin, jobs_api, reviews_api
+    from .skills import api as skills_api, publication as skills_publication
     from .conversations import routes as conversations
     from .kb import ask as kb_ask
 
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    skills_api.install(app, current_user)
+    skills_publication.install(app, current_user)
     kb_ask.install(app, app.state.platform, current_user)
     admin.install(app)
     if "document" in app.state.platform.data.apps:

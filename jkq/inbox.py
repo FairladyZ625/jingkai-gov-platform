@@ -93,7 +93,7 @@ def add_todo(db, owner, app, title, sender, *, ref=None, at=None, ident=None):
     return ident
 
 
-def inbox_page(service, user, box):
+def inbox_page(service, user, box, skills=None):
     boxes = {'review': [], 'todo': [], 'done': []}
     with service.store._lock:
         for item in todos_for(service.store._db, user.id):
@@ -108,6 +108,12 @@ def inbox_page(service, user, box):
                 'at': feed.local_time(note['createdAt']), 'ref': note['source'],
                 'status': 'done' if done else 'pending',
             })
+    # 技能与平台使用独立的 SQLite 库，先释放平台锁再读取技能待办。
+    if skills is not None:
+        boxes['review'].extend(
+            {**review_item(review), **{key: review[key] for key in ('type', 'reviewId', 'version', 'approver')}}
+            for review in skills.review_queue(user)
+        )
     items = sorted(boxes[box], key=lambda i: (i['at'], i['id']), reverse=True)
     counts = {name: len(rows) for name, rows in boxes.items()}
     counts['pending'] = counts['review'] + counts['todo']
@@ -163,7 +169,8 @@ def patch_todo(id: str, body: TodoPatch, request: Request, user=Depends(current_
 def inbox(request: Request, box: str = 'review', user=Depends(current_user)):
     if box not in ('review', 'todo', 'done'):
         return error(400, 'INVALID_BOX', '收件箱分类须为 review、todo 或 done')
-    return inbox_page(request.app.state.platform.data, user, box)
+    state = request.app.state
+    return inbox_page(state.platform.data, user, box, getattr(state, 'skills', None))
 
 
 @router.get('/api/v1/feed')

@@ -53,6 +53,13 @@ def client(request, monkeypatch):
     (config / 'projects.yaml').write_bytes(seed.read_bytes())
     users = config / 'users.yaml'
     users.write_text(users.read_text().replace('sample-project', 'jkq'))
+    if getattr(request, 'param', None) == 'skills':
+        data = json.loads(users.read_text())
+        for user in data['users']:
+            role = {'sampleoperator': 'member', 'sampleextra': 'member', 'samplereviewer': 'leader'}.get(user['id'])
+            if role:
+                user['roles'].append(role)
+        users.write_text(json.dumps(data))
     monkeypatch.setenv('HAIKNOW_SECRET', 'test-session-signing')
     if router not in routers.ROUTERS:
         monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, router))
@@ -187,6 +194,68 @@ def test_review_box_only_counts_actionable_reviews(client):
     assert assigned not in {i['id'] for i in page['items']}
     assert page['counts']['pending'] == page['counts']['review'] + page['counts']['todo']
     assert page['counts']['review'] == len(page['items'])
+
+
+@pytest.mark.parametrize('client', ['skills'], indirect=True)
+def test_skill_reviews_share_identity_version_and_permissions_with_inbox(client):
+    skills = '/api/v1/skills'
+    reviews = '/api/v1/reviews'
+    inbox = '/api/v1/inbox?box=review'
+    login(client, 'sampleoperator')
+    record = client.post('/api/v1/apps/sample-app/records', json={
+        'project': 'jkq', 'type': 'example', 'data': {}}).json()
+    generic = client.post(reviews, json={'appId': 'sample-app', 'recordId': record['id'], 'version': 1,
+                                         'assignee': 'samplereviewer'}).json()
+    assert generic['status'] == 'pending'
+
+    login(client, 'sampleadmin')
+    skill = client.post(skills, json={'name': '同一份技能待办'}).json()['item']
+    sid = skill['id']
+    path = f'{skills}/{sid}'
+    body = {'share': {'scope': 'zone', 'perm': 'edit'}}
+    original = client.post(f'{path}/publish', json=body).json()['review']
+    assert client.patch(path, json={'summary': '补充后复投'}).status_code == 200
+    replacement = client.post(f'{path}/publish', json=body).json()['review']
+    rid, version = replacement['id'], replacement['version']
+    assert rid != original['id'] and version > original['version']
+
+    for uid in ('sampleadmin', 'sampleextra'):
+        login(client, uid)
+        assert client.get(skills, params={'review': True}).json()['items'] == []
+        assert not any(item.get('type') == 'skill' for item in client.get(reviews).json()['items'])
+        assert not any(item.get('type') == 'skill' for item in client.get(inbox).json()['items'])
+    login(client, 'sampleadmin')
+    own = client.post(f'{reviews}/{rid}/decisions', json={'decision': 'approve', 'version': version})
+    assert own.status_code == 409 and own.json()['error']['code'] == 'SELF_REVIEW'
+
+    login(client, 'samplereviewer')
+    skill_row, = client.get(skills, params={'review': True}).json()['items']
+    generic_row, = [item for item in client.get(reviews).json()['items'] if item.get('type') == 'skill']
+    page = client.get(inbox).json()
+    skill_inbox, = [item for item in page['items'] if item.get('type') == 'skill']
+    assert skill_row['id'] == generic_row['ref'] == skill_inbox['ref']['recordId'] == sid
+    assert skill_row['contentVersion'] == client.get(path).json()['item']['version']
+    assert type(version) is int and version > 0
+    for row in (skill_row, generic_row, skill_inbox):
+        assert (row['reviewId'], row['version'], row['approver']) == (rid, version, True)
+    assert generic_row['id'] == skill_inbox['id'] == rid
+    assert generic_row['app'] == skill_inbox['app'] == 'skills'
+    assert [item['id'] for item in page['items']] == [rid, generic['id']]
+    assert page['total'] == page['counts']['review'] == page['counts']['pending'] == 2
+
+    decision = {'decision': 'reject', 'version': version}
+    invalid = client.post(f'{reviews}/{rid}/decisions', json=decision)
+    assert invalid.status_code == 400 and invalid.json()['error']['code'] == 'INVALID_REQUEST'
+    stale = client.post(f"{reviews}/{original['id']}/decisions",
+                        json={'decision': 'approve', 'version': original['version']})
+    assert stale.status_code == 409 and stale.json()['error']['code'] == 'STALE_VERSION'
+    rejected = client.post(f'{reviews}/{rid}/decisions', json={**decision, 'reason': '补充后再次申请'})
+    assert rejected.status_code == 200 and rejected.json()['item']['status'] == 'rejected'
+    assert client.get(skills, params={'review': True}).json()['items'] == []
+    assert [item['id'] for item in client.get(reviews).json()['items']] == [generic['id']]
+    page = client.get(inbox).json()
+    assert [item['id'] for item in page['items']] == [generic['id']]
+    assert page['counts'] == dict(review=1, todo=0, done=0, pending=1)
 
 
 class BadgeMismatch(AssertionError):

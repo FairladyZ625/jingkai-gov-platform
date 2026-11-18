@@ -33,6 +33,16 @@ class SkillRoute(APIRoute):
 
 
 class SkillCatalog(Skills):
+    def history_source(self, user, sid, *, edit=False):
+        doc = self.load(user, sid, edit=edit)
+        return doc, self.history(doc)
+
+    def source_version(self, user, sid, version):
+        doc, snapshots = self.history_source(user, sid)
+        if not isinstance(version, str) or version not in snapshots:
+            raise SkillError(404, "NOT_FOUND", "来源技能版本不存在")
+        return {"id": doc["id"], "version": version}
+
     def listed(self, user, doc, *, review):
         item = doc["data"]
         return self.access(user, item)[0] and (not review or item["status"] == "in_review")
@@ -87,11 +97,7 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
         if source is not None:
             if not isinstance(source, dict) or not isinstance(source.get("id"), str):
                 invalid("复制来源须包含技能标识和版本")
-            doc = skills.load(user, source["id"])
-            version = source.get("version")
-            if not isinstance(version, str) or version not in skills.history(doc):
-                raise SkillError(404, "NOT_FOUND", "来源技能版本不存在")
-            source = {"id": doc["id"], "version": version}
+            source = skills.source_version(user, source["id"], source.get("version"))
         return {"item": skills.create(user, body, source)}
 
     @router.patch("/{sid}")

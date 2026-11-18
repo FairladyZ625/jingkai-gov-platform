@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONVERSATIONS = "/api/v1/conversations"
 REVIEWS = "/api/v1/reviews"
 JOBS = "/api/v1/jobs"
+SKILLS = "/api/v1/skills"
 PASSWORD = secrets.token_urlsafe(12)  # 每次运行随机，避免口令字面量入库
 PANEL = {"app": "policy", "route": "detail", "params": {"id": "PI-03"}}
 
@@ -37,7 +38,8 @@ def client(request, monkeypatch, tmp_path, cheap_password_hash):
         "projects": [{"id": "jkq", "name": "经开区共享智能体工作站"}],
     }]}), encoding="utf-8")
     users = [("sampleoperator", ["sampleoperator"]), ("samplereviewer", ["samplereviewer"]),
-             ("sampleobserver", ["sampleobserver"])]
+             ("sampleobserver", ["sampleobserver"]), ("skillowner", ["member"]),
+             ("skilleditor", ["member"]), ("skillreviewer", ["leader"]), ("skilladmin", ["admin"])]
     (config / "users.yaml").write_text(json.dumps({"users": [
         dict(id=uid, name=uid, position=uid, roles=roles, projects=["jkq"]) for uid, roles in users
     ]}), encoding="utf-8")
@@ -181,6 +183,65 @@ def test_review_sdk_requests_fall_back_to_core(client):
     confirmed = client.post(path, json={"decision": "confirm", "version": 1})
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["status"] == "confirmed" and "item" not in confirmed.json()
+
+
+def test_skill_crud_and_publication_use_default_instance_routes(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert {"get", "post"} <= paths[SKILLS].keys()
+    assert {"get", "patch", "delete"} <= paths[SKILLS + "/{sid}"].keys()
+    for operation in ("publish", "share", "review", "rate", "fork", "restore", "restore-deleted"):
+        assert "post" in paths[f"{SKILLS}/{{sid}}/{operation}"]
+    assert_error(client.get(SKILLS), 401, "UNAUTHENTICATED")
+    login(client, "skillowner")
+    listing = client.get(SKILLS)
+    assert listing.status_code == 200 and listing.json()["items"] == []
+    assert client.get(f"{SKILLS}/meta/options").status_code == 200
+    created = client.post(SKILLS, json={"name": "实例技能"})
+    assert created.status_code == 200, created.text
+    skill = created.json()["item"]
+    path = f"{SKILLS}/{skill['id']}"
+    assert client.patch(path, json={"summary": "更新说明"}).status_code == 200
+    assert client.get(path).json()["item"]["summary"] == "更新说明"
+    assert client.delete(path).json()["ok"]
+    assert_error(client.get(path), 404, "NOT_FOUND")
+    assert client.post(f"{path}/restore-deleted").json()["ok"]
+
+    shared = client.post(f"{path}/share", json={"scope": "people", "people": ["skilleditor"], "perm": "use"})
+    assert shared.status_code == 200 and shared.json()["review"] is None
+    login(client, "skilleditor")
+    assert_error(client.patch(path, json={"summary": "无权编辑"}), 403, "FORBIDDEN")
+    assert client.post(f"{path}/fork").json()["item"]["forkOf"]["id"] == skill["id"]
+    for vote, useful_rate in ((True, 100), (False, 0)):
+        rated = client.post(f"{path}/rate", json={"useful": vote}).json()["item"]
+        assert (rated["ratingN"], rated["usefulRate"]) == (1, useful_rate)
+    listed, = [item for item in client.get(SKILLS).json()["items"] if item["id"] == skill["id"]]
+    assert (listed["ratingN"], listed["usefulRate"]) == (1, 0)
+
+    login(client, "skillowner")
+    first = client.post(f"{path}/publish", json={"share": {"scope": "zone", "perm": "edit"}})
+    assert first.status_code == 200, first.text
+    review = first.json()["review"]
+    body = {"reviewId": review["id"], "version": review["version"]}
+    assert_error(client.post(f"{path}/review", json={"decision": "approve", **body}), 409, "SELF_REVIEW")
+    login(client, "skilleditor")
+    assert skill["id"] not in {item["id"] for item in client.get(SKILLS).json()["items"]}
+    assert_error(client.post(f"{path}/review", json={"decision": "approve", **body}), 403, "FORBIDDEN")
+    login(client, "skillreviewer")
+    assert_error(client.post(f"{path}/review", json={"decision": "reject", "reason": " ", **body}),
+                 400, "INVALID_REQUEST")
+    rejected = client.post(f"{path}/review", json={"decision": "reject", "reason": "需补充说明", **body})
+    assert rejected.status_code == 200 and rejected.json()["item"]["status"] == "rejected"
+    login(client, "skillowner")
+    second = client.post(f"{path}/publish", json={"share": {"scope": "zone", "perm": "edit"}}).json()["review"]
+    login(client, "skilladmin")
+    assert_error(client.post(f"{path}/review", json={"decision": "approve", **body}), 409, "STALE_VERSION")
+    approved = client.post(f"{REVIEWS}/{second['id']}/decisions", json={
+        "decision": "approve", "version": second["version"],
+    })
+    assert approved.status_code == 200 and approved.json()["item"]["decision"]["decision"] == "approve"
+    login(client, "skilleditor")
+    assert client.get(path).json()["item"]["canEdit"]
+    assert client.patch(path, json={"summary": "获批后协作编辑"}).json()["item"]["status"] == "in_review"
 
 
 @pytest.mark.parametrize("client", [("document",)], indirect=True)

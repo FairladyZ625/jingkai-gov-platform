@@ -23,6 +23,8 @@ def api(request):
     people = config / "users.yaml"
     users = json.loads(people.read_text())
     next(u for u in users["users"] if u["id"] == "samplereviewer")["roles"] = ["leader"]
+    users["users"].append(dict(id="sampleeditor", name="另一位经办员", position="经办员",
+                               roles=["sampleoperator"], projects=["sample-project"]))
     people.write_text(json.dumps(users))
     client = request.getfixturevalue("make_client")()
 
@@ -144,9 +146,21 @@ def test_approved_zone_changes_require_new_review(api, operation):
     assert draft["spec"]["prompt"] == ("更新内容" if operation == "patch" else "")
     assert not listed(api, "sampleobserver", path)
     error(call(api, "GET", path, "sampleobserver"), 403, "FORBIDDEN")
+    assert listed(api, "sampleoperator", path)
     for user in ("sampleoperator", "sampleextra"):
-        assert listed(api, user, path)
         assert call(api, "GET", path, user).json()["item"]["version"] == draft["version"]
+    for user in ("sampleextra", "sampleeditor"):
+        assert not listed(api, user, path)
+    error(call(api, "GET", path, "sampleeditor"), 403, "FORBIDDEN")
+    error(call(api, "POST", path + "/rate", "sampleeditor", {"useful": True}), 403, "FORBIDDEN")
+    error(call(api, "POST", path + "/fork", "sampleeditor"), 403, "FORBIDDEN")
+    error(call(api, "POST", path + "/restore", "sampleeditor", {"v": draft["version"]}), 404, "NOT_FOUND")
+    error(call(api, "POST", user="sampleeditor", body={
+        "forkOf": {"id": path[1:], "version": draft["version"]},
+    }), 404, "NOT_FOUND")
+    assert call(api, "POST", user="sampleeditor", body={
+        "forkOf": {"id": path[1:], "version": "0.1.0"},
+    }).status_code == 200
 
     pending, = review_queue(api)
     assert pending["id"] == path[1:] and pending["reviewId"] != approved["reviewId"]
@@ -159,11 +173,12 @@ def test_approved_zone_changes_require_new_review(api, operation):
     assert [snapshot["v"] for snapshot in public["versions"]] == ["0.1.0", "0.2.0"]
 
 
-def test_zone_public_history_only_includes_approved_content(api):
+@pytest.mark.parametrize("perm", ["use", "edit"])
+def test_zone_public_history_only_includes_approved_content(api, perm):
     path = create(api)
     call(api, "PATCH", path, body={"spec": {"prompt": "首发前私有草稿"}})
     call(api, "PATCH", path, body={"spec": {"prompt": "首发公开版本"}})
-    assert decide(api, path, publish_zone(api, path)).status_code == 200
+    assert decide(api, path, publish_zone(api, path, perm=perm)).status_code == 200
     call(api, "PATCH", path, body={"spec": {"prompt": "审核驳回内容"}})
     rejected, = review_queue(api)
     assert decide(api, path, rejected, "reject", reason="需要补充").status_code == 200
@@ -172,19 +187,54 @@ def test_zone_public_history_only_includes_approved_content(api):
     pending, = review_queue(api)
     assert decide(api, path, pending).status_code == 200
 
-    public = call(api, "GET", path, "sampleobserver").json()["item"]
-    assert [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in public["versions"]] == [
-        ("0.3.0", "首发公开版本"), ("0.5.0", "再次获批的内容"),
-    ]
+    for user in ("sampleobserver", "sampleextra"):
+        public = call(api, "GET", path, user).json()["item"]
+        assert public["canEdit"] == (perm == "edit" and user == "sampleextra")
+        assert [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in public["versions"]] == [
+            ("0.3.0", "首发公开版本"), ("0.5.0", "再次获批的内容"),
+        ]
+        rate = call(api, "POST", path + "/rate", user, {"useful": True})
+        assert rate.status_code == 200
+        assert rate.json()["item"]["versions"] == public["versions"]
     owner = call(api, "GET", path).json()["item"]
     assert [snapshot["v"] for snapshot in owner["versions"]] == ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]
+    restore_status, restore_code = (404, "NOT_FOUND") if perm == "edit" else (403, "FORBIDDEN")
     for version in ("0.2.0", "0.4.0"):
         error(call(api, "POST", user="sampleextra", body={
             "forkOf": {"id": path[1:], "version": version},
         }), 404, "NOT_FOUND")
-    rate = call(api, "POST", path + "/rate", "sampleobserver", {"useful": True})
-    assert rate.status_code == 200
-    assert rate.json()["item"]["versions"] == public["versions"]
+        restore = call(api, "POST", path + "/restore", "sampleextra", {"v": version})
+        error(restore, restore_status, restore_code)
+    source = {"id": path[1:], "version": "0.3.0"}
+    explicit = call(api, "POST", user="sampleextra", body={"forkOf": source})
+    assert explicit.status_code == 200 and explicit.json()["item"]["forkOf"] == source
+    fork = call(api, "POST", path + "/fork", "sampleextra")
+    assert fork.status_code == 200
+    assert fork.json()["item"]["spec"]["prompt"] == "再次获批的内容"
+    assert fork.json()["item"]["forkOf"]["version"] == "0.5.0"
+
+
+@pytest.mark.parametrize("action", ["PATCH", "restore"])
+def test_author_revisions_are_hidden_from_zone_editors(api, action):
+    path = create(api)
+    assert decide(api, path, publish_zone(api, path, perm="edit")).status_code == 200
+    if action == "PATCH":
+        response = call(api, "PATCH", path, body={"spec": {"prompt": "新的待审内容"}})
+    else:
+        response = call(api, "POST", path + "/restore", body={"v": "0.1.0"})
+    assert response.status_code == 200, response.text
+    pending, = review_queue(api)
+    assert pending["contentVersion"] == response.json()["item"]["version"]
+    assert not listed(api, "sampleextra", path)
+    error(call(api, "GET", path, "sampleextra"), 403, "FORBIDDEN")
+    error(call(api, "PATCH", path, "sampleextra", {"name": "修改别人的稿件"}), 403, "FORBIDDEN")
+    restored = call(api, "POST", path + "/restore", "sampleextra", {"v": "0.1.0"})
+    assert restored.status_code == 200, restored.text
+    draft = restored.json()["item"]
+    assert draft["status"] == "in_review" and draft["spec"]["prompt"] == ""
+    assert draft["version"] != pending["contentVersion"]
+    assert call(api, "GET", path, "sampleextra").json()["item"] == draft
+    error(decide(api, path, pending), 409, "STALE_VERSION")
 
 
 def test_queue_tracks_active_review_after_author_edit(api):
@@ -220,14 +270,16 @@ def test_legacy_zone_edit_is_hidden_without_approval(api):
     from jkq.skills.storage import Skills
 
     path = create(api)
-    assert decide(api, path, publish_zone(api, path)).status_code == 200
+    assert decide(api, path, publish_zone(api, path, perm="edit")).status_code == 200
     # 模拟已有库中旧版 CRUD 继承 published 状态的记录。
     skills = api.app.state.skills
     owner = skills.platform.rbac.users["sampleoperator"]
     doc = skills.load(owner, path[1:], edit=True)
     Skills.save(skills, owner, doc, {"version": "0.2.0", "name": "旧流程中未经审核的版本"})
-    assert not listed(api, "sampleobserver", path)
-    error(call(api, "GET", path, "sampleobserver"), 403, "FORBIDDEN")
+    for user in ("sampleobserver", "sampleextra"):
+        assert not listed(api, user, path)
+        error(call(api, "GET", path, user), 403, "FORBIDDEN")
+        error(call(api, "POST", path + "/rate", user, {"useful": True}), 403, "FORBIDDEN")
     assert call(api, "GET", path).json()["item"]["version"] == "0.2.0"
 
 

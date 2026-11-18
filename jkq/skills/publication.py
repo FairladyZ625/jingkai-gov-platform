@@ -12,7 +12,7 @@ from jkq.jobs_api import replace_core_route
 from jkq.reviews_api import list_pending, review_view, sdk_review_list
 
 from .api import SkillCatalog, SkillRoute
-from .spec import CONTENT, SkillError, invalid
+from .spec import CONTENT, SkillError, content_fields, invalid, next_version
 from .storage import SkillRecords
 
 
@@ -33,8 +33,8 @@ def transaction(skills):
         scoped.store._db = db
         scoped.records = copy(skills.records)
         scoped.records.store = scoped.store
-        # 与 CRUD 统一先持技能库锁，再申请 SQLite 写锁。
-        with skills.store._lock:
+        # ATTACH 后的写锁涵盖两库，先按技能库、平台库的顺序取得进程锁。
+        with skills.store._lock, skills.platform.store._lock:
             db.execute("BEGIN IMMEDIATE")
             try:
                 yield scoped
@@ -64,6 +64,21 @@ def share_settings(body, previous, users):
 def can_review(skills, user):
     actions = skills.platform.rbac.actions(user, "skills")
     return bool({"admin", "leader"}.intersection(user.roles)) and {"view", "approve"} <= actions
+
+
+def review_denial(user, review, doc):
+    if user.id in (doc["data"]["authorId"], doc["submitter"], review["submitter"]):
+        return SkillError(409, "SELF_REVIEW", "不能审核自己的技能或提交的版本")
+    if review["assignee"] not in (None, user.id):
+        return SkillError(403, "FORBIDDEN", "此待办已指定其他审核人")
+    return None
+
+
+def snapshot_view(record):
+    item = record["data"]
+    at = datetime.fromtimestamp(record["createdAt"], timezone(timedelta(hours=8)))
+    return {"v": item["version"], "by": record["submitter"], "at": at.isoformat(),
+            "note": item["note"], **{key: item[key] for key in CONTENT}}
 
 
 def submit_review(skills, user, sid, version, name):
@@ -109,11 +124,9 @@ class PublishedSkills(SkillCatalog):
         public = item["status"] == "published" and target is not None and all(
             item[key] == target["data"][key] for key in (*CONTENT, "share")
         )
-        return public, manager or shared_edit, "operate" in actions and (manager or shared_edit)
+        return public, "operate" in actions and (manager or shared_edit)
 
-    def pending_reviews(self, user, sid=None):
-        if not can_review(self, user):
-            return []
+    def active_reviews(self, sid=None):
         with self.store._lock:
             rows = self.store._db.execute("""
                 SELECT r.document, v.document FROM v1_reviews AS r
@@ -131,14 +144,23 @@ class PublishedSkills(SkillCatalog):
             """, (sid, sid)).fetchall()
         return [(json.loads(review), json.loads(doc)) for review, doc in rows]
 
+    def pending_reviews(self, user, sid=None):
+        if not can_review(self, user):
+            return []
+        return [(review, doc) for review, doc in self.active_reviews(sid)
+                if review_denial(user, review, doc) is None]
+
+    def review_queue(self, user):
+        return [{**review_view(review), "reviewId": review["id"], "project": doc["project"], "approver": True}
+                for review, doc in self.pending_reviews(user)]
+
     def listed(self, user, doc, *, review):
         item = doc["data"]
         if item["share"]["scope"] != "zone":
             return super().listed(user, doc, review=review)
         if user.id == item["authorId"]:
             return True
-        public, _, editable = self.zone_access(user, item, self.approvals(doc))
-        return public or (editable and "admin" not in self.platform.rbac.actions(user, "skills"))
+        return self.zone_access(user, item, self.approvals(doc))[0]
 
     def list_items(self, user, *, mine, review):
         if not review:
@@ -149,10 +171,26 @@ class PublishedSkills(SkillCatalog):
             item = self.view(user, doc, history=False)
             if not mine or item["mine"]:
                 items.append({**item, "contentVersion": item["version"], "reviewId": pending["id"],
-                              "version": pending["version"]})
+                              "version": pending["version"], "approver": True})
         return items
 
-    def load(self, user, sid, *, edit=False, deleted=False):
+    def can_read_zone_current(self, user, doc, public, editable):
+        item = doc["data"]
+        if public or user.id == item["authorId"]:
+            return True
+        if editable:
+            # 评分、分享与审签也会写存储修订，只有创建内容版本的人参与了这份稿件。
+            with self.store._lock:
+                row = self.store._db.execute("""
+                    SELECT json_extract(document, '$.submitter') FROM v1_versions
+                    WHERE record_id = ? AND version <= ? AND json_extract(document, '$.data.version') = ?
+                    ORDER BY version LIMIT 1
+                """, (doc["id"], doc["version"], item["version"])).fetchone()
+            if row and row[0] == user.id:
+                return True
+        return any(review["version"] == doc["version"] for review, _ in self.pending_reviews(user, doc["id"]))
+
+    def load(self, user, sid, *, edit=False, deleted=False, approved_history=False):
         self.records.app(user, "skills", "operate" if edit else "view")
         doc = self.records.get_record(user, "skills", sid)
         item = doc["data"]
@@ -160,43 +198,59 @@ class PublishedSkills(SkillCatalog):
             raise SkillError(404, "NOT_FOUND", "技能不存在")
         if item["share"]["scope"] == "zone":
             approvals = self.approvals(doc)
-            public, draft, editable = self.zone_access(user, item, approvals)
-            visible = public or draft or any(
-                review["version"] == doc["version"] for review, _ in self.pending_reviews(user, sid)
-            )
-            if not draft:
-                doc["public_approvals"] = approvals
+            public, editable = self.zone_access(user, item, approvals)
+            visible = (approved_history and bool(approvals)) or self.can_read_zone_current(user, doc, public, editable)
         else:
             visible, editable = self.access(user, item)
         if not visible or (edit and not editable):
             raise SkillError(403, "FORBIDDEN", "没有该技能的访问权限", app="skills", need="edit" if edit else "view")
         return doc
 
-    def history(self, doc):
-        if "public_approvals" not in doc:
-            return super().history(doc)
-        versions = {}
-        for version, record in doc["public_approvals"].items():
-            item = record["data"]
-            at = datetime.fromtimestamp(record["createdAt"], timezone(timedelta(hours=8)))
-            versions[version] = {"v": version, "by": record["submitter"], "at": at.isoformat(),
-                                 "note": item["note"], **{key: item[key] for key in CONTENT}}
+    def visible_history(self, user, doc, approvals=None):
+        item = doc["data"]
+        if user.id == item["authorId"] or item["share"]["scope"] != "zone":
+            return self.history(doc)
+        if approvals is None:
+            approvals = self.approvals(doc)
+        versions = {version: snapshot_view(record) for version, record in approvals.items()}
+        public, editable = self.zone_access(user, item, approvals)
+        if item["version"] not in versions and self.can_read_zone_current(user, doc, public, editable):
+            versions[item["version"]] = snapshot_view(doc)
         return versions
+
+    def history_source(self, user, sid, *, edit=False):
+        doc = self.load(user, sid, edit=edit, approved_history=True)
+        return doc, self.visible_history(user, doc)
 
     def view(self, user, doc, *, history=True):
         item = super().view(user, doc, history=False)
+        approvals = None
         if item["share"]["scope"] == "zone":
             approvals = self.approvals(doc)
-            _, draft, item["canEdit"] = self.zone_access(user, item, approvals)
-            if not draft:
-                doc = {**doc, "public_approvals": approvals}
+            _, item["canEdit"] = self.zone_access(user, item, approvals)
         if history:
-            item["versions"] = list(self.history(doc).values())
+            item["versions"] = list(self.visible_history(user, doc, approvals).values())
         return item
 
     def revise(self, user, sid, body, restore=False):
         with transaction(self) as tx:
-            return SkillCatalog.revise(tx, user, sid, body, restore)
+            if not restore:
+                return SkillCatalog.revise(tx, user, sid, body)
+            doc, snapshots = tx.history_source(user, sid, edit=True)
+            version = body.get("v")
+            if not isinstance(version, str):
+                invalid("请选择要恢复的版本")
+            snapshot = snapshots.get(version)
+            if snapshot is None:
+                raise SkillError(404, "NOT_FOUND", "技能版本不存在")
+            fields = content_fields(snapshot)
+            return tx.save(user, doc, {**fields, "version": next_version(doc["data"]["version"]),
+                                      "note": f"恢复版本 {version}"}, action="skill.restore")
+
+    def write(self, user, body, action, sid=None):
+        # 独立 CRUD 写入也会通过附加库写平台审计。
+        with self.store._lock, self.platform.store._lock:
+            return super().write(user, body, action, sid)
 
     def save(self, user, doc, changes, *, action="skill.update"):
         pending = False
@@ -240,11 +294,12 @@ def decision(skills, user, sid, body, rid=None):
         review_id, version = body.get("reviewId", rid), body.get("version")
         if not isinstance(review_id, str) or not review_id.strip() or type(version) is not int or version < 1:
             invalid("请提供待审标识和有效的审核版本")
-        if (rid is not None and review_id != rid) or not any(
-            item["id"] == review_id and item["version"] == version
-            for item, _ in tx.pending_reviews(user, sid)
-        ):
+        pending = next((item for item, _ in tx.active_reviews(sid)
+                        if item["id"] == review_id and item["version"] == version), None)
+        if (rid is not None and review_id != rid) or pending is None:
             raise SkillError(409, "STALE_VERSION", "待审版本已变化，请重新提交或刷新")
+        if denial := review_denial(user, pending, doc):
+            raise denial
         review = tx.records.decide_review(user, review_id, {"version": version,
             "decision": "confirm" if choice == "approve" else "return", "comment": reason})
         item = save_outcome(tx, user, doc, {"status": "published" if choice == "approve" else "rejected",
@@ -310,8 +365,7 @@ def install(app, current_user):
 
     def queue(user=Depends(current_user)):
         result = list_pending(app.state.platform.data, user)
-        result["items"].extend({**review_view(review), "reviewId": review["id"], "project": doc["project"]}
-                               for review, doc in skills.pending_reviews(user))
+        result["items"].extend(skills.review_queue(user))
         result["items"].sort(key=lambda item: item["createdAt"], reverse=True)
         return result
 
