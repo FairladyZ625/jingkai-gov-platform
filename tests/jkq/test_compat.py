@@ -352,7 +352,8 @@ def test_seed_repairs_existing_empty_project_library_without_replacing_data(data
     subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
     with sqlite3.connect(data_dir / "platform.db") as db:
         assert db.execute("select id, company_id from projects").fetchall() == [("jkq", "jingkai")]
-        assert db.execute("select id from companies where id='company'").fetchone() == ("company",)
+        assert db.execute("select id from companies where id='company'").fetchone() is None
+        assert db.execute("select id, name from companies order by rowid limit 1").fetchone()[0] == "jingkai"
         assert db.execute("select value from kv where app_id='test-app'").fetchone() == ('{"kept": true}',)
         snapshot = list(db.iterdump())
     subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)

@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from haiknow_core.store import Store
 
 
+# core identity 在缺少项目配置时写入的占位组织。
+CORE_PLACEHOLDER = ("company", "演示公司")
+
+
 @dataclass(frozen=True)
 class ProjectSeed:
     company_id: str
@@ -54,8 +58,20 @@ def restore_empty_projects(store: "Store", seed: ProjectSeed) -> None:
         if db.execute("select 1 from projects limit 1").fetchone() is not None:
             return
 
-        # 旧库已标记为初始化，core 不会重读种子。只补缺失行，保留原组织和其他数据。
-        db.execute("insert into companies (id, name) values (?, ?) on conflict(id) do nothing",
-                   (seed.company_id, seed.company_name))
+        # 旧库已标记为初始化，core 不会重读种子。只补缺失行，保留真实组织和其他数据。
+        # 无项目时 core 自动生成的占位组织没有任何引用，就地改成配置组织，
+        # 保留其 rowid，使配置组织成为默认组织。
+        placeholder = db.execute(
+            "select 1 from companies where id=? and name=?", CORE_PLACEHOLDER).fetchone()
+        configured = db.execute(
+            "select 1 from companies where id=?", (seed.company_id,)).fetchone()
+        if placeholder and not configured:
+            db.execute("update companies set id=?, name=? where id=?",
+                       (seed.company_id, seed.company_name, CORE_PLACEHOLDER[0]))
+        else:
+            db.execute("insert into companies (id, name) values (?, ?) on conflict(id) do nothing",
+                       (seed.company_id, seed.company_name))
+            if placeholder and seed.company_id != CORE_PLACEHOLDER[0]:
+                db.execute("delete from companies where id=? and name=?", CORE_PLACEHOLDER)
         db.execute("insert into projects (id, name, company_id, products) values (?, ?, ?, ?)",
                    ("jkq", seed.project_name, seed.company_id, seed.products_json))
