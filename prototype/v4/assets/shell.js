@@ -318,6 +318,7 @@
       else field.value = value;
       field.dispatchEvent(new Event(event, { bubbles: true }));
     };
+    const click = (selector) => { if (current()) query(selector)?.click(); };
     await slot.ctl.go(route, params);
 
     if (app === 'document' && params.edits && await find('[data-pe="title"]')) {
