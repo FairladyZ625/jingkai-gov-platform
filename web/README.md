@@ -17,4 +17,17 @@
 改完刷新；改了数据请点头像菜单 →「重置演示数据」。
 
 ## 结构（前后端分离）
-界面 `assets/`（外壳）+ `apps/<id>/`（应用）→ 只调 `api/*.js`（接口适配，入参/出参对齐《接口规范》）→ `config/app.config.js` 的 `api.mode`：`mock` 走浏览器内 `mock/`，`http` 走真实后端。详见 `APP_CONTRACT.md`、`DESIGN.md`。
+界面 `assets/`（外壳）+ `apps/<id>/`（应用）→ 只调 `api/*.js`（接口适配，入参/出参对齐《接口规范》）→ `config/app.config.js` 的 `api.mode`：`mock` 走浏览器内 `mock/`，`http` 走真实后端。详见[应用契约](../docs/APP_CONTRACT.md)和[设计规范](DESIGN.md)。
+
+## 静态部署与回归
+
+从仓库根目录运行 `python3 -m http.server -d web 8080`，打开 <http://localhost:8080/>。部署在子路径时，把 `web/` 的内容放在对应目录下（例如 `/v4/`），按目录网址访问。
+
+```sh
+npm --prefix web ci
+(cd web && npx --no-install playwright install chromium)
+npm --prefix web run test:smoke
+npm --prefix web run test:e2e
+```
+
+冒烟测试验证根路径、`/v4/`、无效口令和断网直开。演示测试在子路径上按段验证业务结果。两个测试命令都会启动本地测试服务，使用 8080 和 8081 端口。
