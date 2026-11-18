@@ -1,0 +1,15 @@
+# 反例夹具的归属。unregistered 故意不登记，用来测 CHK-APP-06。
+* @fixture-owner
+/apps/bad-json/ @fixture-owner
+/apps/bad-manifest/ @fixture-owner
+/apps/bad-values/ @fixture-owner
+/apps/no-web/ @fixture-owner
+/apps/other-owner/ @fixture-owner
+/apps/no-readme/ @fixture-owner
+/apps/bad-readme/ @fixture-owner
+/apps/bad-backend/ @fixture-owner
+/apps/bad-web/ @fixture-owner
+/apps/bad-style/ @fixture-owner
+/apps/bad-tests/ @fixture-owner
+/apps/no-tests/ @fixture-owner
+/apps/legacy-no-sdk/ @fixture-owner

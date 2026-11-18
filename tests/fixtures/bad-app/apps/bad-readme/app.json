@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-readme",
+  "name": "七问缺节和空节",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "usable"
+}
