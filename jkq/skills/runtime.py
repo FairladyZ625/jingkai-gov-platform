@@ -8,8 +8,18 @@ from .spec import TOOLS, SkillError, invalid, validate_spec
 TOOL_IDS = frozenset(tool["id"] for tool in TOOLS)
 STEP_LABELS = {"kb": "检索知识库", "model": "生成结论", "tool": "调用工具", "computer": "准备电脑操作"}
 COMPUTER_TASKS = frozenset(("stats", "apply", "notice", "status"))
+# 规格允许原型使用的空间展示名，检索只接受 §2.6 的空间 ID。
+KB_SPACE_IDS = {"政策库": "policy", "公文范文": "template", "会议纪要": "minutes",
+                "部门制度": "rules", "企业档案": "enterprise"}
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 PENDING = "待确认"
+
+
+def kb_space_id(space):
+    space_id = KB_SPACE_IDS.get(space, space)
+    if space_id not in KB_SPACE_IDS.values():
+        invalid("未知的知识库空间")
+    return space_id
 
 
 def prepare_skill(skill):
@@ -39,10 +49,11 @@ def prepare_skill(skill):
                 raise SkillError(403, "TOOL_NOT_ALLOWED", "步骤只能调用技能已声明的工具")
         if step.get("type") == "tool" and not isinstance(step.get("args", {}), dict):
             invalid("工具参数应为对象")
-        if step.get("type") == "kb" and any(
-            key in step and not isinstance(step[key], str) for key in ("query", "space")
-        ):
-            invalid("知识库查询和空间应为文本")
+        if step.get("type") == "kb":
+            if any(key in step and not isinstance(step[key], str) for key in ("query", "space")):
+                invalid("知识库查询和空间应为文本")
+            if "space" in step:
+                kb_space_id(step["space"])
         if step.get("type") == "computer":
             task = step.get("task")
             if not isinstance(task, str) or task not in COMPUTER_TASKS:
@@ -92,8 +103,8 @@ def run_step(provider, user, step, spec, inputs, prior, name, key):
         if unresolved or is_blank(query):
             return {"note": "知识库查询条件待确认，已跳过。"}
         params = {"q": str(query), "limit": 4}
-        if step.get("space"):
-            params["space"] = step["space"]
+        if "space" in step:
+            params["space"] = kb_space_id(step["space"])
         return {"hits": provider.search(user, params)["hits"]}
     if kind == "tool":
         args = render(step.get("args", {}), inputs, unresolved)
@@ -145,7 +156,7 @@ def execute(execution, skill, raw_inputs, user, provider, authorize):
                 citations.append({**hit, "n": len(citations) + 1})
         if kind == "model":
             model = result["model"]
-            lines.append(result["markdown"])
+            lines.extend(("", result["markdown"], ""))
         if kind == "computer":
             computer = result["computer"]
         if "note" in result:
@@ -156,7 +167,9 @@ def execute(execution, skill, raw_inputs, user, provider, authorize):
             lines.append(f"- {step_label(step)}：{rendered}")
 
     if citations:
-        lines.extend(("", "### 知识库出处"))
+        if lines[-1]:
+            lines.append("")
+        lines.append("### 知识库出处")
         lines.extend(f"- [{cite['n']}] {cite['title']}：{cite['snippet']}" for cite in citations)
-    return {"title": title, "markdown": "\n".join(lines), "citations": citations,
+    return {"title": title, "markdown": "\n".join(lines).rstrip("\n"), "citations": citations,
             "missing": missing, "model": model, "computer": computer}

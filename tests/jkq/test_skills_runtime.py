@@ -196,6 +196,104 @@ def test_trial_keeps_skill_count_and_reports_missing_fields(api_factory):
         assert api.get(ROOT).json()["items"] == before
 
 
+@pytest.mark.parametrize("trial", [False, True], ids=["saved", "trial"])
+def test_job_result_is_only_visible_to_submitter(api_factory, trial):
+    with api_factory(RecordingProvider()) as api:
+        login(api)
+        sid = create(api)
+        path = f"{ROOT}/trial" if trial else f"{ROOT}/{sid}/run"
+        body = {"inputs": INPUTS, "skill": SKILL} if trial else {"inputs": INPUTS}
+        response = api.post(path, json=body)
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job"]["id"]
+        result = poll(api, job_id)["result"]
+        assert result["citations"] == [{**HIT, "n": 1}]
+        assert HIT["snippet"] in result["markdown"]
+
+        login(api, "sampleadmin")
+        # 管理员能访问技能本身，但另一个用户的任务应与不存在的任务一致。
+        assert api.get(f"{ROOT}/{sid}").status_code == 200
+        for reader in ("sampleadmin", "sampleextra", "sampleoutsider"):
+            login(api, reader)
+            denied = api.get(f"{ROOT}/jobs/{job_id}")
+            error(denied, 404, "NOT_FOUND")
+            assert denied.json() == api.get(f"{ROOT}/jobs/missing-job").json()
+
+
+@pytest.mark.parametrize("policy,minutes", [("政策库", "会议纪要"), ("policy", "minutes")])
+def test_prototype_kb_steps_send_standard_space_ids(api_factory, policy, minutes):
+    provider = RecordingProvider()
+    skill = {"name": "检索示例", "spec": {"steps": [
+        {"type": "kb", "query": "实体书店 房租 成本奖励", "space": policy, "label": "查政策原文"},
+        {"type": "kb", "query": "会议纪要 待办", "space": minutes, "label": "查纪要原文"},
+    ]}}
+    with api_factory(provider) as api:
+        login(api)
+        response = api.post(f"{ROOT}/trial", json={"skill": skill})
+        assert response.status_code == 202, response.text
+        poll(api, response.json()["job"]["id"])
+        assert [call[2] for call in provider.calls] == [
+            {"q": "实体书店 房租 成本奖励", "space": "policy", "limit": 4},
+            {"q": "会议纪要 待办", "space": "minutes", "limit": 4},
+        ]
+
+
+@pytest.mark.parametrize("space", ["未知空间", "unknown", ""])
+def test_unknown_kb_space_is_rejected_before_queueing(api_factory, space):
+    provider = RecordingProvider()
+    skill = {"name": "检索示例", "spec": {"steps": [
+        {"type": "kb", "space": space, "query": "{{missing}}"},
+    ]}}
+    with api_factory(provider) as api:
+        login(api)
+        sid = create(api, skill)
+        error(api.post(f"{ROOT}/{sid}/run", json={}), 400, "INVALID_REQUEST")
+        error(api.post(f"{ROOT}/trial", json={"skill": skill}), 400, "INVALID_REQUEST")
+        assert provider.calls == []
+
+
+@pytest.mark.parametrize("keyword,format_name,expected", [
+    ("", "要点", "- materials：公开样例 😀"),
+    ("表格", "表格", "| 字段 | 内容 |\n| --- | --- |\n| materials | 公开样例 😀 \\| 第二行 |"),
+    ("清单", "清单", "- [ ] materials：公开样例 😀"),
+    ("公文", "公文", "#### 一、已有材料\n\n**materials**：公开样例 😀"),
+], ids=["bullets", "table", "checklist", "document"])
+def test_draft_to_trial_renders_requested_markdown(api_factory, keyword, format_name, expected):
+    with api_factory() as api:
+        login(api)
+        text = f"整理资料{keyword} 😀"
+        drafted = api.post(f"{ROOT}/draft", json={"text": text})
+        assert drafted.status_code == 200, drafted.text
+        skill = drafted.json()["draft"]
+        assert skill["name"] == text
+        assert skill["spec"]["output"]["format"] == format_name
+        materials = "公开样例 😀 |\n第二行" if format_name == "表格" else "公开样例 😀"
+        response = api.post(f"{ROOT}/trial", json={"skill": skill, "inputs": {"materials": materials}})
+        assert response.status_code == 202, response.text
+        result = poll(api, response.json()["job"]["id"])["result"]
+        assert result["markdown"] == f"### {text}\n\n{expected}"
+
+
+@pytest.mark.parametrize("path,body", [
+    ("trial", {"skill": {**SKILL, "name": "技能\ud800"}}),
+    ("{sid}/run", {"inputs": {"ent": [{"材料": "\udfff"}]}}),
+    ("trial", {"skill": SKILL, "inputs": {"ent": [{"\ud800": "材料"}]}}),
+    ("draft", {"text": "整理资料\udfff"}),
+], ids=["skill-name", "nested-value", "nested-key", "draft-text"])
+def test_invalid_unicode_in_run_trial_and_draft_returns_400(api_factory, path, body):
+    class NoDraftCalls(MockSkillProvider):
+        def ask(self, user, params):
+            pytest.fail("不可编码的文本不应进入起草 provider")
+
+    with api_factory(NoDraftCalls()) as api:
+        login(api)
+        sid = create(api)
+        # JSON 允许传入转义序列供服务端解析，构造请求时保留该序列。
+        response = api.post(f"{ROOT}/{path.format(sid=sid)}", content=json.dumps(body),
+                            headers={"Content-Type": "application/json"})
+        error(response, 400, "INVALID_REQUEST")
+
+
 def test_run_and_trial_reject_undeclared_tools_before_any_step(api_factory):
     provider = RecordingProvider()
     skill = {**SKILL, "spec": {**SPEC, "tools": []}}

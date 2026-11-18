@@ -1,6 +1,7 @@
 """§3.7 运行、起草、匹配接口。实例入口在 CRUD 安装后调用 install。"""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
@@ -21,6 +22,13 @@ from .spec import SkillError, invalid
 APP = "skills"
 PROJECT = "jkq"
 OPERATION = "skill.execute"
+
+
+def require_utf8_json(value):
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        invalid("技能请求须可编码为 UTF-8 JSON，数字须为有限值")
 
 
 class RuntimeRoute(SkillRoute):
@@ -129,10 +137,12 @@ def install(app, current_user, *, provider=None):
             invalid("技能输入应为对象")
         if key is not None and (not key.strip() or len(key) > 200):
             invalid("防重复编号应为 1 到 200 字符")
-        job = jobs.submit(user, {
+        request = {
             "appId": APP, "project": PROJECT, "operation": OPERATION, "idempotencyKey": key or uuid4().hex,
             "input": {"ref": ref, "skill": prepare_skill(skill), "inputs": inputs},
-        })
+        }
+        require_utf8_json(request)
+        job = jobs.submit(user, request)
         return {"job": job_view(job)}
 
     @router.post("/{sid}/run", status_code=202)
@@ -147,7 +157,14 @@ def install(app, current_user, *, provider=None):
 
     @router.get("/jobs/{jid}")
     def job_status(jid: str, user=Depends(current_user)):
-        job = jobs.get(user, jid, app_id=APP)
+        try:
+            job = jobs.get(user, jid, app_id=APP)
+        except DataError as exc:
+            if exc.code != "forbidden":
+                raise
+            job = None
+        if job is None or job["submitter"] != user.id:
+            raise SkillError(404, "NOT_FOUND", "任务不存在")
         if job["input"]["ref"] is not None:
             runnable_skill(skills, user, job["input"]["ref"])
         return {"job": job_view(job)}
@@ -155,7 +172,9 @@ def install(app, current_user, *, provider=None):
     @router.post("/draft")
     def create_draft(body: dict, user=Depends(current_user)):
         skills.records.app(user, APP, "operate")
-        result = draft(provider, user, request_text(body))
+        text = request_text(body)
+        require_utf8_json(text)
+        result = draft(provider, user, text)
         skills.platform.store.audit(APP, user.id, "skill.draft.generate",
                                     {"provider": type(provider).__name__})
         return {"draft": result}

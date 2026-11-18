@@ -33,8 +33,21 @@ class MockSkillProvider:
 
     def generate(self, user, model, request):
         # 样例 provider 只展示收到的材料，不编造业务判断或知识库依据。
-        details = [f"- {field}：{value}" for field, value in request["inputs"].items()]
-        markdown = "\n".join(details) if details else "缺少可用于形成结论的输入。"
+        details = [(field, " ".join(str(value).splitlines())) for field, value in request["inputs"].items()]
+        format_name = request["format"]
+        if format_name == "表格":
+            rows = ["| 字段 | 内容 |", "| --- | --- |"]
+            for field, value in details or [("已有材料", "待确认")]:
+                cell = value.replace("\\", "\\\\").replace("|", r"\|")
+                rows.append(f"| {field} | {cell} |")
+            markdown = "\n".join(rows)
+        elif format_name == "清单":
+            markdown = "\n".join(f"- [ ] {field}：{value}" for field, value in details) or "- [ ] 已有材料：待确认"
+        elif format_name == "公文":
+            paragraphs = "\n\n".join(f"**{field}**：{value}" for field, value in details) or "已有材料待确认。"
+            markdown = f"#### 一、已有材料\n\n{paragraphs}"
+        else:
+            markdown = "\n".join(f"- {field}：{value}" for field, value in details) or "缺少可用于形成结论的输入。"
         return {"model": model, "markdown": markdown}
 
     def tool(self, user, name, args, idempotency_key):
