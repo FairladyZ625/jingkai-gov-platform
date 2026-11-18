@@ -72,9 +72,15 @@ def detail(item_id: str):
     return {"item": _item(item_id)}
 
 
+def _require_operate(ctx) -> None:
+    if ctx is not None and hasattr(ctx, "can") and not ctx.can("operate"):
+        raise PermissionDenied(getattr(ctx, "app_id", "policy"), "operate")
+
+
 @router.post("/match")
-def match(body: dict):
+def match(body: dict, ctx=Depends(app_context)):
     if "entId" in body and "profile" not in body:
+        _require_operate(ctx)
         ent_id = body["entId"]
         overrides = body.get("overrides", {})
         if not isinstance(ent_id, str) or not ent_id or not isinstance(overrides, dict):
@@ -103,8 +109,8 @@ def calc(body: dict):
     if not positive_amount(amount):
         raise PolicyRequestError(400, "INVALID_REQUEST", "金额须为大于零的有限数字")
     rule = item["rule"]
-    result = estimate(rule, amount)
-    if result is None and not rule.get("manual") and rule.get("base") and "ratio" in rule:
+    result = estimate(rule, amount, body)
+    if result is None and not rule.get("manual") and not rule.get("tiers") and rule.get("base") and "ratio" in rule:
         raise PolicyRequestError(400, "INVALID_REQUEST", "该金额无法按事项规则试算")
     note = (
         "历史规则试算，仅用于回顾，当前申报以现行政策为准"

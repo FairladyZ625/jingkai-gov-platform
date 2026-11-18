@@ -58,14 +58,9 @@ def match_items(profile: dict, items, *, estimate_item) -> dict:
     results = []
     for item in items:
         conditions = item["conditions"]
-        if conditions and conditions[0]["f"] == "subjectType":
-            classification, *conditions = conditions
-        else:
-            classification = {"f": "subjectType", "op": "==", "v": item["object"], "label": f"申报对象为{item['object']}"}
-        subject = _check(classification, profile)
-        if subject["state"] == "no":
+        checks = [_check(condition, profile) for condition in conditions]
+        if checks and checks[0]["condition"]["f"] == "subjectType" and checks[0]["state"] == "no":
             continue
-        checks = [subject, *(_check(condition, profile) for condition in conditions)]
         states = {check["state"] for check in checks}
         level = "no" if "no" in states else "check" if "unknown" in states else "ok"
         times, rule = item["times"], item["rule"]

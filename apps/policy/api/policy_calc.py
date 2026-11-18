@@ -24,7 +24,23 @@ def _money(value: int | float | Decimal) -> str:
     return f"{_number(amount)} 元"
 
 
-def estimate(rule: dict, base: int | float | None) -> dict | None:
+def estimate(rule: dict, base: int | float | None, context: dict | None = None) -> dict | None:
+    context = context or {}
+    if rule.get("tiers"):
+        level = context.get("level") or context.get("hrParkLevel")
+        if not isinstance(level, str) or not level:
+            return None
+        chosen = next((tier for tier in rule["tiers"] if tier.get("level") == level), None)
+        if chosen is None:
+            return None
+        amount = chosen["fixed"]
+        return {
+            "amount": amount,
+            "kind": "fixed",
+            "text": f"{level}档 {_money(amount)}",
+            "capped": False,
+            "level": level,
+        }
     if rule.get("manual"):
         return None
     if "fixed" in rule:
