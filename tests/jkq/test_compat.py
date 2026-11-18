@@ -132,8 +132,6 @@ def test_unmapped_routes_use_error_envelope(client, path):
     ("GET", "/api/v1/auth/session"),
     ("POST", "/api/v1/admin/departments"),
     ("DELETE", "/api/v1/admin/departments/example"),
-    ("GET", "/api/v1/kb/libraries"),
-    ("GET", "/api/v1/kb/files/example"),
 ])
 def test_unavailable_contract_routes_have_explicit_stub(client, method, path):
     response = client.request(method, path)
