@@ -1,0 +1,5 @@
+/* 反例：应用内硬编码颜色，应改用 var(--hk-*) 令牌。 */
+.hk-card {
+  border: 1px solid #123456;
+  background: rgba(255, 255, 255, 0.8);
+}

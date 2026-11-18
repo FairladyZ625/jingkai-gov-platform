@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "empty-owner",
+  "name": "owner 为空的应用",
+  "sector": "other",
+  "kind": "embed",
+  "url": "https://example.test/app",
+  "owner": "",
+  "status": "idea"
+}

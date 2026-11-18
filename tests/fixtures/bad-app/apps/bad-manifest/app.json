@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-manifest",
+  "name": "缺 owner 的清单",
+  "sector": "other",
+  "kind": "embed",
+  "url": "https://example.test/app",
+  "status": "idea"
+}
