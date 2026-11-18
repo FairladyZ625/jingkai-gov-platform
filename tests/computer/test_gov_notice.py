@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from jkq.computer.tasks.gov_notice import COLUMN, ROBOTS, run_notice
+from jkq.computer.tasks.gov_notice import COLUMN, ROBOTS, _SiteRequests, run_notice
 
 
 def url(n):
@@ -26,6 +26,7 @@ class Run:
     def __init__(self, site):
         self.site = site
         self.now = 0
+        self.requests = _SiteRequests(lambda: self.now, self.sleep)
         self.calls = []
         self.confirm = AsyncMock(return_value=True)
         self.saved = {}
@@ -39,7 +40,7 @@ class Run:
             raise response
         return response
 
-    async def sleep(self, seconds):
+    def sleep(self, seconds):
         self.now += seconds
 
     async def import_items(self, payload):
@@ -47,7 +48,7 @@ class Run:
         for item in payload["items"]:
             key = (item["source"]["url"], item["name"])
             if key in self.saved:
-                skipped.append(key)
+                skipped.append({"name": item["name"], "reason": "已在库中"})
             else:
                 self.saved[key] = item
                 docs.append(key)
@@ -55,7 +56,7 @@ class Run:
 
     def execute(self, **kwargs):
         return asyncio.run(run_notice(self.confirm, self.import_items, get=self.get,
-                                      clock=lambda: self.now, sleep=self.sleep, **kwargs))
+                                      requests=self.requests, **kwargs))
 
 
 def test_latest_sources_and_pipeline_dedup(site):
@@ -128,3 +129,137 @@ def test_short_column_imports_available_notices(site):
     run = Run(site)
     assert run.execute()["status"] == "done"
     assert list(run.saved) == [(url(2), "演示")]
+
+
+@pytest.mark.parametrize(("rule", "forbidden"), [
+    ("Disallow: /zwgkkfq/tzgg/", COLUMN),
+    ("Disallow: /*.pdf$", COLUMN + "202611/test.pdf"),
+])
+def test_robots_denies_before_get(site, rule, forbidden):
+    site[ROBOTS] = (200, f"User-agent: *\nAllow: /\n{rule}".encode())
+    site[url(5)] = (200, b'<div id="div_zhengwen"><a href="test.pdf">PDF</a></div>')
+    run = Run(site)
+    assert run.execute()["error"] == "官网规则禁止读取"
+    assert forbidden not in [address for _, address in run.calls]
+    run.confirm.assert_not_awaited()
+
+
+def test_concurrent_runs_share_default_site_spacing(site):
+    from time import monotonic
+
+    times = []
+
+    def unavailable(address):
+        assert address == ROBOTS
+        times.append(monotonic())
+        return 403, b""
+
+    async def concurrent():
+        return await asyncio.gather(*(run_notice(None, None, get=unavailable) for _ in range(2)))
+
+    assert all(result["skipped"] for result in asyncio.run(concurrent()))
+    assert len(times) == 2 and times[1] - times[0] >= 2
+
+
+@pytest.mark.parametrize("valid_row", [True, False])
+def test_malformed_rows_and_article_markup(site, valid_row):
+    malformed = b'<ul class></ul><ul class="list"><li><a href="http://[">bad</a></li></ul>'
+    site[COLUMN] = (200, malformed + (site[COLUMN][1] if valid_row else b""))
+    site[url(5)] = (200, b'<div id="div_zhengwen">One<br>Two<script>bad</script><style>bad</style></div>')
+    run = Run(site)
+    result = run.execute(limit=1)
+    if valid_row:
+        assert result["status"] == "done"
+        assert run.saved[url(5), "演示5"]["text"] == "One\nTwo"
+    else:
+        assert result["status"] == "failed" and result["skipped"]
+        assert result["log"][-1]["url"] == COLUMN
+
+
+@pytest.mark.parametrize(("docs", "reasons", "error"), [
+    ([], ["已在库中"] * 3, None),
+    ([], ["解析失败"] * 3, "资料导入失败"),
+    (["doc"], ["解析失败", "已在库中"], "部分资料导入失败"),
+    ([], [], "资料导入失败"),
+])
+def test_import_outcomes(site, docs, reasons, error):
+    run = Run(site)
+    reply = {"docs": docs, "chunks": len(docs), "skipped": [{"reason": r} for r in reasons]}
+    run.import_items = AsyncMock(return_value=reply)
+    result = run.execute()
+    assert result["status"] == ("failed" if error else "done")
+    assert result.get("error") == error
+    assert result["result"] == reply and len(result["log"]) == 5
+
+
+@pytest.fixture
+def transport(monkeypatch):
+    import io
+    from http.client import HTTPResponse
+    from unittest.mock import Mock
+    from jkq.computer.tasks import gov_notice
+
+    opener = Mock()
+    monkeypatch.setattr(gov_notice, "build_opener", lambda *args: opener)
+
+    def respond(request, timeout):
+        assert request.get_method() == "GET"
+        raw = replies[request.full_url]
+        sock = Mock()
+        sock.makefile.return_value = io.BytesIO(raw)
+        response = HTTPResponse(sock)
+        response.begin()
+        return response
+
+    replies = {}
+    opener.open.side_effect = respond
+    return replies, lambda address: gov_notice._http_get(address, lambda text: False), opener
+
+
+@pytest.mark.parametrize(("media", "body", "length", "attempts", "status"), [
+    ("application/pdf", b"%PDF-1.4", 8, 1, "done"),
+    ("application/pdf", b"%PDF-1.4", 60, 4, "failed"),
+    ("application/pdf", b"", 0, 1, "failed"),
+    ("text/html", b"<html>notice", 12, 1, "failed"),
+    ("application/octet-stream", b"<html>notice", 12, 1, "failed"),
+])
+def test_real_response_attachment(site, transport, media, body, length, attempts, status):
+    replies, get, _ = transport
+    file = COLUMN + "202611/test.pdf"
+    site[url(5)] = (200, b'<div id="div_zhengwen"><a href="test.pdf">PDF</a></div>')
+    for address, (code, data) in site.items():
+        replies[address] = f"HTTP/1.1 {code} Response\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data
+    replies[file] = f"HTTP/1.1 200 OK\r\nContent-Type: {media}\r\nContent-Length: {length}\r\n\r\n".encode() + body
+    run = Run(site)
+    run.get = get
+    result = run.execute(limit=1)
+    assert result["status"] == status
+    assert bool(run.saved) == (status == "done")
+    logs = [e for e in result["log"] if e["url"] == file]
+    assert [e["at"] for e in logs] == list(range(6, 6 + attempts * 2, 2))
+    if attempts == 4:
+        assert all(e["result"] == "IncompleteRead" for e in logs)
+
+
+@pytest.mark.parametrize(("temporary", "attempts"), [(True, 4), (False, 1)])
+def test_preflight_dns(site, transport, monkeypatch, temporary, attempts):
+    import socket
+
+    pytest.importorskip("fastapi")
+    from jkq.computer.tasks.gov_notice import _get
+
+    _, _, opener = transport
+
+    def resolve(*a, **kw):
+        if temporary:
+            raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+        return [(0, 0, 0, "", ("127.0.0.1", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    run = Run(site)
+    run.get = _get
+    result = run.execute()
+    assert result["status"] == "failed" and result["skipped"]
+    assert len(result["log"]) == attempts
+    assert [e["at"] for e in result["log"]] == list(range(0, attempts * 2, 2))
+    opener.open.assert_not_called()
