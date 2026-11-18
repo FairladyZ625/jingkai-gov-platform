@@ -94,7 +94,6 @@ def create_draft(body: DraftIn, ctx: Operator, request: Request):
     content = templates.mock_draft(spec, body.inputs, body.extra)
     citations = drafts.resolve_citations(getattr(platform, "kb", None), ctx.user, body.refs, content)
     policy_id = (body.inputs.get("policy") or "").strip() or None
-    drafts.install_lock(platform)
     return {"item": drafts.create(ctx, body.templateId, policy_id, content, citations)}
 
 
@@ -104,16 +103,5 @@ def get_draft(identity: str, ctx: Viewer, version: Annotated[int | None, Query(g
 
 
 @router.put("/drafts/{identity}")
-def save_draft(identity: str, body: SaveIn, ctx: Operator, request: Request):
-    drafts.install_lock(request.app.state.platform)
+def save_draft(identity: str, body: SaveIn, ctx: Operator):
     return {"item": drafts.save(ctx, identity, body.content.model_dump(), body.note)}
-
-
-# #11 的实例路由应优先登记此路由，防止 core 通用记录写入口绕过公文校验和定稿锁。
-records_guard = APIRouter(prefix="/api/v1/apps/document")
-
-
-@records_guard.post("/records", include_in_schema=False)
-@records_guard.put("/records/{identity}", include_in_schema=False)
-def use_document_routes():
-    return error(405, "METHOD_NOT_ALLOWED", "请使用公文草稿接口写入文稿")
