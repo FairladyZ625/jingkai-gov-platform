@@ -10,7 +10,7 @@ window.JK_APPCFG.meeting = {
   sources: [['upload', '上传录音', 'upload'], ['live', '现场录音', 'mic'], ['nas', '会议档案', 'folder']],
   audioExt: ['mp3', 'm4a', 'wav', 'aac', 'amr', 'mp4', 'flac'],
   /* “用示例录音”：演示上传时预填的会议信息 */
-  sampleUpload: { title: '数据产业企业座谈会', type: '企业座谈会', participants: ['吴强', '王敏', '星河智驾', '灵犀大模型'], file: '2026-11-18 数据产业座谈.m4a', size: '21.7 MB', duration: '28:40' },
+  sampleUpload: { title: '【示例】数据产业企业座谈会', type: '企业座谈会', participants: ['吴强', '王敏', '纸鹿二号智驾', '折页五号大模型'], file: '2026-11-18 数据产业座谈.m4a', size: '21.7 MB', duration: '28:40' },
   /* 待办 → 起草公文：按待办内容挑选公文模板（命中第一个） */
   todoToDoc: [
     { match: /征集/, templateId: 'T04', input: 'title' },
