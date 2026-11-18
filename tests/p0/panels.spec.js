@@ -378,6 +378,68 @@ test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
   console.log('一键演示：12/12 段，20 次操作员执行完成，0 次失败或停止，0 条页面错误或控制台警告。');
 });
 
+test('退出一键演示恢复主题，旧一轮收尾不干扰紧接启动的新一轮', async ({ page }) => {
+  await page.context().setOffline(true);
+  await login(page);
+  await page.evaluate(() => {
+    JKShell.setTheme('dark');
+    JK_DEMO_SCRIPT = [{ title: '浅色主题', steps: [{ theme: 'light' }, { open: 'inbox' }, { theme: 'dark' }] }];
+    window.finishDemoSteps = [];
+    JKShell.openBuiltin = () => new Promise(resolve => finishDemoSteps.push(resolve));
+    window.firstDemo = JKDemo.start();
+  });
+  const readTheme = () => page.evaluate(() => [
+    document.documentElement.dataset.theme, localStorage.getItem('jk4-theme2'),
+  ]);
+  const bar = page.locator('.demobar');
+  await expect.poll(() => page.evaluate(() => finishDemoSteps.length)).toBe(1);
+  const beforeExit = await readTheme();
+  expect(beforeExit).toEqual(['light', 'light']);
+  await bar.getByRole('button', { name: '退出' }).click();
+  await expect(bar).toHaveCount(0);
+  const afterExit = await readTheme();
+  expect(afterExit).toEqual(['dark', 'dark']);
+  console.log(`一键演示退出：展示 ${beforeExit.join('/')} → 恢复 ${afterExit.join('/')}（DOM/偏好）`);
+
+  await page.evaluate(() => { window.secondDemo = JKDemo.start(); });
+  await expect.poll(() => page.evaluate(() => finishDemoSteps.length)).toBe(2);
+  await page.evaluate(async () => {
+    finishDemoSteps[0]();
+    await firstDemo;
+  });
+  await expect(bar).toBeVisible();
+  expect(await readTheme()).toEqual(['light', 'light']);
+  await page.evaluate(async () => {
+    finishDemoSteps[1]();
+    await secondDemo;
+  });
+  await expect(bar).toHaveCount(0);
+  expect(await readTheme()).toEqual(['dark', 'dark']);
+});
+
+test('一键演示发生运行错误后恢复启动主题', async ({ page }) => {
+  await page.context().setOffline(true);
+  await login(page);
+  const warning = page.waitForEvent('console', {
+    predicate: message => message.type() === 'warning' && message.text().includes('演示收尾测试错误'),
+  });
+  const themes = await page.evaluate(async () => {
+    JKShell.setTheme('light');
+    JK_DEMO_SCRIPT = [{ title: '深色主题', steps: [{ theme: 'dark' }, { open: 'inbox' }] }];
+    let beforeError;
+    JKShell.openBuiltin = () => {
+      beforeError = JKShell.theme();
+      throw new Error('演示收尾测试错误');
+    };
+    await JKDemo.start();
+    return { beforeError, dom: JKShell.theme(), saved: localStorage.getItem('jk4-theme2') };
+  });
+  await warning;
+  await expect(page.locator('.demobar')).toHaveCount(0);
+  expect(themes).toEqual({ beforeError: 'dark', dom: 'light', saved: 'light' });
+  console.log(`一键演示异常：展示 ${themes.beforeError} → 恢复 ${themes.dom}/${themes.saved}（DOM/偏好）`);
+});
+
 test('告知单往返后按原勾选和正文首次转公文', async ({ page }) => {
   test.setTimeout(50000);
   await login(page);
