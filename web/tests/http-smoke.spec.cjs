@@ -120,6 +120,19 @@ test('HTTP 正式配置提交凭证，错误密码显示原位提示', async ({ 
   await expect(page.locator('.hello')).toContainText(user.name);
 });
 
+test('显式 HTTP 演示配置保留一键选账号', async ({ page }) => {
+  await page.route('**/config/app.config.js', async (route) => {
+    const response = await route.fetch();
+    const account = { username, password, name: user.name, role: '经办人员' };
+    const override = `\nJK_CONFIG.demoMode = true; JK_CONFIG.demoAccounts = ${JSON.stringify([account])};`;
+    await route.fulfill({ response, body: (await response.text()) + override });
+  });
+  await page.goto(origin);
+  await expect(page.getByText('一键选账号', { exact: true })).toBeVisible();
+  await page.locator('[data-u="' + username + '"]').click();
+  await expect(page.locator('.hello')).toContainText(user.name);
+});
+
 test('file:// 断网可一键选择演示账号', async ({ page, context }) => {
   await context.setOffline(true);
   await page.goto(pathToFileURL(path.join(web, 'index.html')).href);
@@ -154,7 +167,7 @@ test('403 提示后端给出的应用与权限且保持当前工作台', async (
 });
 
 for (const failure of ['断网', '503']) {
-  test(failure + '自动重试三次，耗尽后保留页面与可读提示', async ({ page }) => {
+  test(failure + ' 自动重试三次，耗尽后保留页面与可读提示', async ({ page }) => {
     await openWorkspace(page);
     let attempts = 0;
     await page.route('**/api/v1/kb/search', (route) => {

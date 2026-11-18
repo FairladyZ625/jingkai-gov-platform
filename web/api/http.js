@@ -134,7 +134,7 @@
             return await readEvents(r.body, onEvent, resetTimeout);
           }
           const data = await r.json().catch((error) => {
-            if (error?.name === 'AbortError') throw error;
+            if (ctl.signal.aborted) throw error;
             return {};
           });
           if (!r.ok) throw responseError(r, data, route);

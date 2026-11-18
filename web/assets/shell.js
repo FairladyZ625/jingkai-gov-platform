@@ -741,7 +741,13 @@
     for (const entry of Array.isArray(entries) ? entries : []) {
       if (entry == null) continue;
       const label = typeof entry === 'string' ? entry : entry.title || entry.name || entry.task || entry.text || entry.id;
-      if (label) view.appendChild(h(`<div class="pstep">${esc(label)}</div>`));
+      if (!label) continue;
+      const sourceId = entry.id || entry.fileId;
+      if (card.type === 'kb-hits' && sourceId && can('kb', 'view')) {
+        const link = h(`<button type="button" class="btn sm ghost">${esc(label)}</button>`);
+        link.onclick = () => openCite(sourceId, entry.snippet);
+        view.appendChild(link);
+      } else view.appendChild(h(`<div class="pstep">${esc(label)}</div>`));
     }
     const target = app || (card.type === 'app-suggest' ? card.app || card.id : null);
     if (target && JK.registry[target] && can(target, 'view')) {
