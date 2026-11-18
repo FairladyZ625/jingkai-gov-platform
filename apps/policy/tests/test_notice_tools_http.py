@@ -1,6 +1,5 @@
 """通过实例入口验证告知单、授权和对话编排。"""
 
-import json
 from shutil import copyfile
 
 import pytest
@@ -18,17 +17,20 @@ NOTICE = {"entId": "E001", "itemIds": ["RP-001", "RP-006"]}
 @pytest.fixture
 def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch):
     config, _ = isolated_platform
-    copyfile(REPO_ROOT / "config/projects.yaml", config / "projects.yaml")
-    path = config / "users.yaml"
-    users = json.loads(path.read_text())
-    users["users"].append({"id": "partner", "name": "测试协作者", "roles": ["partner"], "projects": []})
-    path.write_text(json.dumps(users), encoding="utf-8")
+    for name in ("projects.yaml", "roles.yaml", "users.yaml"):
+        copyfile(REPO_ROOT / "config" / name, config / name)
     monkeypatch.setenv("HAIKNOW_APPS_DIR", str(REPO_ROOT / "apps"))
     monkeypatch.setenv("HAIKNOW_SECRET", "test-policy-session")
+    monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    for role in ("admin", "leader", "member", "partner"):
+        monkeypatch.setenv(f"JKQ_DEMO_{role.upper()}_PASSWORD", f"test-{role}")
 
-    def make(user="sampleadmin"):
+    def make(role="admin"):
         client = TestClient(create_app())
-        assert client.post("/api/auth/login", json={"user_id": user}).status_code == 200
+        username = {"admin": "admin", "partner": "hejun"}[role]
+        response = client.post("/api/v1/auth/login", json={"username": username, "password": f"test-{role}"})
+        assert response.status_code == 200, response.text
         return client
 
     return make
