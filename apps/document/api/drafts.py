@@ -1,6 +1,4 @@
 """公文记录和送审状态的适配层，版本与审计沿用卫华数据底座。"""
-import sqlite3
-from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -9,7 +7,6 @@ from haiknow_sdk import DataError
 RECORD_TYPE = "document-draft"
 PROJECT = "jkq"
 BEIJING = timezone(timedelta(hours=8))
-LOCK_FAILURE = "document_draft_locked"
 STATUSES = {"draft": "草稿", "pending": "审签中", "needs_info": "已退回",
             "confirmed": "已定稿", "recheck": "已退回"}
 
@@ -73,33 +70,6 @@ def _draft(current, editions):
     }
 
 
-def install_lock(platform):
-    """补齐记录 SDK 缺少的原子状态前置条件，仅约束本应用文稿。
-
-    节点审批会在原版本上更改状态，单独比较 baseVersion 无法阻止并发定稿后的写入。
-    此约束在 DataService 更新 latest 的 SQLite 写事务内核对状态。
-    """
-    if getattr(platform, "document_lock_installed", False):
-        return
-    with closing(sqlite3.connect(platform.store.data_dir / "platform.db")) as connection:
-        connection.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS document_draft_confirmed_guard
-            BEFORE UPDATE OF latest ON v1_records
-            WHEN OLD.app = 'document' AND EXISTS (
-                SELECT 1 FROM v1_states AS state
-                JOIN v1_versions AS edition
-                  ON edition.record_id = state.record_id AND edition.version = state.version
-                WHERE state.record_id = OLD.id AND state.version = OLD.latest
-                  AND state.status = 'confirmed'
-                  AND json_extract(edition.document, '$.type') = '{RECORD_TYPE}'
-            )
-            BEGIN
-                SELECT RAISE(ABORT, '{LOCK_FAILURE}');
-            END
-        """)
-    platform.document_lock_installed = True
-
-
 def _record(ctx, identity, version=None):
     record = ctx.records.get(identity, version)
     if record["type"] != RECORD_TYPE:
@@ -141,10 +111,6 @@ def save(ctx, identity, content, note):
         except DataError as exc:
             if exc.code != "version_conflict" or attempt == 2:
                 raise
-        except sqlite3.IntegrityError as exc:
-            if str(exc) != LOCK_FAILURE:
-                raise
-            raise _locked() from exc
         else:
             return _present(ctx, record)
 

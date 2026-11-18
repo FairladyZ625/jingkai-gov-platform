@@ -35,7 +35,10 @@ def document_client(isolated_platform, make_client):
     }.items():
         seed["roles"][role] = {"grants": {"document": actions}}
     path.write_text(json.dumps(seed))
+    from apps.document.instance import install
+
     client = make_client(ROOT / "apps")
+    install(client.app)
     login(client, "sampleoperator")
     return client
 
@@ -199,15 +202,8 @@ def test_approval_between_read_and_save_rolls_back(document_client, monkeypatch)
 
 
 def test_product_route_guards_generic_mutation(document_client):
-    from apps.document.api.drafting_router import records_guard
-
     client = document_client
     draft = item(create(client))
-    platform_app = client.app
-    count = len(platform_app.router.routes)
-    platform_app.include_router(records_guard)
-    routes = platform_app.router.routes
-    routes[:] = routes[count:] + routes[:count]  # 使用 #11 的路由优先规则。
     url = "/api/v1/apps/document/records"
     assert_error(client.post(url, json={}), 405, "METHOD_NOT_ALLOWED")
     assert_error(client.put(f"{url}/{draft['id']}", json={}), 405, "METHOD_NOT_ALLOWED")
