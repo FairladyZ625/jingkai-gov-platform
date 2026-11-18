@@ -19,7 +19,7 @@ from haiknow_core.identity_http import Body, Identifier
 from haiknow_core.passwords import hash_password, verify_password
 from haiknow_sdk import ACTIONS
 
-from .seeds import seed_demo_users
+from .seeds import seed_identities
 
 
 RoleId = Literal['admin', 'leader', 'member', 'partner']
@@ -120,12 +120,12 @@ def install(app, *, demo=None, clock=time.time):
         demo = os.environ.get('JKQ_DEMO_MODE') == '1'
 
     config = yaml.safe_load((platform.config_dir / 'roles.yaml').read_text(encoding='utf-8'))
-    profiles = {}
+    demo_users = []
     if demo:
-        users = yaml.safe_load((platform.config_dir / 'users.yaml').read_text(encoding='utf-8'))['demoUsers']
-        seed_demo_users(store, users)
-        profiles = {user['id']: user for user in users}
-        directory.demo_login = True
+        demo_users = yaml.safe_load((platform.config_dir / 'users.yaml').read_text(encoding='utf-8'))['demoUsers']
+    seed_identities(store, config['roles'], demo_users)
+    directory.demo_login = demo
+    profiles = {user['id']: user for user in demo_users}
 
     def document(user):
         db = store._db
@@ -171,7 +171,8 @@ def install(app, *, demo=None, clock=time.time):
             if uid is None:
                 hash_password(body.password)
             elif row[2] != 'active':
-                error = AuthError(403, 'ACCOUNT_DISABLED', '账号已停用，请联系管理员')
+                if verify_password(body.password, row[1]):
+                    error = AuthError(403, 'ACCOUNT_DISABLED', '账号已停用，请联系管理员')
             elif row[4] > now:
                 error = AuthError(409, 'LOCKED', '登录失败次数过多，请稍后重试', retryAt=datetime.fromtimestamp(
                     row[4], BEIJING).isoformat())
@@ -266,6 +267,17 @@ def install(app, *, demo=None, clock=time.time):
         return {'prefs': prefs}
 
     if demo:
+        # 演示视角可暂时不含管理员，首管引导仍须关闭。
+        @router.get('/api/auth/state', include_in_schema=False)
+        @router.get('/api/v1/auth/state', include_in_schema=False)
+        def demo_auth_state():
+            return {'needsBootstrap': False, 'demoLogin': False}
+
+        @router.post('/api/auth/bootstrap', include_in_schema=False)
+        @router.post('/api/v1/auth/bootstrap', include_in_schema=False)
+        def demo_bootstrap_unavailable():
+            raise AuthError(404, 'NOT_FOUND', '接口不存在')
+
         @router.put('/api/v1/me/role')
         def set_role(body: RoleBody, request: Request):
             with store._lock, store._db as db:

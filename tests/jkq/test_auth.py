@@ -3,6 +3,7 @@
 import sqlite3
 import sys
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -120,16 +121,23 @@ def test_demo_login_and_matrix(instance, role, wildcard, grants):
     assert response(client.get(SESSION), 200) == {'user': me['user']}
 
 
-def test_wrong_unknown_and_disabled(instance):
+@pytest.mark.parametrize('path', [LOGIN, '/api/auth/login'])
+def test_wrong_unknown_and_disabled(instance, path):
     build, _ = instance
     client, store = build()
-    error(login(client, password='test-wrong'), 401, 'BAD_CREDENTIALS')
-    error(login(client, 'leader', password=TEST_PASSWORD), 401, 'BAD_CREDENTIALS')
-    error(client.post(LOGIN, json={'username': 'unknown', 'password': TEST_PASSWORD}), 401, 'BAD_CREDENTIALS')
+    error(login(client, password='test-wrong', path=path), 401, 'BAD_CREDENTIALS')
+    error(login(client, 'leader', password=TEST_PASSWORD, path=path), 401, 'BAD_CREDENTIALS')
+    error(client.post(path, json={'username': 'unknown', 'password': TEST_PASSWORD}), 401, 'BAD_CREDENTIALS')
     with store._lock, store._db as db:
         db.execute("update users set status='disabled' where username='wangmin'")
-    error(login(client), 403, 'ACCOUNT_DISABLED')
+    for _ in range(5):
+        error(login(client, password='test-wrong', path=path), 401, 'BAD_CREDENTIALS')
+    error(login(client, path=path), 403, 'ACCOUNT_DISABLED')
     assert response(client.get(SESSION), 200) == {'user': None}
+    with store._lock:
+        assert store._db.execute(
+            "select failed_logins,locked_until from users where username='wangmin'"
+        ).fetchone() == (1, 0)
 
 
 def test_login_lock_survives_restart_and_clears_at_ten_minutes(instance):
@@ -226,6 +234,25 @@ def test_demo_role_switch_changes_server_permissions_and_preserves_identity(inst
     response(client.get(ADMIN), 200)
 
 
+@pytest.mark.parametrize('prefix', ['/api/auth', '/api/v1/auth'])
+def test_demo_admin_can_switch_without_reopening_bootstrap(instance, prefix):
+    build, _ = instance
+    client, store = build()
+    anonymous = TestClient(client.app)
+    response(login(client, 'admin'), 200)
+    assert response(client.put(ROLE, json={'role': 'member'}), 200)['user']['role'] == 'member'
+    error(client.get(ADMIN), 403, 'FORBIDDEN', {'app': '*', 'need': 'admin'})
+    assert response(anonymous.get(prefix + '/state'), 200) == {'needsBootstrap': False, 'demoLogin': False}
+    error(anonymous.post(prefix + '/bootstrap', json={
+        'username': 'operator', 'name': '测试管理员', 'password': TEST_PASSWORD,
+    }), 404, 'NOT_FOUND', {})
+    assert response(anonymous.get(SESSION), 200) == {'user': None}
+    with store._lock:
+        assert store._db.execute('select count(*) from users where demo=0').fetchone() == (0,)
+    response(client.put(ROLE, json={'role': 'admin'}), 200)
+    response(client.get(ADMIN), 200)
+
+
 def test_production_role_always_404_and_demo_sessions_are_rejected(instance):
     build, _ = instance
     demo, _ = build()
@@ -235,6 +262,7 @@ def test_production_role_always_404_and_demo_sessions_are_rejected(instance):
     error(prod.put(ROLE, content='malformed-json'), 404, 'NOT_FOUND', {})
     assert response(prod.get(SESSION), 200) == {'user': None}
     error(login(prod), 401, 'BAD_CREDENTIALS')
+    assert response(prod.get('/api/auth/state'), 200)['needsBootstrap'] is True
     response(prod.post('/api/auth/bootstrap', json={
         'username': 'operator', 'name': '测试管理员', 'password': TEST_PASSWORD,
     }), 200)
@@ -264,6 +292,41 @@ def test_grant_changes_apply_to_existing_sessions(instance):
     with store._lock, store._db as db:
         db.execute("insert into role_grants values ('partner','meeting','view')")
     assert response(client.get(ME), 200)['grants']['meeting'] == ['view']
+
+
+def test_init_missing_roles_in_existing_database_preserves_custom_grants(instance, monkeypatch, tmp_path):
+    build, _ = instance
+    old_config = tmp_path / 'old-config'
+    old_config.mkdir()
+    (old_config / 'roles.yaml').write_text(
+        'roles: {admin: {name: 原有管理员, grants: {"*": [view, admin]}}}\n', encoding='utf-8',
+    )
+    with monkeypatch.context() as legacy_env:
+        legacy_env.setenv('HAIKNOW_CONFIG_DIR', str(old_config))
+        legacy = create_app(ROOT).state.platform
+    assert legacy.directory.role_names() == {'admin': '原有管理员'}
+
+    _, store = build(demo=False)
+    with store._lock:
+        assert set(store._db.execute('select id from roles')) == {(role,) for role in ACCOUNTS}
+    client, _ = build()
+    for role, name, actions in (
+        ('leader', '审签领导', ['view', 'operate', 'approve']),
+        ('member', '经办人员', ['view', 'operate']),
+        ('partner', '外部协作者', []),
+        ('admin', '原有管理员', ['view', 'admin']),
+    ):
+        data = response(login(client, role), 200)
+        assert data['role']['name'] == name
+        assert data['grants']['document'] == actions
+
+    with store._lock, store._db as db:
+        db.execute("delete from role_grants where role_id='leader'")
+    client, _ = build()
+    leader = response(login(client, 'leader'), 200)
+    assert leader['role']['name'] == '审签领导'
+    assert leader['grants']['document'] == []
+    assert response(login(client, 'admin'), 200)['grants']['*'] == ['view', 'admin']
 
 
 @pytest.mark.parametrize('path', [ADMIN, '/api/admin/users'])
@@ -316,3 +379,58 @@ def test_unavailable_terminal_rolls_back_seed(instance, monkeypatch, tmp_path):
         build()
     with sqlite3.connect(tmp_path / 'db/platform.db') as db:
         assert db.execute('select count(*) from users').fetchone() == (0,)
+
+
+def test_terminal_flush_failure_rolls_back_seed_then_environment_can_retry(instance, monkeypatch, tmp_path):
+    class InterruptedTerminal(StringIO):
+        def isatty(self):
+            return True
+
+        def flush(self):
+            raise OSError('模拟终端输出中断')
+
+    build, _ = instance
+    monkeypatch.delenv('JKQ_DEMO_MEMBER_PASSWORD')
+    with monkeypatch.context() as terminal_env:
+        terminal_env.setattr(sys, 'stderr', InterruptedTerminal())
+        with pytest.raises(OSError, match='模拟终端输出中断'):
+            build()
+    with sqlite3.connect(tmp_path / 'db/platform.db') as db:
+        assert db.execute('select count(*) from users').fetchone() == (0,)
+
+    monkeypatch.setenv('JKQ_DEMO_MEMBER_PASSWORD', TEST_PASSWORD)
+    client, _ = build()
+    response(login(client), 200)
+
+
+def test_seed_commit_failure_can_retry_after_terminal_flush(instance, monkeypatch, capsys):
+    build, _ = instance
+    monkeypatch.delenv('JKQ_DEMO_MEMBER_PASSWORD')
+    monkeypatch.setattr(sys.stderr, 'isatty', lambda: True)
+    app = create_app(ROOT)
+    db = app.state.platform.store._db
+
+    def deny_commit(action, name, _column, _database, _trigger):
+        if action == sqlite3.SQLITE_TRANSACTION and name == 'COMMIT':
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    db.set_authorizer(deny_commit)
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            install(app, demo=True)
+    finally:
+        db.set_authorizer(None)
+    output = capsys.readouterr().err
+    prefix = '经开区演示账号 wangmin 的首次口令：'
+    assert output.startswith(prefix)
+    first_password = output.removeprefix(prefix).strip()
+    assert db.execute('select count(*) from users').fetchone() == (0,)
+
+    client, _ = build()
+    output = capsys.readouterr().err
+    assert output.startswith(prefix)
+    new_password = output.removeprefix(prefix).strip()
+    assert new_password != first_password
+    response(login(client, password=new_password), 200)
+    error(login(client, password=first_password), 401, 'BAD_CREDENTIALS')
