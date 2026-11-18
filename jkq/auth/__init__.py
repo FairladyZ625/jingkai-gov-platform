@@ -19,6 +19,7 @@ from haiknow_core.identity_http import Body, Identifier
 from haiknow_core.passwords import hash_password, verify_password
 from haiknow_sdk import ACTIONS
 
+from ..app_catalogs import internal_app_ids
 from .seeds import seed_identities
 
 
@@ -148,7 +149,10 @@ def install(app, *, demo=None, clock=time.time):
     def session_document(user):
         public_user, role = document(user)
         grants = {}
+        internal = internal_app_ids(platform)
         for app_id in dict.fromkeys(('*', *config['apps'], *platform.apps)):
+            if app_id in internal:
+                continue
             allowed = platform.rbac.actions(user, app_id)
             grants[app_id] = [action for action in ACTIONS if action in allowed]
         return dict(user=public_user, role=role, grants=grants)

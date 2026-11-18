@@ -172,3 +172,56 @@ def client_for(make_client, tmp_path, request):
         return c
 
     return make
+
+
+@pytest.fixture
+def jkq_accounts(isolated_platform, cheap_password_hash, monkeypatch):
+    """经开区实例关闭卫华免密演示登录（#12）：把夹具账号改建成真实口令账号。
+
+    返回 (create, login)：create() 等价 jkq.app.create_app() 并写入 users.yaml 里的账号；
+    login(client, uid) 走 /api/v1/auth/login。口令每次运行随机生成，不入库。
+    """
+    import secrets
+
+    import yaml
+
+    config, _ = isolated_platform
+    password = secrets.token_urlsafe(12)
+    monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
+    monkeypatch.delenv("JKQ_DEMO_MODE", raising=False)
+    roles = yaml.safe_load((ROOT / "config/roles.yaml").read_text(encoding="utf-8"))
+    for role, spec in json.loads((config / "roles.yaml").read_text(encoding="utf-8"))["roles"].items():
+        roles["roles"].setdefault(role, {"name": role, **spec})
+    (config / "roles.yaml").write_text(json.dumps(roles, ensure_ascii=False), encoding="utf-8")
+
+    def create():
+        from haiknow_core.passwords import hash_password
+        from jkq.app import create_app
+
+        people = json.loads((config / "users.yaml").read_text(encoding="utf-8"))["users"]
+        app = create_app()
+        store = app.state.platform.store
+        digest = hash_password(password)
+        with store._lock, store._db as db:
+            store.begin_write()
+            for person in people:
+                projects = person.get("projects", [])
+                db.execute(
+                    "insert into users (id,username,name,password_hash,status,last_login,failed_logins,"
+                    "locked_until,demo,all_projects,session_gen) values (?,?,?,?,'active',null,0,0,0,?,0)",
+                    (person["id"], person["id"], person["name"], digest, int("*" in projects)),
+                )
+                for role in person.get("roles", []):
+                    db.execute("insert or ignore into roles values (?,?,1)", (role, role))
+                    db.execute("insert into user_roles values (?,?)", (person["id"], role))
+                for project in projects:
+                    if project != "*":
+                        db.execute("insert or ignore into project_members values (?,?)", (project, person["id"]))
+        return app
+
+    def login(client, uid):
+        response = client.post("/api/v1/auth/login", json={"username": uid, "password": password})
+        assert response.status_code == 200, response.text
+        return response
+
+    return create, login

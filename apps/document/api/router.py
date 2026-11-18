@@ -1,12 +1,18 @@
-"""公文协作的健康检查与公开参考资料种子入口。"""
+"""公文协作的路由及公开参考资料种子入口。"""
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
-from haiknow_sdk import KV, PermissionDenied, app_context
+from fastapi import APIRouter
+from haiknow_sdk import KV
 
-router = APIRouter()
+from .collaboration_router import router as collaboration_router
+from .drafting_router import DocumentRoute, Viewer, router as drafting_router
+from .review_export import router as review_export_router
+
+router = APIRouter(route_class=DocumentRoute)
+router.include_router(drafting_router)
+router.include_router(collaboration_router)
+router.include_router(review_export_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
@@ -18,14 +24,5 @@ def reset_seed(kv: KV, seed_dir: Path) -> None:
 
 
 @router.get("/health")
-def health(request: Request):
-    try:
-        ctx = app_context(request)
-    except HTTPException as exc:
-        if exc.status_code != 401:
-            raise
-        return JSONResponse({"error": {"code": "unauthenticated", "message": "未登录", "details": {}}}, status_code=401)
-    except PermissionDenied as exc:
-        details = {"app": exc.app_id, "need": exc.action}
-        return JSONResponse({"error": {"code": "forbidden", "message": "无权查看此应用", "details": details}}, status_code=403)
+def health(ctx: Viewer):
     return {"id": ctx.app_id, "status": "ok"}

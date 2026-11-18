@@ -26,9 +26,9 @@ def _ids(result: dict) -> list[str]:
 def render_card(call: ToolCall, result: dict) -> dict | None:
     tool, args = call.tool, call.args
     if tool == "policy.match":
-        ent = result.get("entId") or result.get("profile", {}).get("entId") or args.get("entId")
-        if ent:
-            return _card("policy-match", "policy", {"entId": ent}, entId=ent, results=_list(result, "results")[:5])
+        ent = result.get("entId") or (result.get("profile") or {}).get("entId") or args.get("entId")
+        params = {"entId": ent} if ent else {"tab": "match"}
+        return _card("policy-match", "policy", params, entId=ent, results=_list(result, "results")[:5])
     if tool == "policy.search":
         ids = _ids(result)
         params = {"tab": "library", **({"itemId": ids[0]} if ids else {})}
@@ -48,16 +48,26 @@ def render_card(call: ToolCall, result: dict) -> dict | None:
         ids = _ids(result)
         params = {"meetingId": ids[0], "process": False} if ids else {}
         return _card("meeting-list", "meeting", params, ids=ids)
-    if tool == "meeting.summarize" and "todos" in result:
-        meeting = result.get("meetingId") or args.get("meetingId")
-        if meeting:
-            return _card("todos", "meeting", {"meetingId": meeting, "tab": "todos"}, items=_list(result, "todos"))
+    if tool in {"meeting.get", "meeting.summarize"}:
+        meeting = (result.get("item") or {}).get("id") or result.get("meetingId") or args.get("meetingId")
+        if not meeting:
+            raise ValueError("会议卡片缺少会议编号")
+        if tool == "meeting.summarize":
+            minutes = result if "todos" in result else result.get("minutes")
+            if isinstance(minutes, dict) and "todos" in minutes:
+                return _card("todos", "meeting", {"meetingId": meeting, "tab": "todos"}, items=_list(minutes, "todos"))
+        return _card("meeting-list", "meeting", {"meetingId": meeting, "tab": "minutes"}, ids=[meeting])
     if tool == "document.draft":
         template = result.get("templateId") or result.get("item", {}).get("templateId") or args.get("templateId")
         if template:
             return _card("doc-start", "document", {"templateId": template, "autogen": True}, templateId=template)
     if tool == "document.templates":
         return _card("doc-templates", "document", {})
+    if tool == "document.polish":
+        draft = args.get("id")
+        params = {"draftId": draft} if draft else {}
+        return _card("diff", "document", params, a=draft, b=result["preview"],
+                     parts=_list(result, "parts"), changed=result["changed"])
     if tool == "document.compare":
         # §4.5 的主操作是复制。可定位同一份草稿时附上导航。
         a, b = result.get("a", args.get("a")), result.get("b", args.get("b"))
