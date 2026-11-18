@@ -53,7 +53,8 @@ async function check() {
     assert.equal(e.creditCode, 'DEMO-' + e.id);
   }
   const ownedCopy = ['config/mock-data.js', 'config/app.config.js', 'config/demo-script.js', 'config/sample-files.js',
-    'apps/enterprise/app.js', 'apps/enterprise/config.js', 'apps/computer/app.js', 'apps/meeting/config.js'];
+    'apps/enterprise/app.js', 'apps/enterprise/config.js', 'apps/computer/app.js', 'apps/computer/README.md',
+    'apps/meeting/config.js'];
   const copy = [JSON.stringify(demo), ...ownedCopy.map(source)].join('\n');
   const mapping = fs.readFileSync(path.join(__dirname, '企业名称映射.md'), 'utf8');
   for (const line of mapping.split('\n').filter(line => /^\| E\d{3} /.test(line))) {
