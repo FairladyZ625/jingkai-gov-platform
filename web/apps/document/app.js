@@ -304,7 +304,7 @@
         ds.innerHTML = `<div class="q">${esc(T.reviewQ)}</div><div class="q-sub">${esc(T.reviewSub)}</div>
           ${locked() ? `<div class="callout h-green" style="margin-bottom:var(--s3)">${icon('lock')}<div class="grow">已定稿 · ${esc(latest().content.docNo || numberLabel)}。内容已锁定，需要改请另存新稿</div>${canOp ? '<button class="btn sm" data-act="saveAs" data-op="document.save-as">另存新稿</button>' : ''}</div>` : d.status === '已退回' ? `<div class="callout h-red" style="margin-bottom:var(--s3)">${icon('alert')}<div>审签退回，请按批注修改后重新送审</div></div>` : ''}
           <div class="dc-split"><div>${paper(latest().content, 'comment')}</div><div class="dc-side">
-            <div class="dc-status"><div class="row gap2">${tag(d.status, 'docStatus')}<span class="meta">第 ${d.versions.length} 版 · ${esc(d.author)}</span></div>
+            <div class="dc-status"><div class="row gap2">${tag(d.status, 'docStatus')}<span class="meta">第 ${latest().v} 版 · ${esc(d.author)}</span></div>
               <div class="dc-flow">${['草稿', '审签中', '已定稿'].map((s, i) => `<div class="dc-fs ${s === d.status || (d.status === '已退回' && i === 0) ? 'on' : ['草稿', '审签中', '已定稿'].indexOf(d.status) > i ? 'done' : ''}"><span class="dc-si">${['草稿', '审签中', '已定稿'].indexOf(d.status) > i || (d.status === '已定稿' && s === '已定稿') ? icon('check') : ''}</span>${s}</div>`).join('')}</div>
               ${d.status === '审签中' && !canApprove ? `<div class="meta">${icon('clock')}等待 ${esc(C.approvers[0])} 审签</div>` : ''}</div>
             <div class="sec row">批注 <span class="meta">${open ? `${open} 条未解决` : cm.length ? '都已解决' : ''}</span></div>
@@ -463,7 +463,14 @@
           if (!S.issues && !await runCheck(true)) return run && run.fail(S.checkError || '无法核查当前文稿');
           const ids = S.issues.filter(fixable).map((i) => i.id);
           if (!ids.length) { run && run.done(`没有可自动修正的问题。${sumIssues()}`); return; }
-          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); await run.click('[data-op="document.fix-all"]'); const n0 = S.doc.versions.length; await run.wait(() => S.doc.versions.length > n0); await run.step(2); const left = S.issues.filter((i) => i.level === 'error').length; run.done(`已修正 ${ids.length} 处，生成第 ${S.doc.versions.length} 版。${left ? `还有 ${left} 处必须人工改` : sumIssues()}`, [{ label: '看改了什么', say: '这版改了哪些地方' }]); }
+          if (run) {
+            await run.step(1); await run.click('[data-op="document.panel-check"]');
+            const before = latest().v;
+            await run.click('[data-op="document.fix-all"]'); await run.wait(() => latest().v > before);
+            await run.step(2);
+            const left = S.issues.filter((i) => i.level === 'error').length;
+            run.done(`已修正 ${ids.length} 处，生成第 ${latest().v} 版。${left ? `还有 ${left} 处必须人工改` : sumIssues()}`, [{ label: '看改了什么', say: '这版改了哪些地方' }]);
+          }
           else await fix(ids);
         },
         async polish({ style, text } = {}, run) {
@@ -473,7 +480,7 @@
           await run.step(1); await run.click('[data-op="document.panel-polish"]'); await run.click(`[data-op="document.pstyle-${st}"]`); await run.click('[data-op="document.polish"]'); await run.wait(() => S.polish);
           await run.step(2); if (!S.polish.changed) { run.done('已经很规范，没有需要润色的地方'); return; }
           const c = await run.ask('润色修改已标出（绿色新增、红色删除），采用吗？', ['采用', '放弃']);
-          if (c === '采用') { await run.click('[data-op="document.polish-yes"]'); await run.wait(() => !S.polish && !S.edit); run.done(`已采用，存为第 ${S.doc.versions.length} 版`); } else { S.polish = null; step2(); run.done('已放弃，原稿未改'); }
+          if (c === '采用') { await run.click('[data-op="document.polish-yes"]'); await run.wait(() => !S.polish && !S.edit); run.done(`已采用，存为第 ${latest().v} 版`); } else { S.polish = null; step2(); run.done('已放弃，原稿未改'); }
         },
         async compare({ text, a, b } = {}, run) {
           await ready(); if (!(await needDoc(text, run, 2))) return; const vs = S.doc.versions; if (vs.length < 2) { run && run.done('这份文稿只有一个版本'); return; }
@@ -531,7 +538,7 @@
           if (run) { await run.step(1); if (S.tab !== 'list') await run.click('[data-op="document.tab-list"]'); await run.click(`[data-op="document.row-${id}"]`); await run.wait(() => S.doc && S.doc.id === id && el.querySelector('[data-op="document.paper"]'));
             const d = S.doc; const open = (d.comments || []).filter((c) => !c.resolved).length;
             if (/对比|改了/.test(text || '')) return actions.compare({ text }, run);
-            run.done(`「${d.title}」${d.status}，第 ${d.versions.length} 版${open ? `，${open} 条批注未解决` : ''}`, [...(d.versions.length > 1 ? [{ label: '版本对比', say: '这版改了哪些地方' }] : []), { label: '导出 Word', say: '导出 Word' }]); }
+            run.done(`「${d.title}」${d.status}，第 ${latest().v} 版${open ? `，${open} 条批注未解决` : ''}`, [...(d.versions.length > 1 ? [{ label: '版本对比', say: '这版改了哪些地方' }] : []), { label: '导出 Word', say: '导出 Word' }]); }
           else await openDoc(id);
         },
         async intake({ file } = {}, run) {
