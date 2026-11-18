@@ -143,7 +143,7 @@ def install(app, plat, current_user):
     @app.exception_handler(StarletteHTTPException)
     async def admin_errors(request, exc):
         if request.url.path.startswith('/api/admin/apps'):
-            codes = {400: 'invalid_request', 401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 409: 'conflict'}
+            codes = {400: 'invalid_request', 401: 'unauthenticated', 403: 'forbidden', 404: 'not_found', 409: 'conflict'}
             return JSONResponse({'error': {'code': codes.get(exc.status_code, 'error').upper(), 'message': str(exc.detail)}}, status_code=exc.status_code, headers=exc.headers)
         return await previous_http_handler(request, exc)
 

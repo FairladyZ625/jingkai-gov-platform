@@ -11,6 +11,12 @@ from test_platform import login
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_anonymous_admin_apps(make_client):
+    response = make_client().get('/api/admin/apps')
+    assert response.status_code == 401
+    assert response.json()['error']['code'] == 'UNAUTHENTICATED'
+
+
 @pytest.fixture
 def owner(make_client, monkeypatch):
     monkeypatch.delenv('HAIKNOW_DEMO_LOGIN')
