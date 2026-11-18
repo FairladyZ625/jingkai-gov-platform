@@ -121,16 +121,18 @@ for (const [tab, label] of [['items', '事项库'], ['docs', '政策文件']]) {
   });
 }
 
-async function holdNextPolicyResponse(page, method) {
-  await page.evaluate((method) => {
+async function holdNextPolicyResponse(page, method, targetId) {
+  await page.evaluate(({ method, targetId }) => {
     const original = JKApi.policy[method];
     JKApi.policy[method] = async (params) => {
+      const id = method === 'match' ? params.entId : params.itemId;
+      if (id !== targetId) return original(params);
       JKApi.policy[method] = original;
       const response = await original(params);
       await new Promise((resolve) => { window.releasePolicyResponse = resolve; });
       return response;
     };
-  }, method);
+  }, { method, targetId });
 }
 
 test('旧匹配晚于个人画像核对完成时保留新办理', async ({ page }) => {
@@ -138,7 +140,7 @@ test('旧匹配晚于个人画像核对完成时保留新办理', async ({ page 
   await editRent(page);
   await op(page, 'policy.tab-items').click();
   await other.click();
-  await holdNextPolicyResponse(page, 'match');
+  await holdNextPolicyResponse(page, 'match', 'E001');
   await saved.click();
   await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
   await op(page, 'policy.tab-flow').click();
@@ -163,7 +165,7 @@ test('慢重算中编辑告知单后立即切对话仍保留备注', async ({ pa
   await expect(notice).toHaveValue(/5000\s*元/);
   const edited = (await notice.inputValue()) + '\n备注：已核对房租';
   await other.click();
-  await holdNextPolicyResponse(page, 'calc');
+  await holdNextPolicyResponse(page, 'calc', 'PI-03');
   await saved.click();
   await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
   await notice.fill(edited);
@@ -186,15 +188,26 @@ test('首次恢复匹配失败后再次返回仍保留告知单和手填房租',
   await other.click();
 
   const failure = '首次恢复匹配暂时失败';
-  await page.evaluate((message) => {
+  await page.evaluate(({ message, entId }) => {
     const match = JKApi.policy.match;
-    JKApi.policy.match = async () => {
+    JKApi.policy.match = (params) => {
+      // 切出的企业档案也会调用匹配接口生成政策速览。
+      if (params.entId !== entId) return match(params);
       JKApi.policy.match = match;
-      throw new Error(message);
+      return new Promise((_, reject) => {
+        window.rejectPolicyRestore = () => reject(new Error(message));
+      });
     };
-  }, failure);
+  }, { message: failure, entId: 'E001' });
   await saved.click();
-  await expect(page.getByText(failure, { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => !!window.rejectPolicyRestore)).toBe(true);
+  const errors = await page.evaluate(async () => {
+    const restoring = JKShell.S.mounted.policy.restoring;
+    window.rejectPolicyRestore();
+    await restoring;
+    return [...document.querySelectorAll('.toasts .toast.err')].map((toast) => toast.textContent);
+  });
+  expect(errors).toContain(failure);
   await other.click();
   await saved.click();
   await expect(items).toHaveClass(/\bon\b/);
