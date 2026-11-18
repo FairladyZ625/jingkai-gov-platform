@@ -15,6 +15,7 @@ from haiknow_core.identity_http import Body, Name
 from haiknow_core.identity_models import GRANT_ACTIONS
 from jkq.auth import ROLE_ORDER, AuthError, current_user
 
+from ..app_catalogs import internal_app_ids
 from .common import record_change, write
 
 _ACTION_NAMES = ('查看', '操作', '审签', '管理')
@@ -206,9 +207,14 @@ def register(router, platform, admin):
         with store._lock:
             db = store._db
             roles = _roles(db, defaults)
+            # 内部续跑等 internal 应用不进授权矩阵（#135）。
+            hidden = internal_app_ids(platform)
+            grants = {role: {app: acts for app, acts in items.items() if app not in hidden}
+                      for role, items in _matrix(db, roles).items()}
             return dict(roles=list(roles.values()),
-                        apps=[dict(id=ident, name=name) for ident, name in app_names().items()],
-                        grants=_matrix(db, roles), actions=list(zip(GRANT_ACTIONS, _ACTION_NAMES)))
+                        apps=[dict(id=ident, name=name) for ident, name in app_names().items()
+                              if ident not in hidden],
+                        grants=grants, actions=list(zip(GRANT_ACTIONS, _ACTION_NAMES)))
 
     @router.put('/api/v1/admin/grants/{role_id}/{app_id}')
     def update_grant(role_id: str, app_id: str, body: GrantUpdate, request: Request, user=Depends(admin)):
