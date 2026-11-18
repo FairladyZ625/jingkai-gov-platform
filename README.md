@@ -8,4 +8,4 @@
 - `data/public/`：公开来源抓取的真实数据（经开区政务公开政策、企业、公文样例、规则、会议纪要）及核对报告
 - `docs/audit/`：原型流程问题截图
 
-开发流程：Issue → `feat/<issue号>-<slug>` 分支 → PR（`Closes #<issue号>`）→ 审核后合并到 main。
+开发流程：Issue → `feat/<issue号>-<slug>` 分支 → PR（`Closes #<issue号>`）→ 审核后合并到 main。参与前请先阅读 [《合作指南》](CONTRIBUTING.md)。
