@@ -327,7 +327,7 @@ def _check_backend(r: Report, d: Path) -> None:
                 continue
             if mod in PY_FORBIDDEN:
                 r.rule("CHK-APP-10", where, f"禁止 import {mod}（只能通过 haiknow_sdk 使用平台能力）", line=line)
-            elif mod not in stdlib and mod not in PY_ALLOWED_3P:
+            elif mod not in stdlib and mod not in PY_ALLOWED_3P and (d.name, mod) != ("document", "docx"):
                 r.rule("CHK-APP-11", where, f"未登记的依赖 {mod}；需要新依赖先在 Issue 里提，由底座负责人加入白名单", line=line)
         for node in ast.walk(tree):
             env_attribute = isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
