@@ -6,6 +6,7 @@ const kinds = {
   number: Number.isFinite,
   string: value => typeof value === 'string',
   boolean: value => typeof value === 'boolean',
+  array: Array.isArray,
 };
 
 const errorShape = { error: { code: 'string', message: 'string', details: 'object' } };

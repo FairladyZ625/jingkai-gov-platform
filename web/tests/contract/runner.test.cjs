@@ -59,13 +59,20 @@ test('真实 HTTP 传输只执行所选 platform 用例，并转发会话 Cookie
 
   const lines = [];
   const errors = [];
-  const status = await main(['--base', base, '--module', 'platform'], {
+  const status = await main(['--base', base, '--module', 'platform', '--allow-writes'], {
     CONTRACT_USERNAME: mock.credentials.username,
     CONTRACT_PASSWORD: mock.credentials.password,
+    CONTRACT_RESETTABLE_TARGET: new URL(base).host,
   }, line => lines.push(line), line => errors.push(line));
   assert.equal(status, 0, errors.join('\n'));
-  assert.deepEqual(lines, ['契约模式：HTTP；模块：platform', 'platform: 37/37，错误样例 1/1', '合计 37/37，错误样例 1/1']);
-  assert.equal(requests.length, 38);
+  assert.deepEqual(lines, [
+    '契约模式：HTTP（含写入，结束后重置演示数据）；模块：platform',
+    'platform: 37/37，错误样例 1/1', '已请求演示数据重置', '合计 37/37，错误样例 1/1',
+  ]);
+  // 安全前置登录 1 次 + 38 条用例 + 结束时重新登录并重置 2 次。
+  assert.equal(requests.length, 41);
+  assert.deepEqual(requests[0].slice(0, 2), ['POST', '/api/v1/auth/login']);
+  assert.deepEqual(requests.at(-1).slice(0, 2), ['POST', '/api/v1/demo/reset']);
   assert.equal(requests.find(([, url]) => url === '/api/v1/me')[2], 'contract-session=example');
   assert.ok(requests.every(([, url]) => url.startsWith('/api/v1/')));
 });

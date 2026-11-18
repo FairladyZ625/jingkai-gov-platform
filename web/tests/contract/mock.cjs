@@ -14,7 +14,7 @@ function loadScript(context, file) {
   vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename });
 }
 
-function createMock() {
+function createContext(globals = {}, configure = () => {}) {
   const storage = new Map();
   const context = vm.createContext({
     console, setTimeout, clearTimeout, URL, URLSearchParams,
@@ -23,6 +23,7 @@ function createMock() {
       setItem: (key, value) => storage.set(key, value),
       removeItem: key => storage.delete(key),
     },
+    ...globals,
   });
   context.window = context;
   for (const file of [
@@ -32,8 +33,16 @@ function createMock() {
     'mock/mock-api.js', 'mock/auth.js', 'mock/platform-ext.js',
     'mock/policy.js', 'mock/kb.js', 'mock/skills.js', 'mock/computer.js',
     'api/http.js',
-  ]) loadScript(context, file);
+  ]) {
+    if (file === 'api/http.js') configure(context);
+    loadScript(context, file);
+  }
   context.JKAPI.latency = 0;
+  return context;
+}
+
+function createMock() {
+  const context = createContext();
   context.JKAPI.state().myTodos.push({
     id: 'contract-todo', task: '核对契约测试', owner: '测试账号',
     due: '2026-12-01', from: '契约测试', app: 'meeting', done: false,
@@ -56,4 +65,4 @@ function createMock() {
   };
 }
 
-module.exports = { assets, createMock, loadScript };
+module.exports = { assets, createContext, createMock, loadScript };

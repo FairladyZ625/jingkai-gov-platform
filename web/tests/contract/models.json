@@ -129,10 +129,14 @@
     "doc": "string",
     "clause": "string",
     "object": "string",
+    "docNo": "string",
+    "docTitle": "string",
+    "docState": "string",
     "conditions": [
       {
         "f": "string",
         "op": "string",
+        "v": "number|string|boolean|array",
         "label": "string"
       }
     ],

@@ -48,6 +48,29 @@
     }
   }
 
+  // 混合模式：平台走 HTTP、部分应用留在 mock 时，按 HTTP 会话的角色建立本地演示会话。
+  // 真实账号口令只发往 HTTP 后端，本地只记录映射到的演示账号。
+  const sessionPaths = /^\/api\/v1\/(?:auth\/(?:login|logout|session)|me)$/;
+  function syncMockSession(path, out) {
+    const X = window.JKAPI && window.JKAPI.ext;
+    if (!X || !sessionPaths.test(path)) return;
+    const S = X.state();
+    const user = path.endsWith('/logout') ? null : out && out.user;
+    if (!user) {
+      if (S.session && S.session.bridged) { S.session = null; X.save(); }
+      return;
+    }
+    const role = typeof user.role === 'string' ? user.role : (out.role && out.role.id) || (user.role && user.role.id);
+    const active = (S.users || []).filter((u) => u.status === 'active');
+    const local = active.find((u) => u.username === user.username && u.role === role) || active.find((u) => u.role === role);
+    if (!local) {
+      if (S.session && S.session.bridged) { S.session = null; X.save(); }
+      return;
+    }
+    if (S.session && S.session.userId === local.id) return;
+    S.session = { userId: local.id, at: X.now(), bridged: true }; S.me = local.id; X.save();
+  }
+
   async function request(method, path, body) {
     const out = await raw(method, path, body);
     if (method !== 'GET' && window.JK && window.JK.bus) setTimeout(() => window.JK.bus.emit('api:write', { method, path }), 0);
@@ -62,11 +85,13 @@
         const r = await fetch(c.baseUrl.replace(/\/$/, '') + path, { method, credentials: 'include', signal: ctl.signal,
           headers: isForm ? {} : { 'Content-Type': 'application/json' }, body: body == null || method === 'GET' ? undefined : isForm ? body : JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
+        if (r.status === 401 && moduleFor(path) === 'platform') syncMockSession('/api/v1/auth/logout', null);
         if (!r.ok) {
           const error = j?.error || j || {};
           throw { status: r.status, code: error.code || 'HTTP_' + r.status,
             message: error.message || r.statusText, details: error.details };
         }
+        if (moduleFor(path) === 'platform') syncMockSession(path.split('?')[0], j);
         return j;
       } catch (e) { if (e && e.name === 'AbortError') throw { status: 0, code: 'TIMEOUT', message: '服务器响应超时' }; throw e.status !== undefined ? e : { status: 0, code: 'NETWORK', message: '网络不可用' }; }
       finally { clearTimeout(t); }
@@ -76,8 +101,6 @@
       window.JKAPI.reset();
       return { ok: true };
     }
-    // §7 的简写路径与 §3.6 的恢复路径共用同一个现有 mock 处理器。
-    if (method === 'POST' && /^\/api\/v1\/kb\/docs\/[^/?]+$/.test(path)) path += '/restore';
     return window.JKAPI.request(method, path, body);
   }
   const qs = (o) => { const p = Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''); return p.length ? '?' + p.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&') : ''; };
