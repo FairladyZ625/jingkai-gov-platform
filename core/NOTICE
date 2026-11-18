@@ -1,0 +1,5 @@
+本目录的平台服务端与 SDK，以及仓库中的应用模板和配套检查、回归测试，
+源自 haiknow-app-platform。源快照及提交时间见 VERSION。
+
+源 commit 无 LICENSE。经仓库所有者 Ben 于 2026-11-18 确认，
+按 AGPL-3.0 向本仓库公开该快照。许可证全文见仓库根目录 LICENSE。

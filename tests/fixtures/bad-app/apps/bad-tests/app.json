@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-tests",
+  "name": "没有无权限断言的测试",
+  "sector": "other",
+  "kind": "embed",
+  "url": "https://example.test/app",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

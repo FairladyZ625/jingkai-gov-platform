@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "unregistered",
+  "name": "未登记 CODEOWNERS 的应用",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

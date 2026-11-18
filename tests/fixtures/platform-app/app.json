@@ -1,0 +1,16 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "sample-app",
+  "name": "样例应用",
+  "sector": "other",
+  "kind": "module",
+  "owner": "tester",
+  "actions": ["view", "operate", "approve"],
+  "defaultRoles": {
+    "sampleoperator": ["view", "operate"],
+    "samplereviewer": ["view", "operate", "approve"],
+    "sampleobserver": ["view"]
+  },
+  "status": "usable"
+}
