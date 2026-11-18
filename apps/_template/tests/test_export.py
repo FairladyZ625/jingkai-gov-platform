@@ -16,15 +16,15 @@ def test_to_csv_quotes_comma_and_newline():
         "confirmedBy": "samplereviewer",
     }
     assert router.to_csv(record) == (
-        "字段,内容\n"
-        '标题,"含,逗号"\n'
-        '内容,"第一行\n第二行"\n'
-        "状态,confirmed\n"
-        "提交人,sampleoperator\n"
-        "确认人,samplereviewer\n"
+        "字段,内容\r\n"
+        '标题,"含,逗号"\r\n'
+        '内容,"第一行\n第二行"\r\n'
+        "状态,confirmed\r\n"
+        "提交人,sampleoperator\r\n"
+        "确认人,samplereviewer\r\n"
     )
 
 
 def test_to_csv_leaves_confirmed_by_blank_for_unconfirmed_record():
     record = {"data": {"title": "草稿"}, "status": "draft", "submitter": "sampleoperator", "confirmedBy": None}
-    assert "确认人,\n" in router.to_csv(record)
+    assert "确认人,\r\n" in router.to_csv(record)

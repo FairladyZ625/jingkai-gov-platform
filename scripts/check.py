@@ -981,7 +981,7 @@ def check_tests(r: Report, only: str | None) -> None:
     if only:
         args += [str(ROOT / "apps" / only)]
     else:
-        args += ["tests", "core", "apps", "apps/_template/tests"]
+        args.append(".")
     p = subprocess.run(args, cwd=ROOT, env=_test_env())
     if p.returncode not in (0, 5):  # 5 = 没有收集到测试
         r.rule("CHK-TEST-03", "tests", f"pytest 失败（退出码 {p.returncode}）")

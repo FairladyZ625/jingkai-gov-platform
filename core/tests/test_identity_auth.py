@@ -111,3 +111,35 @@ def test_demo_list_and_strict_login_body(make_client, monkeypatch):
     restarted = make_client()
     assert restarted.get('/api/auth/users').status_code == 404
     assert restarted.post('/api/auth/login', json={'user_id': 'sampleadmin'}).status_code == 401
+
+
+def test_demo_identities_cannot_authenticate_after_restart(make_client, monkeypatch):
+    monkeypatch.setenv('HAIKNOW_SECRET', 'test-session-signing')
+    demo_admin = make_client()
+    assert demo_admin.post('/api/auth/login', json={'user_id': 'sampleadmin'}).status_code == 200
+    assert demo_admin.get('/api/v1/me').status_code == 200
+    regular = {'username': 'worker', 'password': 'worker-pass-123'}
+    assert demo_admin.post('/api/admin/users', json={**regular, 'name': '虚构办理员'}).status_code == 201
+    regular_client = TestClient(demo_admin.app)
+    assert regular_client.post('/api/auth/login', json=regular).status_code == 200
+
+    monkeypatch.delenv('HAIKNOW_DEMO_LOGIN')
+    restarted = make_client()
+    restarted.cookies.update(demo_admin.cookies)
+    assert restarted.get('/api/auth/state').json() == {'needsBootstrap': True, 'demoLogin': False}
+    for url in ('/api/me', '/api/v1/me'):
+        assert restarted.get(url).status_code == 401
+    for login in ({'user_id': 'sampleadmin'}, {'username': 'sampleadmin', 'password': 'demo1234'}):
+        response = restarted.post('/api/auth/login', json=login)
+        assert response.status_code == 401
+        assert response.json()['error']['code'] == 'invalid_credentials'
+
+    worker = TestClient(restarted.app)
+    worker.cookies.update(regular_client.cookies)
+    assert worker.get('/api/v1/me').status_code == 200
+    assert worker.post('/api/auth/login', json=regular).status_code == 200
+    assert bootstrap(restarted).status_code == 200
+    uid = restarted.get('/api/me').json()['id']
+    disabled = restarted.patch(f'/api/admin/users/{uid}', json={'status': 'disabled'})
+    assert disabled.status_code == 409
+    assert disabled.json()['error']['code'] == 'last_admin'

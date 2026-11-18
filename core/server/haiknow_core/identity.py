@@ -13,8 +13,18 @@ DEFAULT_SETTINGS = {'platformName': 'HAiKnow 小应用接入平台', 'defaultHom
 
 
 class Directory:
-    def __init__(self, store):
+    def __init__(self, store, *, demo_login=False):
         self.store = store
+        self.demo_login = demo_login
+
+    def has_admin(self, db, *, active_only=False):
+        return db.execute(
+            "select 1 from users u join user_roles r on u.id=r.user_id "
+            "join role_grants g on r.role_id=g.role_id "
+            "where g.app_id='*' and g.action='admin' and (u.demo=0 or ?) "
+            "and (not ? or u.status='active') limit 1",
+            (self.demo_login, active_only),
+        ).fetchone() is not None
 
     @staticmethod
     def _yaml(path):
@@ -124,6 +134,14 @@ class Directory:
         with self.store._lock:
             row = self.store._db.execute('select coalesce(session_gen,0) from users where id=?', (user_id,)).fetchone()
         return row[0] if row else 0
+
+    def session_user(self, user_id, generation) -> User | None:
+        with self.store._lock:
+            eligible = self.store._db.execute(
+                'select 1 from users where id=? and coalesce(session_gen,0)=? and (demo=0 or ?)',
+                (user_id, generation, self.demo_login),
+            ).fetchone()
+            return self.user(user_id) if eligible else None
 
     def bump_session_gen(self, db, user_id) -> int:
         """在调用方事务内递增并返回新代数；登出、改密与强制下线共用。"""
