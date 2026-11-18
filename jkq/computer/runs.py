@@ -7,10 +7,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Protocol
 from uuid import uuid4
 
+from .tasks.gov_notice import SITE_SYSTEM, TASK as NOTICE_TASK, run_notice
+
 
 PREFIX = "/api/apps/computer"
 SYSTEM_ID = "zcdx"
 GATES = {"otp": "验证码核验", "sign": "签章", "pay": "付款", "submit": "提交"}
+CONFIRM_LABELS = {**GATES, "import": "入库"}
 TERMINAL = {"done", "stopped", "failed"}
 TIMEOUT_SECONDS = 600
 TIMEOUT_MESSAGE = "运行超时，单次运行上限为 10 分钟"
@@ -19,6 +22,7 @@ TASK = {
     "needsEnt": False, "desc": "在本地模拟政务站填写演示申报",
     "stop": "验证码、签章、付款和提交前停下确认", "keywords": ["申报", "备案", "填表"],
 }
+TASKS = {"apply": TASK, "notice": NOTICE_TASK}
 
 
 def now() -> str:
@@ -103,11 +107,11 @@ class Run:
         if kind != pending["kind"] and (decision == "approve" or kind is not None):
             raise ComputerError("LOCKED", "确认类型与当前步骤不一致")
         if decision == "decline":
-            self.stop(f"人工拒绝{GATES[pending['kind']]}，任务已停止")
+            self.stop(f"人工拒绝{CONFIRM_LABELS[pending['kind']]}，任务已停止")
             return
         if not self.can_operate():
             raise ComputerError("FORBIDDEN", "系统已停用或经办人已失去操作权限")
-        self.event("computer.confirm.approve", f"人工确认{GATES[kind]}", self.data["by"])
+        self.event("computer.confirm.approve", f"人工确认{CONFIRM_LABELS[kind]}", self.data["by"])
         self.data.update(status="running", pending=None)
         # 将消费掉的批准同步交给同一个等待点，重复请求无法继续。
         self.approval.set_result(None)
@@ -138,10 +142,17 @@ class Run:
         try:
             self.check()
             result = await runner(self)
-            if not self.data.get("result") and result:
-                self.record_result(result)
+            if self.data["status"] in TERMINAL:
+                return
+            if self.data["task"] == "apply":
+                if not self.data.get("result") and result:
+                    self.record_result(result)
+                self.event("computer.done", "模拟申报已完成")
+            else:
+                if result is not None and not self.data.get("result"):
+                    self.data["result"] = result
+                self.event("computer.done", "通知已入库" if self.data.get("result") else "任务已完成")
             self.check()
-            self.event("computer.done", "模拟申报已完成")
             self.data.update(status="done", result=self.data.get("result") or result)
         except TimeoutError:
             self.fail(ComputerError("CHECK_FAILED", TIMEOUT_MESSAGE))
@@ -166,7 +177,8 @@ class Run:
 class Runs:
     """#18 合并前的单进程执行适配。重启时丢弃会话，绝不重放写动作。"""
 
-    def __init__(self, url: str, runner: Runner, audit: Audit, *, timeout: float = TIMEOUT_SECONDS):
+    def __init__(self, url: str, runner: Runner, audit: Audit, *, timeout: float = TIMEOUT_SECONDS,
+                 fetch=None, import_items=None, site_requests=None):
         self.name = "本地模拟政务站"
         self.url = url
         self.runner = runner
@@ -175,12 +187,76 @@ class Runs:
         self.allowed = True
         self.runs: dict[str, Run] = {}
         self.keys: dict[tuple[str, str], str] = {}
+        self.notice_get = fetch
+        self.site_requests = site_requests
+        self._imported: dict[tuple[str, str], dict] = {}
+        self.import_items = import_items or self._stub_import
 
     def system(self) -> dict:
         return {
             "id": SYSTEM_ID, "name": self.name, "url": self.url, "kind": "申报",
             "account": "演示身份", "allowed": self.allowed, "confirmOn": list(GATES),
         }
+
+    def systems(self) -> list[dict]:
+        return [self.system(), dict(SITE_SYSTEM)]
+
+    async def _stub_import(self, payload: dict) -> dict:
+        """#25 导入流水线尚未合并，按约定返回 docs/skipped。"""
+        docs, skipped = [], []
+        for item in payload.get("items") or []:
+            source = item.get("source") or {}
+            key = (str(source.get("url") or ""), str(item.get("name") or ""))
+            if key in self._imported:
+                skipped.append({"name": item.get("name"), "reason": "已在库中"})
+            else:
+                self._imported[key] = item
+                docs.append({"name": item.get("name"), "source": source})
+        return {"docs": docs, "skipped": skipped}
+
+    async def run_notice_task(self, run: "Run") -> dict:
+        async def confirm(items):
+            titles = [item.get("name") or "通知" for item in items]
+            run.data["notice"] = {
+                "title": titles[0] if titles else "通知",
+                "count": len(items),
+                "items": [{"name": item.get("name"), "source": item.get("source")} for item in items],
+            }
+            step = {"title": "确认入库", "status": "blocked", "ops": [], "human": "import"}
+            run.data["steps"].append(step)
+            run.data["step"] = len(run.data["steps"]) - 1
+            run.event("computer.step.waiting", f"已下载 {len(items)} 条通知，等待确认入库")
+            run.approval = asyncio.get_running_loop().create_future()
+            run.data.update(status="waiting", pending={"kind": "import", "step": run.data["step"]})
+            try:
+                await run.approval
+                run.check()
+                step["status"] = "done"
+                return True
+            finally:
+                run.approval = None
+
+        kwargs = {}
+        if self.notice_get is not None:
+            kwargs["get"] = self.notice_get
+        if self.site_requests is not None:
+            kwargs["requests"] = self.site_requests
+        result = await run_notice(confirm, self.import_items, **kwargs)
+        run.data["requests"] = result.get("log") or []
+        for entry in run.data["requests"]:
+            run.data["log"].append({
+                "at": now(), "who": "系统",
+                "text": f"GET {entry.get('url')} → {entry.get('result')} (#{entry.get('attempt')})",
+            })
+        if result.get("status") == "failed":
+            run.data["skipped"] = True
+            raise ComputerError("CHECK_FAILED", result.get("error") or "官网通知任务失败",
+                                details={"skipped": True})
+        if result.get("status") == "stopped":
+            if run.data["status"] not in TERMINAL:
+                run.stop("人工拒绝入库，任务已停止")
+            return result
+        return result.get("result") or result
 
     def set_allowed(self, owner: str, system_id: str, allowed: bool) -> dict:
         if system_id != SYSTEM_ID:
@@ -194,16 +270,18 @@ class Runs:
         return self.system()
 
     def start(self, owner: str, name: str, args: dict, key: str | None, can_operate: CanOperate) -> Run:
-        if args["task"] != TASK["id"]:
+        task = TASKS.get(args["task"])
+        if task is None:
             raise ComputerError("NOT_FOUND", "任务模板不存在")
         dedup = (owner, key) if key else None
         if dedup in self.keys:
             existing = self.runs[self.keys[dedup]]
             ent = existing.data["ent"]
-            if (ent["id"] if ent else None, existing.data["from"]) != (args["ent"], args["from"]):
-                raise ComputerError("LOCKED", "幂等键已用于其他申报")
+            current = (existing.data["task"], ent["id"] if ent else None, existing.data["from"])
+            if current != (args["task"], args["ent"], args["from"]):
+                raise ComputerError("LOCKED", "幂等键已用于其他任务")
             return existing
-        if not self.allowed:
+        if task["id"] == "apply" and not self.allowed:
             raise ComputerError("FORBIDDEN", "模拟政务站的操作授权已停用")
         active = [run for run in self.runs.values() if not run.job.done()]
         if len(active) >= 3 or any(run.owner == owner for run in active):
@@ -216,18 +294,26 @@ class Runs:
                     break
         run_id = uuid4().hex
         ent = args["ent"]
+        official = task["id"] == "notice"
         data = {
-            "id": run_id, "task": TASK["id"], "title": TASK["title"],
+            "id": run_id, "task": task["id"], "title": task["title"],
             "ent": {"id": ent, "short": ent} if ent else None,
-            "system": {"name": self.name, "url": self.url}, "from": args["from"],
+            "system": (
+                {"name": SITE_SYSTEM["name"], "url": SITE_SYSTEM["url"]} if official
+                else {"name": self.name, "url": self.url}
+            ),
+            "from": args["from"],
             "by": name, "status": "running", "step": 0, "created": now(),
             "steps": [], "log": [], "shots": [], "shotCount": 0, "fields": [],
             "pending": None, "result": None,
         }
         deadline = asyncio.get_running_loop().time() + self.timeout
-        run = Run(owner, data, deadline, self.audit, lambda: self.allowed and can_operate())
-        run.event("computer.start", "开始本地模拟申报")
-        run.job = asyncio.create_task(run.execute(self.runner))
+        # 官网只读任务不依赖模拟站授权；经办人权限仍每次复核。
+        authorized = (lambda: can_operate()) if official else (lambda: self.allowed and can_operate())
+        run = Run(owner, data, deadline, self.audit, authorized)
+        run.event("computer.start", "开始下载官网通知" if official else "开始本地模拟申报")
+        worker = self.run_notice_task if official else self.runner
+        run.job = asyncio.create_task(run.execute(worker))
         self.runs[run_id] = run
         if dedup:
             self.keys[dedup] = run_id
