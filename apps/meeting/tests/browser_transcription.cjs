@@ -32,21 +32,31 @@ async function verify(base, output) {
     assert.equal(await page.locator('#percent').textContent(), '100%');
     assert.equal(await page.locator('#lines li').count(), 2);
     await page.reload();
+    await page.waitForFunction(() => document.getElementById('percent').value === '100%');
     await page.getByRole('heading', { name: '逐字稿' }).waitFor();
     assert.equal(await page.getByRole('heading', { name: '园区服务例会' }).count(), 1);
-    await page.getByText('我们先核对园区服务清单。请把本周收集的问题按主题归类。').waitFor();
+    await page.locator('#lines li').first().getByText('我们先核对园区服务清单。请把本周收集的问题按主题归类。').waitFor();
     await page.waitForFunction(() => {
       const audio = document.querySelector('#sample-audio');
       return audio.duration > 10 && audio.duration < 12;
     });
+    await page.getByRole('heading', { name: '会议纪要' }).waitFor();
+    const source = page.getByRole('button', { name: '跳到逐字稿第 2 行（00:05.716）' });
+    await source.press('Enter');
+    const line = page.locator('#lines li:focus');
+    assert.equal(await line.getAttribute('id'), 'transcript-line-1');
+    assert.match(await line.textContent(), /我会整理一份问题清单/);
     assert.deepEqual(errors, []);
 
     await fs.mkdir(output, { recursive: true });
     for (const width of [1440, 1280]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.screenshot({ path: path.join(output, `transcription-${width}.png`) });
+      await source.click();
+      assert.equal(await line.getAttribute('id'), 'transcript-line-1');
+      await page.screenshot({ path: path.join(output, `minutes-${width}.png`), fullPage: true });
     }
-    console.log('浏览器验证通过：上传 201，第二片失败，重试 202，进度 100%，刷新后仍显示 2 段逐字稿。截图 1440×900、1280×900。');
+    console.log('浏览器验证通过：上传 201，第二片失败，重试 202，进度 100%，刷新后仍显示 2 段逐字稿。已生成 1440px、1280px 两张截图。');
+    console.log('点击或用键盘激活纪要来源 00:05.716，逐字稿第 2 行取得焦点并显示原句。');
   } finally {
     await browser.close();
   }

@@ -52,6 +52,13 @@
   li { display: grid; grid-template-columns: 5.7rem 1fr; padding: 16px 0; gap: 8px; border-top: 1px solid var(--hk-border); }
   li p { margin: 3px 0 0; }
   time, output { font-variant-numeric: tabular-nums; }
+  #minutes { margin-bottom: 24px; }
+  .minute-section { margin-bottom: 16px; }
+  .minute-section h3 { margin: 0 0 4px; font-size: 1rem; }
+  .minute-section p { margin-bottom: 6px; }
+  .source-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .source-links button { color: var(--hk-primary); padding: 2px 8px; font-variant-numeric: tabular-nums; }
+  #lines li:focus { background: var(--hk-primary-soft); outline: 2px solid var(--hk-primary); outline-offset: -2px; border-radius: 6px; }
   @media (max-width: 740px) {
     .columns { grid-template-columns: 1fr; }
     header div, main { width: calc(100% - 32px); }
@@ -96,6 +103,10 @@
         <p>演示结果 · 逐字稿对应下方的公开合成录音。</p>
         <audio id="sample-audio" controls preload="metadata" aria-label="演示录音"></audio>
       </div>
+      <section id="minutes" aria-labelledby="minutes-title" hidden>
+        <h2 id="minutes-title">会议纪要</h2>
+        <div id="minute-sections"></div>
+      </section>
       <section id="transcript" aria-labelledby="transcript-title" hidden>
         <h2 id="transcript-title">逐字稿</h2>
         <ol id="lines"></ol>
@@ -146,7 +157,43 @@
     $('library').value = selected;
   }
 
-  function display(item) {
+  function displayMinutes(minutes) {
+    const sections = (minutes?.body ?? []).map(({ h, p, sources, needsReview }) => {
+      const section = document.createElement('div');
+      section.className = 'minute-section';
+      const heading = document.createElement('h3');
+      heading.textContent = h;
+      const paragraph = document.createElement('p');
+      paragraph.textContent = p;
+      section.append(heading, paragraph);
+      if (needsReview) {
+        const note = document.createElement('p');
+        note.className = 'muted';
+        note.textContent = '原句已修改，请复核本段纪要。';
+        section.append(note);
+      }
+      const links = document.createElement('div');
+      links.className = 'source-links';
+      for (const source of sources) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = source.ts;
+        button.setAttribute('aria-label', `跳到逐字稿第 ${source.index + 1} 行（${source.ts}）`);
+        button.addEventListener('click', () => {
+          const line = $(`transcript-line-${source.index}`);
+          line.focus({ preventScroll: true });
+          line.scrollIntoView({ block: 'nearest' });
+        });
+        links.append(button);
+      }
+      section.append(links);
+      return section;
+    });
+    $('minute-sections').replaceChildren(...sections);
+    $('minutes').hidden = !sections.length;
+  }
+
+  function display({ item, minutes }) {
     $('detail-title').textContent = item.title;
     $('status').textContent = item.status === 'done' ? '转写完成' : '等待转写';
     $('sample').hidden = !item.transcriptAudio;
@@ -158,8 +205,10 @@
       audio.removeAttribute('src');
       audio.load();
     }
-    $('lines').replaceChildren(...item.transcript.map(([timestamp, speaker, text]) => {
+    $('lines').replaceChildren(...item.transcript.map(([timestamp, speaker, text], index) => {
       const line = document.createElement('li');
+      line.id = `transcript-line-${index}`;
+      line.tabIndex = -1;
       const time = document.createElement('time');
       const speech = document.createElement('div');
       const name = document.createElement('strong');
@@ -172,6 +221,7 @@
       return line;
     }));
     $('transcript').hidden = !item.transcript.length;
+    displayMinutes(minutes);
   }
 
   function jobView(payload) {
@@ -195,8 +245,8 @@
       $('percent').value = `${job.progress}%`;
       $('progress').hidden = false;
       if (job.status === 'done') {
-        const { item } = await api(`${base}/${encodeURIComponent(selected)}`);
-        if (token === selection) display(item);
+        const detail = await api(`${base}/${encodeURIComponent(selected)}`);
+        if (token === selection) display(detail);
       } else if (job.status === 'failed') {
         $('status').textContent = job.stepName ? `${job.stepName}失败` : '转写失败';
         $('resume').textContent = '重试';
@@ -223,9 +273,10 @@
     const url = new URL(location.href);
     url.searchParams.set('id', id);
     history.replaceState(null, '', url);
-    const { item } = await api(`${base}/${encodeURIComponent(id)}`);
+    const detail = await api(`${base}/${encodeURIComponent(id)}`);
     if (token !== selection) return;
-    display(item);
+    display(detail);
+    const { item } = detail;
     if (item.jobId) await poll(item.jobId, token);
     else if (item.status === 'new') {
       $('resume').textContent = '开始转写';
