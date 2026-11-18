@@ -1,0 +1,24 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/api/apps/policy/items",
+      "response": {"items": ["@policyItem"], "total": "number", "docs": [{"id": "string", "title": "string", "no": "string", "year": "number", "state": "string"}]} },
+    { "method": "GET", "path": "/api/apps/policy/items/{id}",
+      "response": {"item": "@policyItem"},
+      "params": {"id": "PI-03"} },
+    { "method": "POST", "path": "/api/apps/policy/match",
+      "response": {"profile": {"subjectType": "string", "tags": ["string"], "license": ["string"]}, "results": ["@matchResult"], "summary": {"ok": "number", "check": "number", "no": "number"}},
+      "body": {"entId": "{{fixture.enterpriseId}}"} },
+    { "method": "POST", "path": "/api/apps/policy/calc",
+      "response": {"item": "string", "rule": "string", "result": "?@calc", "note": "string"},
+      "body": {"itemId": "PI-03", "amount": 420000} },
+    { "method": "POST", "path": "/api/apps/policy/notice",
+      "response": {"text": "string"},
+      "body": {"entId": "{{fixture.enterpriseId}}", "itemIds": ["PI-03"]} }
+  ],
+  "errors": [
+    { "method": "GET", "path": "/api/apps/policy/items/{id}",
+      "params": {"id": "PI-contract-missing"},
+      "status": 404,
+      "error": "NOT_FOUND" }
+  ]
+}

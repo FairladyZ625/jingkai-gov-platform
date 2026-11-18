@@ -1,0 +1,404 @@
+{
+  "user": {
+    "id": "string",
+    "name": "string",
+    "username": "string",
+    "role": "string",
+    "status": "string",
+    "deptId": "string"
+  },
+  "role": {
+    "id": "string",
+    "name": "string",
+    "desc": "string",
+    "mask": "boolean"
+  },
+  "org": {
+    "id": "string",
+    "name": "string",
+    "seats": "number",
+    "used": "number"
+  },
+  "conversation": {
+    "id": "string",
+    "title": "string",
+    "updated": "string"
+  },
+  "message": {
+    "id": "string",
+    "role": "string",
+    "content": "string",
+    "at": "string"
+  },
+  "reply": {
+    "id": "string",
+    "role": "string",
+    "content": "string",
+    "cards": [
+      "object"
+    ],
+    "citations": [
+      "object"
+    ],
+    "toolCalls": [
+      "object"
+    ]
+  },
+  "model": {
+    "id": "string",
+    "name": "string",
+    "kind": "string",
+    "enabled": "boolean",
+    "tags": [
+      "string"
+    ]
+  },
+  "review": {
+    "id": "string",
+    "title": "string",
+    "app": "string",
+    "ref": "string",
+    "status": "string"
+  },
+  "todo": {
+    "id": "string",
+    "task": "string",
+    "owner": "string",
+    "due": "string",
+    "app": "string",
+    "done": "boolean"
+  },
+  "department": {
+    "id": "string",
+    "name": "string",
+    "parent": "?string"
+  },
+  "space": {
+    "id": "string",
+    "name": "string",
+    "icon": "string",
+    "desc": "string",
+    "roles": [
+      "string"
+    ],
+    "visible": "boolean",
+    "count": "number",
+    "expiring": "number"
+  },
+  "kbDoc": {
+    "id": "string",
+    "title": "string",
+    "space": "string",
+    "spaceName": "string",
+    "kind": "string",
+    "status": "string",
+    "tags": [
+      "string"
+    ],
+    "real": "boolean",
+    "example": "boolean",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "version": "number",
+    "chunks": "number"
+  },
+  "hit": {
+    "id": "string",
+    "title": "string",
+    "snippet": "string",
+    "chunk": "number",
+    "score": "number"
+  },
+  "importItem": {
+    "key": "string",
+    "name": "string",
+    "ok": "boolean",
+    "stages": {
+      "parse": "string",
+      "chunk": "string",
+      "tag": "string"
+    }
+  },
+  "policyItem": {
+    "id": "string",
+    "title": "string",
+    "doc": "string",
+    "clause": "string",
+    "object": "string",
+    "conditions": [
+      {
+        "f": "string",
+        "op": "string",
+        "label": "string"
+      }
+    ],
+    "pending": [
+      "string"
+    ],
+    "rule": {
+      "text": "string"
+    },
+    "times": {
+      "valid": "string",
+      "occur": "string",
+      "window": "string",
+      "open": "?boolean"
+    },
+    "materials": [
+      "string"
+    ],
+    "original": "string"
+  },
+  "matchResult": {
+    "id": "string",
+    "title": "string",
+    "level": "string",
+    "checks": [
+      {
+        "label": "string",
+        "state": "string"
+      }
+    ],
+    "pending": [
+      "string"
+    ],
+    "open": "?boolean",
+    "ended": "boolean",
+    "window": "string",
+    "doc": "string",
+    "clause": "string"
+  },
+  "enterprise": {
+    "id": "string",
+    "name": "string",
+    "short": "string",
+    "creditCode": "string",
+    "industry": "string",
+    "tags": [
+      "string"
+    ],
+    "employees": "number",
+    "regInZone": "boolean",
+    "contacts": [
+      {
+        "name": "string",
+        "phone": "string"
+      }
+    ],
+    "amounts": "object"
+  },
+  "enterpriseIssue": {
+    "id": "string",
+    "title": "string",
+    "entId": "string",
+    "owner": "string",
+    "status": "string",
+    "due": "string",
+    "next": "string",
+    "steps": [
+      [
+        "string",
+        "string"
+      ]
+    ]
+  },
+  "proposal": {
+    "id": "string",
+    "entId": "string",
+    "field": "string",
+    "label": "string",
+    "source": "string",
+    "status": "string"
+  },
+  "meeting": {
+    "id": "string",
+    "title": "string",
+    "type": "string",
+    "date": "string",
+    "duration": "string",
+    "participants": [
+      "string"
+    ],
+    "status": "string"
+  },
+  "meetingJob": {
+    "id": "string",
+    "kind": "string",
+    "ref": "string",
+    "status": "string",
+    "progress": "number",
+    "step": "number",
+    "steps": [
+      "string"
+    ],
+    "stepName": "string"
+  },
+  "minutes": {
+    "title": "string",
+    "meta": "string",
+    "attendees": "string",
+    "template": "string",
+    "body": [
+      {
+        "h": "string",
+        "p": "string",
+        "refs": [
+          "string"
+        ]
+      }
+    ],
+    "todos": [
+      "object"
+    ]
+  },
+  "docContent": {
+    "title": "string",
+    "docNo": "string",
+    "to": "string",
+    "paragraphs": [
+      "string"
+    ],
+    "sign": "string",
+    "date": "string"
+  },
+  "draft": {
+    "id": "string",
+    "title": "string",
+    "templateId": "string",
+    "status": "string",
+    "author": "string",
+    "versions": [
+      {
+        "v": "number",
+        "at": "string",
+        "by": "string",
+        "content": "@docContent"
+      }
+    ],
+    "comments": [
+      "@comment"
+    ],
+    "refs": [
+      "object"
+    ]
+  },
+  "comment": {
+    "id": "string",
+    "para": "number",
+    "by": "string",
+    "at": "string",
+    "text": "string",
+    "replies": [
+      {
+        "by": "string",
+        "text": "string"
+      }
+    ],
+    "resolved": "boolean"
+  },
+  "checkIssue": {
+    "id": "string",
+    "level": "string",
+    "kind": "string",
+    "text": "string"
+  },
+  "diffPart": {
+    "op": "string",
+    "t": "string"
+  },
+  "skill": {
+    "id": "string",
+    "name": "string",
+    "version": "string",
+    "status": "string",
+    "summary": "string",
+    "share": {
+      "scope": "string",
+      "people": [
+        "string"
+      ],
+      "perm": "string"
+    },
+    "spec": "object"
+  },
+  "skillJob": {
+    "id": "string",
+    "status": "string",
+    "steps": [
+      {
+        "label": "string",
+        "type": "string",
+        "status": "string"
+      }
+    ],
+    "result": "?object"
+  },
+  "computerTask": {
+    "id": "string",
+    "title": "string",
+    "system": "string"
+  },
+  "computerSystem": {
+    "id": "string",
+    "name": "string",
+    "allowed": "boolean"
+  },
+  "computerRun": {
+    "id": "string",
+    "title": "string",
+    "task": "string",
+    "status": "string",
+    "system": {
+      "name": "string",
+      "url": "string"
+    },
+    "steps": [
+      "object"
+    ],
+    "log": [
+      "object"
+    ]
+  },
+  "calc": {
+    "amount": "number",
+    "text": "string",
+    "capped": "boolean"
+  },
+  "kbDetail": {
+    "id": "string",
+    "title": "string",
+    "space": "string",
+    "spaceName": "string",
+    "kind": "string",
+    "status": "string",
+    "tags": [
+      "string"
+    ],
+    "real": "boolean",
+    "example": "boolean",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "version": "number",
+    "chunks": "number",
+    "text": "string",
+    "chunkList": [
+      {
+        "i": "number",
+        "start": "number",
+        "end": "number",
+        "head": "string"
+      }
+    ],
+    "versions": [
+      "object"
+    ]
+  }
+}
