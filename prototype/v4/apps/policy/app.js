@@ -364,7 +364,7 @@
           S.picked = new Set(S.match.defaultItemIds);
         } catch (e) {
           if (version !== matchVersion) return;
-          restoringFlow = false;
+          // 恢复失败时继续沿用原快照，直到用户开始新办理或下次返回重试。
           ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0;
         }
         S.busy = false; if (S.tab === 'flow') body(); return S.match;
@@ -433,8 +433,10 @@
         return { route: S.tab, params: next };
       }
       async function restore(route, params) {
+        const version = matchVersion;
         restoringFlow = true;
         await ready();
+        if (version !== matchVersion) return;
         restoringFlow = false;
         if (!el.isConnected || !loaded) return;
         const browsing = ['items', 'docs', 'detail'].includes(route);
@@ -487,22 +489,22 @@
         if (!t) return; const d = t.dataset;
         if (d.tab) { S.tab = d.tab; render(); return; }
         if (d.step != null && !t.disabled) { S.step = +d.step; if (S.step === 0) invalidateMatch(); body(); return; }
-        if (d.mode) { S.mode = d.mode; body(); return; }
-        if (d.ent) { S.entId = d.ent; S.overrides = {}; S.match = null; body(); return; }
+        if (d.mode) { if (S.mode !== d.mode) invalidateMatch(); S.mode = d.mode; body(); return; }
+        if (d.ent) { invalidateMatch(); S.entId = d.ent; S.overrides = {}; body(); return; }
         if (d.filter) { S.filter = S.filter === d.filter ? null : d.filter; body(); return; }
         if (d.toggle) { S.open.has(d.toggle) ? S.open.delete(d.toggle) : S.open.add(d.toggle); body(); return; }
         if (d.src) return openSource(d.src);
         if (d.detail) return openDetail(d.detail);
         if (d.doc) { const r = await ctx.kb.search(DOCS.find((x) => x.id === d.doc).title, { space: 'policy', limit: 1 }).catch(() => ({ hits: [] })); if (r.hits && r.hits[0]) ctx.kb.open(r.hits[0].id); else ui.toast('知识库里还没有这份文件'); return; }
         if (d.obj != null && t.closest('.seg')) { S.obj = d.obj; body(); return; }
-        if (d.mobj) { S.manual.object = d.mobj; body(); return; }
-        if (d.mtag) { const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
-        if (d.mlic) { const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
+        if (d.mobj) { if (S.manual.object !== d.mobj) invalidateMatch(); S.manual.object = d.mobj; body(); return; }
+        if (d.mtag) { invalidateMatch(); const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
+        if (d.mlic) { invalidateMatch(); const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
         if (d.sample) { const inp = t.parentElement.querySelector('[data-fill]'); if (inp) inp.value = toUnit(d.sample, C.sampleFill[d.sample] || 10 * F(d.sample)[2]); return; }
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); load(); } else { S.q = ''; S.obj = ''; S.win = ''; body(); } return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(ent() ? `${ent().short}能申请哪些支持？` : '实体书店房租补贴的条件是什么？');
-        if (a === 'clear') { S.entId = null; S.match = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
+        if (a === 'clear') { invalidateMatch(); S.entId = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
         if (a === 'run') return runMatch();
         if (a === 'refill') { const inp = t.parentElement.querySelector('[data-fill]'); if (!inp.value) { ui.toast('先填一个数', { type: 'warn' }); return; } return applyFill(inp.dataset.fill, inp.value); }
         if (a === 'showAll') { S.showAll = true; body(); return; }
@@ -519,8 +521,8 @@
         if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); delete S.calc[d.pick]; body(); return; }
         if (d.lic) { if (t.checked) applyFill('license', d.lic); return; }
         if (d.camt) { if (S.calc[d.camt]?.edited) await recalc(d.camt); return; }
-        if (d.mnum) { S.manual[d.mnum] = t.value; return; }
-        if (d.mamt) { if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
+        if (d.mnum) { invalidateMatch(); S.manual[d.mnum] = t.value; return; }
+        if (d.mamt) { invalidateMatch(); if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
       });
       el.addEventListener('input', (ev) => { if (ev.target.dataset.camt) setCalcAmount(ev.target); });
       el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.dataset.fill) { const b = ev.target.parentElement.querySelector('[data-act=refill]'); b && b.click(); } });
