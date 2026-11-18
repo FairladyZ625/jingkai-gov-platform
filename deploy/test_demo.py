@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
+import sys
+import fcntl
 
 import pytest
 
@@ -15,29 +18,57 @@ def site(tmp_path):
     repo = tmp_path / "repo"
     target = repo / "deploy"
     target.mkdir(parents=True)
-    for name in ("demo", "Makefile", "env.example", "docker-compose.yml"):
+    for name in ("demo", "Makefile", "env.example", "docker-compose.yml", "Caddyfile"):
         shutil.copy2(DEPLOY / name, target)
+    shutil.copy(target / "env.example", target / ".env")
     state = tmp_path / "state"
     (state / "data").mkdir(parents=True)
     bins = tmp_path / "bin"
     bins.mkdir()
     for name, body in {
         "docker": """
+case "$*" in
+  *'config --no-env-resolution --format json app')
+    if test -n "$TEST_COMPOSE"; then exec "$TEST_COMPOSE" "$@"; fi
+    printf '{"services":{"app":{"volumes":[{"type":"bind","target":"/state/live","source":"%s/data"}]}}}\\n' "$DEMO_STATE_DIR"
+    exit 0 ;;
+esac
 echo "$*" >> "$DEMO_STATE_DIR/calls"
 case "$*" in
-  *'ps -q app') echo container ;;
+  *'ps -q app')
+    if test -f "$DEMO_STATE_DIR/starting"; then rm "$DEMO_STATE_DIR/starting"; else echo container; fi ;;
+  *'exec -T proxy printenv DEMO_DOMAIN') echo demo.example.invalid ;;
   inspect*Config.Image*) echo jkq-demo-app:old ;;
   inspect*) echo sha256:old ;;
   *'build app') test ! -f "$DEMO_STATE_DIR/build-failure" ;;
-  *'up -d'*) if test -f "$DEMO_STATE_DIR/unhealthy"; then rm "$DEMO_STATE_DIR/unhealthy"; exit 1; fi ;;
+  *'up -d'*) echo "$DEMO_TAG" > "$DEMO_STATE_DIR/running"
+    if test -f "$DEMO_STATE_DIR/unhealthy"; then rm "$DEMO_STATE_DIR/unhealthy"; exit 1; fi ;;
 esac
 """,
-        "flock": 'test ! -f "$DEMO_STATE_DIR/locked"',
+        "curl": """
+echo "$*" >> "$DEMO_STATE_DIR/probes"
+cat deploy/Caddyfile >> "$DEMO_STATE_DIR/loaded"
+if test -f "$DEMO_STATE_DIR/proxy-failure"; then rm "$DEMO_STATE_DIR/proxy-failure"; echo 302; else echo 200; fi
+""",
+        "mv": """
+if test -f "$DEMO_STATE_DIR/rename-failure" && test "$1" = "$DEMO_STATE_DIR/data"; then exit 71; fi
+exec /bin/mv "$@"
+""",
+        "python3": f'''if test "$2" = 'import os,sys; os.replace(*sys.argv[1:])' && test -f "$DEMO_STATE_DIR/record-failure"; then exit 73; fi
+exec "{sys.executable}" "$@"''',
+        "flock": f'''exec "{sys.executable}" - "$@" <<'PYLOCK'
+import fcntl, sys
+args = sys.argv[1:]
+if args not in (["-w", "1800", "9"], ["-n", "9"]):
+    sys.exit(2)
+flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if args[0] == "-n" else 0)
+fcntl.flock(9, flags)
+PYLOCK''',
     }.items():
         command = bins / name
         command.write_text("#!/bin/sh\n" + body + "\n")
         command.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bins}:{os.environ['PATH']}",
+    env = {**os.environ, "TEST_COMPOSE": shutil.which("docker") or "", "PATH": f"{bins}:{os.environ['PATH']}",
            "DEMO_STATE_DIR": str(state)}
 
     def run(*args, check=True):
@@ -63,11 +94,20 @@ def test_reset(site):
     assert record.read_text() == "变更" and extra.exists()
     run("make", "-f", "deploy/Makefile", "demo-reset")
     assert record.read_text() == "初始" and not extra.exists()
-    (state / "locked").touch()
-    assert run("deploy/demo", "reset", check=False).returncode
+    with (state / "operation.lock").open() as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        assert run("deploy/demo", "reset", check=False).returncode
+    record.write_text("保留")
+    (state / "rename-failure").touch()
+    calls = state / "calls"
+    calls.write_text("")
+    assert run("deploy/demo", "reset", check=False).returncode == 71
+    assert record.read_text() == "保留"
+    assert "stop app" in calls.read_text()
+    assert "up -d --no-build --force-recreate" in calls.read_text().splitlines()[-1]
 
 
-@pytest.mark.parametrize("failure", [None, "build-failure", "unhealthy"])
+@pytest.mark.parametrize("failure", [None, "build-failure", "unhealthy", "proxy-failure", "record-failure"])
 def test_release(site, failure):
     repo, state, run = site
     run("git", "init", "-b", "main")
@@ -79,17 +119,33 @@ def test_release(site, failure):
     remote = repo.parent / "release.git"
     run("git", "clone", "--bare", ".", str(remote))
     run("git", "remote", "add", "origin", str(remote))
-    run("git", "commit", "--allow-empty", "-m", "更新")
+    with (repo / "deploy/Caddyfile").open("a") as config:
+        config.write("# 仅反代配置变更\n")
+    run("git", "commit", "-am", "更新反代")
     new = run("git", "rev-parse", "HEAD").stdout.strip()
     run("git", "push", "origin", "main")
     run("git", "switch", "--detach", old)
+    previous = state / "previous"
     if failure:
         (state / failure).touch()
-        assert run("deploy/demo", "update", check=False).returncode
+        previous.write_text("prior sha256:prior\n")
+        result = run("deploy/demo", "update", check=False)
+        assert result.returncode
+        if failure == "record-failure":
+            assert result.returncode == 73
+        assert previous.read_text() == "prior sha256:prior\n"
     else:
         run("deploy/demo", "update")
         assert run("git", "rev-parse", "HEAD").stdout.strip() == new
+        assert previous.read_text() == f"{old} sha256:old\n"
+        assert (state / "running").read_text().strip() == new
         run("deploy/demo", "rollback")
+    assert (state / "running").read_text().strip() == "restored"
+    assert (state / "loaded").read_text().endswith((DEPLOY / "Caddyfile").read_text())
+    if failure != "build-failure" and failure != "unhealthy":
+        assert "# 仅反代配置变更" in (state / "loaded").read_text()
+    assert "--resolve demo.example.invalid:443:127.0.0.1" in (state / "probes").read_text()
+    assert "--force-recreate" in (state / "calls").read_text()
     assert run("git", "rev-parse", "HEAD").stdout.strip() == old
     assert "tag sha256:old jkq-demo-app:restored" in (state / "calls").read_text()
 
@@ -110,3 +166,37 @@ def test_compose(site):
     assert "ports" not in app
     assert {port["target"] for port in proxy["ports"]} == {80, 443}
     assert proxy["environment"]["DEMO_DOMAIN"] == "demo.example.invalid"
+
+
+def test_scheduled_reset_uses_configured_mount_after_lock(site, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not shutil.which("docker"):
+        pytest.skip("需要 Compose CLI 解析 .env 的挂载")
+    repo, _, run = site
+    state = repo.parent / "实际 数据"
+    (state / "data").mkdir(parents=True)
+    (state / "snapshot").mkdir()
+    (state / "snapshot/record").write_text("基准")
+    with (repo / "deploy/.env").open("a") as envfile:
+        envfile.write(f'DEMO_STATE_DIR="{state}"\n')
+    # 空环境覆盖改为真正移除，验证任务入口和 systemd 仅依赖 deploy/.env。
+    monkeypatch.delenv("DEMO_STATE_DIR", raising=False)
+    env = dict(os.environ, PATH=f"{repo.parent / 'bin'}:{os.environ['PATH']}",
+               TEST_COMPOSE=shutil.which("docker"))
+    service = (DEPLOY / "jkq-demo-reset.service").read_text()
+    assert "ExecStart=/opt/jkq-demo/deploy/demo scheduled-reset" in service
+    (state / "starting").touch()
+    with ThreadPoolExecutor() as executor, (state / "operation.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        def invoke(action):
+            return subprocess.run(["deploy/demo", action], cwd=repo, env=env,
+                                  capture_output=True, timeout=12)
+        assert "已有部署操作进行中" in invoke("update").stderr.decode()
+        future = executor.submit(invoke, "scheduled-reset")
+        time.sleep(0.4)
+        assert not future.done() and not (state / "calls").exists()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        assert future.result().returncode == 0
+    assert (state / "data/record").read_text() == "基准"
+    assert (state / "calls").read_text().count("stop app") == 1

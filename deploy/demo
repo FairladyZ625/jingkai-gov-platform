@@ -1,14 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-state=${DEMO_STATE_DIR:-/var/lib/jkq-demo}
-exec 9>"$state/operation.lock"
-flock -n 9 || { echo '已有部署操作进行中' >&2; exit 1; }
 compose() { docker compose --env-file deploy/.env -f deploy/docker-compose.yml "$@"; }
-healthy() { compose up -d --no-build --wait --wait-timeout 100; }
+# 采用 Compose 实际解析出的宿主挂载，兼容 .env 引号和环境变量覆盖。
+data=$(compose config --no-env-resolution --format json app | python3 -c '
+import json, sys
+mounts = json.load(sys.stdin)["services"]["app"]["volumes"]
+print(next(m["source"] for m in mounts if m["type"] == "bind" and m["target"] == "/state/live"))
+')
+[[ $data == /*/data ]] || { echo '应用数据须绑定到持久目录下的 data' >&2; exit 1; }
+state=${data%/data}
+export DEMO_STATE_DIR="$state"
+exec 9>"$state/operation.lock"
+if [[ ${1:-} == scheduled-reset ]]; then
+    flock -w 1800 9
+else
+    flock -n 9 || { echo '已有部署操作进行中' >&2; exit 1; }
+fi
+
+healthy() {
+    compose up -d --no-build --force-recreate --wait --wait-timeout 100 || return
+    local domain status
+    domain=$(compose exec -T proxy printenv DEMO_DOMAIN) || return
+    status=$(curl --silent --show-error --fail --retry 6 --retry-all-errors --retry-max-time 60 \
+        --max-time 8 --noproxy '*' --resolve "$domain:443:127.0.0.1" \
+        --output /dev/null --write-out '%{http_code}' "https://$domain/api/health") || return
+    [[ $status == 200 ]]
+}
 
 case "${1:-}" in
-snapshot|reset)
+snapshot|reset|scheduled-reset)
     if [[ $1 == snapshot ]]; then
         src=$state/data
         dst=$state/snapshot
@@ -21,28 +42,39 @@ snapshot|reset)
     tmp=$(mktemp -d "$state/staging.XXXXXXXX")
     trap 'rm -rf -- "$tmp"' EXIT
     running=$(compose ps -q app)
+    if [[ $1 == scheduled-reset ]]; then
+        deadline=$((SECONDS + 120))
+        while [[ -z $running && $SECONDS -lt $deadline ]]; do
+            sleep 2
+            running=$(compose ps -q app)
+        done
+    fi
     [[ -n $running ]] || { echo "应用未运行" >&2; exit 1; }
     ref=$(docker inspect --format '{{.Config.Image}}' "$running")
     export DEMO_TAG=${ref##*:}
     compose stop app
     # Docker 需要重建容器，以重新绑定交换后的宿主目录。
     start_app() { compose up -d --no-build --force-recreate --wait --wait-timeout 100 app; }
-    if ! cp -a "$src/." "$tmp/"; then start_app; exit 1; fi
-    if [[ -d $dst ]]; then mv "$dst" "$dst.previous"; fi
-    if ! mv "$tmp" "$dst"; then
+    cp -a "$src/." "$tmp/" || { rc=$?; start_app; exit "$rc"; }
+    if [[ -d $dst ]]; then
+        mv "$dst" "$dst.previous" || { rc=$?; start_app; exit "$rc"; }
+    fi
+    mv "$tmp" "$dst" || {
+        rc=$?
         if [[ -d $dst.previous ]]; then mv "$dst.previous" "$dst"; fi
         start_app
-        exit 1
-    fi
-    if ! start_app; then
+        exit "$rc"
+    }
+    start_app || {
+        rc=$?
         if [[ -d $dst.previous ]]; then
             compose stop app
             mv "$dst" "$tmp"
             mv "$dst.previous" "$dst"
-            start_app
         fi
-        exit 1
-    fi
+        start_app
+        exit "$rc"
+    }
     rm -rf -- "$dst.previous"
     ;;
 update)
@@ -56,18 +88,24 @@ update)
     DEMO_TAG=$(git rev-parse FETCH_HEAD)
     export DEMO_TAG
     if [[ $DEMO_TAG == "$old" ]]; then echo "已是最新 main"; exit 0; fi
+    # 先固定旧镜像并准备记录；previous 在新版本通过全部检查后才原子替换。
+    record=$(mktemp "$state/release.XXXXXXXX")
+    trap 'rm -f -- "$record"' EXIT
+    docker tag "$image" "jkq-demo-app:backup-${image#sha256:}"
+    printf '%s %s\n' "$old" "$image" >"$record"
     git merge --ff-only FETCH_HEAD
-    if compose build app && healthy; then
-        docker tag "$image" jkq-demo-app:previous
-        docker tag "jkq-demo-app:$DEMO_TAG" jkq-demo-app:local
-        printf '%s %s\n' "$old" "$image" >"$state/previous.tmp"
-        mv "$state/previous.tmp" "$state/previous"
+    if compose build app && healthy &&
+        docker tag "jkq-demo-app:$DEMO_TAG" jkq-demo-app:local &&
+        python3 -c 'import os,sys; os.replace(*sys.argv[1:])' "$record" "$state/previous"; then
+        exit 0
     else
+        rc=$?
         git switch --detach "$old"
         export DEMO_TAG=restored
         docker tag "$image" jkq-demo-app:restored
         healthy
-        exit 1
+        docker tag "$image" jkq-demo-app:local
+        exit "$rc"
     fi
     ;;
 rollback)

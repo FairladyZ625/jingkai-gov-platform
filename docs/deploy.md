@@ -1,6 +1,6 @@
 # 部署演示环境
 
-本说明供有权限的运维人员在专用 Linux 演示机执行。需要 Git、GNU Make、flock、支持时区的 systemd 和带 Compose v2.20+ 的 Docker。约定独立检出位于 /opt/jkq-demo，持久目录位于 /var/lib/jkq-demo。域名 A/AAAA 应指向此机，放行 TCP 80、443，供 Caddy 签发证书并对外提供 HTTPS。
+本说明供有权限的运维人员在专用 Linux 演示机执行。需要 Git、Python 3、GNU Make、flock、curl 7.71+、支持时区的 systemd 和支持 config --no-env-resolution 的 Docker Compose。约定独立检出位于 /opt/jkq-demo，持久目录位于 /var/lib/jkq-demo。域名 A/AAAA 应指向此机，放行 TCP 80、443，供 Caddy 签发证书并对外提供 HTTPS。
 
 ## 首次启动
 
@@ -12,7 +12,7 @@ install -d -m 0700 /var/lib/jkq-demo/data
 (umask 077; set -C; cat deploy/env.example > deploy/.env)
 ```
 
-编辑 deploy/.env，填写 DEMO_DOMAIN 和实例要求的环境变量。CEO 指定示例文件名为 deploy/env.example，以兼容仓库对 .env 前缀的守卫。示例域名使用保留后缀 .invalid。APP_ENTRY 是 uvicorn 启动的 ASGI 对象，暂定 jkq.main:app，APP_PORT 暂定 8000。待 #11 合并后核对实例入口、依赖清单、config/ 位置与四个 HAIKNOW 路径。所有业务数据和 job 检查点须落到 HAIKNOW_DATA_DIR。镜像安装与 Chromium 配套的 Python Playwright。应用和浏览器使用容器内部网络，只有反代发布端口。
+如需自定义持久目录，在 deploy/.env 设置绝对路径 DEMO_STATE_DIR，并在该目录创建 data 子目录。Compose 优先使用调用环境的值，其次读取 deploy/.env；手工与定时脚本从 Compose 解析后的 /state/live 挂载定位锁、快照和回退记录。运维人员应将长期设置写入 deploy/.env。编辑 deploy/.env，填写 DEMO_DOMAIN 和实例要求的环境变量。CEO 指定示例文件名为 deploy/env.example，以兼容仓库对 .env 前缀的守卫。示例域名使用保留后缀 .invalid。APP_ENTRY 是 uvicorn 启动的 ASGI 对象，暂定 jkq.main:app，APP_PORT 暂定 8000。待 #11 合并后核对实例入口、依赖清单、config/ 位置与四个 HAIKNOW 路径。所有业务数据和 job 检查点须落到 HAIKNOW_DATA_DIR。镜像安装与 Chromium 配套的 Python Playwright。应用和浏览器使用容器内部网络，只有反代发布端口。
 
 ```sh
 docker compose -f deploy/docker-compose.yml up -d
@@ -39,11 +39,11 @@ systemctl enable --now jkq-demo-reset.timer
 systemctl list-timers jkq-demo-reset.timer
 ```
 
-每日北京时间 03:00 执行，关机错过后在恢复运行时补跑。查看 journalctl -u jkq-demo-reset.service。手工操作也可执行 make -f deploy/Makefile demo-reset。确认恢复后检查基准记录存在、基准后新建记录消失。锁冲突会返回失败，请在当前操作结束后重试。若断电后有 data.previous 或 snapshot.previous，请先停止应用，保留两份目录，核对上一份一致的数据，再恢复目录名并重建 app。#50 可调用同一 reset 入口。
+每日北京时间 03:00 执行，关机错过后在恢复运行时补跑。查看 journalctl -u jkq-demo-reset.service。手工操作也可执行 make -f deploy/Makefile demo-reset。确认恢复后检查基准记录存在、基准后新建记录消失。手工命令遇到占锁立即返回失败。定时服务在占锁时最多等 30 分钟，获得锁后最多再等 2 分钟让应用启动。超时或重置失败会使该次服务返回失败，需检查日志并补跑。若断电后有 data.previous 或 snapshot.previous，请先停止应用，保留两份目录，核对上一份一致的数据，再恢复目录名并重建 app。#50 可调用同一 reset 入口。
 
 ## 更新和回滚
 
-在专用干净检出中执行一条命令更新到 origin/main。脚本保留运行中镜像 ID 和旧 Git 版本，仅允许快进，构建后等待容器健康。更新失败时切回旧版本的 Compose 和镜像并返回失败。成功更新后可手动退回上一版。回滚后检出位于旧提交，下一次 update 仍从 origin/main 更新。回滚保留数据；涉及不兼容迁移时先另做停写备份，并验证与旧版本的兼容性。
+在专用干净检出中执行一条命令更新到 origin/main。脚本保留运行中镜像 ID 和旧 Git 版本，仅允许快进，构建后重建应用和 Caddy，等待应用健康，再通过本机 443 端口按配置域名校验证书和 /api/health 的 HTTP 200。成功后原子替换上一版记录。更新失败时切回旧版本的 Compose 和镜像并返回失败。成功更新后可手动退回上一版。回滚后检出位于旧提交，下一次 update 仍从 origin/main 更新。回滚保留数据；涉及不兼容迁移时先另做停写备份，并验证与旧版本的兼容性。
 
 ```sh
 ./deploy/demo update

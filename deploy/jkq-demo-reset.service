@@ -6,4 +6,4 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/jkq-demo
-ExecStart=/opt/jkq-demo/deploy/demo reset
+ExecStart=/opt/jkq-demo/deploy/demo scheduled-reset
