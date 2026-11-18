@@ -17,9 +17,11 @@ test('对话往返后按 PI-03 手填年房租直接生成告知单', async ({ p
     return page.locator(`[data-conv="${id}"]`);
   }
 
-  const other = await ask('查一下星河智驾');
+  const other = await ask('查一下纸鹿二号智驾');
   await page.locator('[data-op="nav.chat"]').click();
   const saved = await ask('帮我查一下书香里文化能申报哪些政策');
+  // #64 后 PI-03 为历史事项，默认不勾选；手动勾上后再试算。
+  await page.locator('[data-pick="PI-03"]').check();
   await page.locator('[data-op="policy.next"]').click();
   const rent = page.locator('[data-camt="PI-03"]');
   const total = page.locator('[data-op="policy.total"]');
