@@ -15,15 +15,15 @@
       perms: { view: '查看操作记录', operate: '发起电脑操作任务', approve: '—', admin: '管理系统授权' },
       tools: [{ name: 'computer.start', desc: '让 AI 去某个系统完成任务（提交前停下）', params: { task: 'apply|stats|notice|status', ent: 'string' } }],
       intents: [
-        { id: 'computer.apply', examples: ['帮我把星河智驾的申报表填了', '去政策兑现平台帮灵犀大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
+        { id: 'computer.apply', examples: ['帮我把纸鹿二号智驾的申报表填了', '去政策兑现平台帮折页五号大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
         { id: 'computer.stats', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
         { id: 'computer.notice', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
-        { id: 'computer.status', examples: ['查一下星河智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
+        { id: 'computer.status', examples: ['查一下纸鹿二号智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
         { id: 'computer.run', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
       ],
-      starters: ['帮我把星河智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
+      starters: ['帮我把纸鹿二号智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
       demo: [
-        { title: 'AI 代填申报表（停在提交前）', say: '帮我把星河智驾的申报表填了' },
+        { title: 'AI 代填申报表（停在提交前）', say: '帮我把纸鹿二号智驾的申报表填了' },
         { title: '下载官网通知并入库', say: '去官网把最新的申报通知下载下来存到知识库' },
       ],
     },
@@ -64,7 +64,7 @@
         bindHome();
       }
       function viewTasks() {
-        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮星河智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
+        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮纸鹿二号智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
           <div class="sect">常用任务</div><div class="grid g2 cu-tasks">${st.tasks.map((t) => `<div class="card hoverable cu-task" data-task="${t.id}" data-op="computer.task.${t.id}"><div class="row gap3"><span class="app-ico h-amber">${icon(t.icon)}</span><div class="grow"><div class="cu-name">${esc(t.title)}</div><div class="t-3 t-xs clip">${esc((st.systems.find((s) => s.id === t.system) || {}).name || '')}</div></div>${icon('chevron-right')}</div>
             <div class="t-2 t-sm">${esc(t.desc)}</div><div class="row cu-stop">${icon('hand')}<span>${esc(t.stop)}</span></div></div>`).join('')}</div>`;
       }
@@ -285,7 +285,7 @@
         if (!canOp()) { run.fail('当前账号没有“电脑操作”权限'); return; }
         const eid = entOf(slots.ent, slots.text);
         const t = st.tasks.find((x) => x.id === task);
-        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把星河智驾的申报表填了”'); return; }
+        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把纸鹿二号智驾的申报表填了”'); return; }
         openSetup(task, { ent: eid }); await run.step(0);
         if (t.needsEnt) await run.select('[data-op="computer.ent"]', eid);
         await run.click('[data-op="computer.start"]');
