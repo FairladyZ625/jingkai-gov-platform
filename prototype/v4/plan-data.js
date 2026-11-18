@@ -1,0 +1,2558 @@
+window.JK_PLAN = {
+ "repo": "FairladyZ625/jingkai-gov-platform",
+ "generated_at": "2026-11-18 18:20（台北时间）",
+ "status_source": "github",
+ "milestones": [
+  {
+   "name": "M0 仓库与原型就位",
+   "key": "M0",
+   "title": "仓库与原型就位",
+   "goal": "新仓库有规矩、有修好的原型、有唯一一份可追溯的种子数据，Codex worker 能按规范接活。"
+  },
+  {
+   "name": "M1 平台底座（卫华 core 落地）",
+   "key": "M1",
+   "title": "平台底座（卫华 core 落地）",
+   "goal": "卫华 core 在新仓库跑起来，经开区的账号、权限、模型网关、应用注册、长任务与审签接口可用并上线演示环境。"
+  },
+  {
+   "name": "M2 对话与知识库",
+   "key": "M2",
+   "title": "对话与知识库",
+   "goal": "对话主界面和知识库走真后端：问政策能检索原文、带出处作答，找不到就如实说找不到。"
+  },
+  {
+   "name": "M3 四个业务应用",
+   "key": "M3",
+   "title": "四个业务应用",
+   "goal": "政策兑现、企业管理、会议记录、公文协作四个应用全部走真后端，跨应用链路打通。"
+  },
+  {
+   "name": "M4 技能·电脑操作·联调演示",
+   "key": "M4",
+   "title": "技能·电脑操作·联调演示",
+   "goal": "补齐技能中心、AI 操作员和电脑操作，12 段演示在公网演示环境用真后端稳定走通。"
+  }
+ ],
+ "tasks": [
+  {
+   "id": "T01",
+   "issue": 2,
+   "title": "T01 仓库骨架、忽略规则与防泄密检查",
+   "milestone": "M0",
+   "labels": [
+    "area:repo",
+    "type:chore",
+    "priority:P0",
+    "reuse:adapt"
+   ],
+   "priority": "P0",
+   "wave": 1,
+   "branch": "chore/2-repo-guard",
+   "depends_on": [],
+   "goal": "把公开仓库的“什么不能进”变成机器检查，后面每个 PR 自动把关。",
+   "acceptance": [
+    "故意提交含敏感关键词的 md，guard 失败并指出文件和行号",
+    "故意提交 .env，本地钩子拦截",
+    "README 写清一句话定位、目录说明、怎么跑、开发流程",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "本分支 CI（或本地 guard 自检）全绿",
+    "PR 描述写 `Closes #2`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "scripts/check.py（check_secrets，CHK-REPO-03/04）",
+     "mode": "改造",
+     "change": "抽出密钥正则与 .env 拦截逻辑放进 guard.py，补上内部资料路径与敏感关键词规则"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T02",
+   "issue": 3,
+   "title": "T02 PR/Issue 模板、PR 描述检查、CI 工作流、AGENTS.md 与 Codex 技能",
+   "milestone": "M0",
+   "labels": [
+    "area:repo",
+    "type:chore",
+    "priority:P0",
+    "reuse:adapt"
+   ],
+   "priority": "P0",
+   "wave": 2,
+   "branch": "chore/3-pr-ci-agents",
+   "depends_on": [
+    {
+     "id": "T01",
+     "issue": 2
+    }
+   ],
+   "goal": "让 HA 的 Codex worker 拿到 Issue 就知道怎么开分支、写什么测试、PR 写成什么样。",
+   "acceptance": [
+    "新建 PR 时模板自动出现；缺 Refs 或缺截图时检查失败",
+    "CI 在空 PR 上全绿",
+    "Codex worker 只读 AGENTS.md 就能复述分支命名与 PR 要求",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #3`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "ops/gitlab/check_mr_description.py",
+     "mode": "改造",
+     "change": "读取来源从 GitLab CI 变量改为 GitHub PR 事件；界面路径改为 web/**、apps/*/web/**；截图宽度改为 1440/1280"
+    },
+    {
+     "module": "skills/dev/haiknow-app-author/SKILL.md",
+     "mode": "改造",
+     "change": "改写为经开区版“写一个小应用”，契约指向 docs/APP_CONTRACT 与接口规范 v1.3"
+    },
+    {
+     "module": "skills/ops/haiknow-issue-mr-flow/SKILL.md",
+     "mode": "改造",
+     "change": "glab/GitLab 换成 gh/GitHub，去掉飞书晋升规则"
+    },
+    {
+     "module": "docs/process/研发流程.md、docs/specs/开发流程规范.md",
+     "mode": "参考",
+     "change": "提炼成 AGENTS.md 的流程一节"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T03",
+   "issue": 4,
+   "title": "T03 导入 v4 原型到 web/，文档导入 docs/",
+   "milestone": "M0",
+   "labels": [
+    "area:web",
+    "type:chore",
+    "priority:P0",
+    "reuse:none"
+   ],
+   "priority": "P0",
+   "wave": 2,
+   "branch": "chore/4-import-v4",
+   "depends_on": [
+    {
+     "id": "T01",
+     "issue": 2
+    }
+   ],
+   "goal": "前端起点：v4 原型原样进新仓库，一键演示照常跑通。",
+   "acceptance": [
+    "mock 模式下一键演示 12 段跑通",
+    "guard 通过：没有内部资料与本机绝对路径",
+    "CI 冒烟真实执行并通过",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #4`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "v4 前端是对话优先的新外壳，卫华 core/web 工作台外壳不进入"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T04",
+   "issue": 5,
+   "title": "T04 修复两个 P0：切换对话面板串台、跨应用首次打开丢参数",
+   "milestone": "M0",
+   "labels": [
+    "area:web",
+    "type:bug",
+    "priority:P0",
+    "reuse:reference"
+   ],
+   "priority": "P0",
+   "wave": 3,
+   "branch": "fix/5-fix-panel-params",
+   "depends_on": [
+    {
+     "id": "T03",
+     "issue": 4
+    }
+   ],
+   "goal": "两个 P0 都在外壳 shell.js 的面板管理里，合成一个任务避免同文件冲突。",
+   "acceptance": [
+    "A 对话开政策、B 对话开企业，来回切换面板跟随对话",
+    "四条跨应用跳转首次打开即落在正确页面并带参数",
+    "两条回归用例进 CI",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #5`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/web/shell-context.js、core/web/app-frame.js",
+     "mode": "参考",
+     "change": "对照卫华 ctx 注入与路由参数传递方式，保持 mount(el, ctx) 契约一致"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T05",
+   "issue": 6,
+   "title": "T05 种子数据单一来源 + 示例事项清理",
+   "milestone": "M0",
+   "labels": [
+    "area:data",
+    "type:bug",
+    "priority:P0",
+    "reuse:reference"
+   ],
+   "priority": "P0",
+   "wave": 3,
+   "branch": "fix/6-seed-single-source",
+   "depends_on": [
+    {
+     "id": "T03",
+     "issue": 4
+    }
+   ],
+   "goal": "mock 和后端种子只有一份，挂真实文号的数据必须和原文一致。",
+   "acceptance": [
+    "data/seed 中没有“挂真实文号 + 金额与原文不符”的条目（附核对表）",
+    "build_mock.py 生成结果结构不变，冒烟通过",
+    "星河智驾的匹配结果不再出现两条算力券",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #6`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/knowledge/seed.py",
+     "mode": "参考",
+     "change": "沿用“已入库则跳过、样本显式标注”的种子导入做法，后端阶段直接读同一份 JSON"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T06",
+   "issue": 7,
+   "title": "T06 演示数据口径统一 + 演示企业改名与示例标注",
+   "milestone": "M0",
+   "labels": [
+    "area:data",
+    "area:web",
+    "type:bug",
+    "priority:P1",
+    "reuse:none"
+   ],
+   "priority": "P1",
+   "wave": 4,
+   "branch": "fix/7-demo-data-cleanup",
+   "depends_on": [
+    {
+     "id": "T05",
+     "issue": 6
+    }
+   ],
+   "goal": "界面上的数字、分类、落款和企业名都经得起局方当面核对。",
+   "acceptance": [
+    "所有计数与列表条数一致",
+    "企业名与 137 家公开名单零重合（附比对脚本输出）",
+    "界面上每家演示企业都有“示例企业”角标",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #7`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "纯数据与文案修正"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T07",
+   "issue": 8,
+   "title": "T07 导入真实补充数据（公文范文、部门制度、会议素材、企业公开名单）",
+   "milestone": "M0",
+   "labels": [
+    "area:data",
+    "area:kb",
+    "type:feat",
+    "priority:P1",
+    "reuse:reference"
+   ],
+   "priority": "P1",
+   "wave": 4,
+   "branch": "feat/8-real-data-seed",
+   "depends_on": [
+    {
+     "id": "T05",
+     "issue": 6
+    }
+   ],
+   "goal": "把已抓到的真实公开数据放进种子，每条可追溯来源。",
+   "acceptance": [
+    "抽查 10 条，source_url 可打开且内容一致",
+    "公开名单不出现在企业台账里",
+    "REAL_DATA.md 列出每个文件的来源、条数、抓取日期",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #8`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/knowledge/service.py（kb_entries 字段：status/version/source/visibility）",
+     "mode": "参考",
+     "change": "种子字段按卫华知识库元数据对齐，M2 入库时无需再转换"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T08",
+   "issue": 9,
+   "title": "T08 按模块切换 mock/http + 契约测试脚手架",
+   "milestone": "M0",
+   "labels": [
+    "area:web",
+    "type:test",
+    "priority:P0",
+    "reuse:reference"
+   ],
+   "priority": "P0",
+   "wave": 3,
+   "branch": "test/9-module-switch-contract",
+   "depends_on": [
+    {
+     "id": "T03",
+     "issue": 4
+    }
+   ],
+   "goal": "后端做完一块就切一块，契约测试当验收。",
+   "acceptance": [
+    "mock 模式 117 条契约断言全部通过",
+    "单模块切 http 时其余模块仍走 mock",
+    "契约命令可指定模块对任意地址运行",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #9`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "contracts/v1/*.json、tests/test_v1_contracts.py",
+     "mode": "参考",
+     "change": "照卫华“契约 JSON + 测试读契约断言”的写法组织 web/tests/contract"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T09",
+   "issue": 10,
+   "title": "T09 引入卫华 core 并裁剪",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 2,
+   "branch": "feat/10-import-haiknow-core",
+   "depends_on": [
+    {
+     "id": "T01",
+     "issue": 2
+    }
+   ],
+   "goal": "把卫华底座原样带进来、固定版本、停掉经开区用不到的模块，测试全绿。",
+   "acceptance": [
+    "保留模块的卫华原测试在新仓库通过",
+    "仓库里搜不到卫华客户名、真实业务数据或卫华演示账号",
+    "core/VERSION 指向的 commit 可在卫华仓库找到",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #10`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/*（auth、identity、rbac、manifest、data、store、migrations、aihub、knowledge、jobs、schedules、api_v1）",
+     "mode": "直接用",
+     "change": "原样拷入，只改 main.py 的模块注册列表"
+    },
+    {
+     "module": "core/sdk/haiknow_sdk、core/sdk/js",
+     "mode": "直接用",
+     "change": "原样拷入"
+    },
+    {
+     "module": "scripts/check.py、scripts/new_app.py、apps/_template",
+     "mode": "直接用",
+     "change": "原样拷入，经开区规则在后续任务追加"
+    },
+    {
+     "module": "tests/test_*.py（保留模块对应部分）",
+     "mode": "直接用",
+     "change": "随模块拷入，作为回归"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T10",
+   "issue": 11,
+   "title": "T10 经开区实例：配置、/api/v1 路径兼容层、托管 web/",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 3,
+   "branch": "feat/11-jkq-instance",
+   "depends_on": [
+    {
+     "id": "T09",
+     "issue": 10
+    },
+    {
+     "id": "T03",
+     "issue": 4
+    }
+   ],
+   "goal": "一条命令起经开区实例，前端从同源访问，路径与接口规范一致。",
+   "acceptance": [
+    "make dev 后浏览器打开即见原型（mock 模式）",
+    "兼容层有单测覆盖每条映射与错误码转换",
+    "/api/health 返回 200",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #11`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/main.py（create_app、HAIKNOW_* 环境变量、StaticFiles 挂载）",
+     "mode": "直接用",
+     "change": "用环境变量指向经开区目录，不改卫华代码"
+    },
+    {
+     "module": "core/server/haiknow_core/projects.py、config/projects.yaml",
+     "mode": "改造",
+     "change": "项目目录换成单项目 jkq，所有记录归到这个项目"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T11",
+   "issue": 12,
+   "title": "T11 真登录与 4 个角色、演示账号、授权矩阵",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 4,
+   "branch": "feat/12-auth-roles",
+   "depends_on": [
+    {
+     "id": "T10",
+     "issue": 11
+    }
+   ],
+   "goal": "管理员 / 审签领导 / 经办人员 / 外部协作者四个角色真登录、按授权矩阵控制。",
+   "acceptance": [
+    "4 个演示账号可登录，看到的应用与授权矩阵一致",
+    "越权调用返回 403 并有审计记录",
+    "密码从不出现在任何响应里",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #12`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/auth.py",
+     "mode": "直接用",
+     "change": "通过 T10 兼容层挂到 /api/v1/auth；错误码映射；锁定时长按定稿调整常量"
+    },
+    {
+     "module": "core/server/haiknow_core/identity.py、identity_models.py、passwords.py",
+     "mode": "直接用",
+     "change": "只换种子 yaml"
+    },
+    {
+     "module": "core/server/haiknow_core/rbac.py、config/roles.yaml",
+     "mode": "直接用",
+     "change": "动作仍为 view/operate/approve/admin，角色换成经开区四个"
+    },
+    {
+     "module": "—（session、me/prefs、me/role）",
+     "mode": "不复用",
+     "change": "卫华没有，新写 3 个薄接口"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T12",
+   "issue": 13,
+   "title": "T12 管理后台接口与审计查询",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 5,
+   "branch": "feat/13-admin-audit",
+   "depends_on": [
+    {
+     "id": "T11",
+     "issue": 12
+    }
+   ],
+   "goal": "管理员能管用户、部门、角色授权、应用上下架和平台设置，能查审计。",
+   "acceptance": [
+    "删最后一个管理员返回 409 LAST_ADMIN",
+    "删有成员的部门被拒",
+    "每个写操作在审计里可查到前后值",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #13`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/admin_identity.py（users/org/roles/grants/settings，已有 last_admin 保护）",
+     "mode": "直接用",
+     "change": "经 T10 兼容层挂到 /api/v1/admin；错误码改写"
+    },
+    {
+     "module": "core/server/haiknow_core/admin_apps.py",
+     "mode": "直接用",
+     "change": "PATCH /admin/apps/{id} 对应启停与回滚"
+    },
+    {
+     "module": "core/server/haiknow_core/store.py（audit）、main.py（/api/audit）",
+     "mode": "改造",
+     "change": "审计查询加筛选参数和分页，补 via 字段（ui/chat/operator/api/computer）"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T13",
+   "issue": 14,
+   "title": "T13 外部协作者字段级脱敏",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P1",
+    "reuse:reference"
+   ],
+   "priority": "P1",
+   "wave": 6,
+   "branch": "feat/14-partner-masking",
+   "depends_on": [
+    {
+     "id": "T12",
+     "issue": 13
+    }
+   ],
+   "goal": "partner 角色读企业等数据时，电话、营收、税额等字段统一打码。",
+   "acceptance": [
+    "partner 调企业详情，配置的字段全部打码",
+    "admin/leader/member 看到原值",
+    "脱敏规则改配置即生效，有单测",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #14`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/knowledge/service.py（visibility public/internal/restricted）",
+     "mode": "参考",
+     "change": "沿用其“按角色判可见”的位置，在序列化层新增字段级过滤"
+    },
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "卫华没有字段级脱敏，新写过滤器"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T14",
+   "issue": 15,
+   "title": "T14 模型网关：接国产模型、/models 接口、出域拦截",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 4,
+   "branch": "feat/15-model-gateway",
+   "depends_on": [
+    {
+     "id": "T10",
+     "issue": 11
+    }
+   ],
+   "goal": "对话、问答、起草都走同一个网关，能切模型、能限制敏感内容不出域。",
+   "acceptance": [
+    "配置真实 key 时一次真调用成功；无 key 时 mock 返回",
+    "停用的模型选不了，返回 403 MODEL_DISABLED",
+    "标 confidential 的请求不会发往未授权 provider（有单测）",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #15`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub/gateway.py（能力路由、回退、出域拦截、配额）",
+     "mode": "直接用",
+     "change": "不改逻辑"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/adapters.py、settings.py（Fernet 加密存 key）",
+     "mode": "直接用",
+     "change": "新增启动时从环境变量写入 provider 的小脚本"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/api.py（/api/v1/admin/ai/providers、routes、usage）",
+     "mode": "改造",
+     "change": "包一层 /api/v1/models 的用户视图与个人默认模型"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T15",
+   "issue": 16,
+   "title": "T15 网关对话能力扩展：工具调用与流式透出",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/16-gateway-tools-stream",
+   "depends_on": [
+    {
+     "id": "T14",
+     "issue": 15
+    }
+   ],
+   "goal": "对话编排要用大模型工具调用，卫华网关目前只返回文字，要补齐。",
+   "acceptance": [
+    "请求带 tools 时能拿到 tool_calls",
+    "卫华原有 chat 测试仍通过",
+    "流式在 mock 下可复现",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #16`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub/gateway.py（_invoke 的 chat 分支目前只取 choices[0].message.content）",
+     "mode": "改造",
+     "change": "新增返回完整 message 的路径；请求体已原样透传 tools，无需改请求侧"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/streaming.py（SSE Channel）",
+     "mode": "直接用",
+     "change": "增加 tool_call 增量的拼装"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T16",
+   "issue": 17,
+   "title": "T16 应用注册与工具桥：app.json 扩展字段、/apps、/tools",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/17-app-registry-tools",
+   "depends_on": [
+    {
+     "id": "T11",
+     "issue": 12
+    }
+   ],
+   "goal": "对话能调小应用的工具，且与应用界面共用同一套权限和留痕。",
+   "acceptance": [
+    "无权应用不出现在 /apps 与 /tools",
+    "写工具从对话调用时生成待确认而不是直接写",
+    "manifest 缺字段时 check.py 给出明确报错",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #17`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/manifest.py",
+     "mode": "改造",
+     "change": "validate 增加扩展字段校验，contract 版本号不变"
+    },
+    {
+     "module": "core/server/haiknow_core/main.py（自动发现 apps/<id>，挂到 /api/apps/{id}）",
+     "mode": "直接用",
+     "change": "业务应用路径 /api/apps/policy/... 与规范一致"
+    },
+    {
+     "module": "core/server/haiknow_core/main.py（GET /api/apps）",
+     "mode": "改造",
+     "change": "包成 /api/v1/apps，补 tools/starters 字段"
+    },
+    {
+     "module": "apps/_template、scripts/new_app.py",
+     "mode": "改造",
+     "change": "模板加扩展字段"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T17",
+   "issue": 18,
+   "title": "T17 长任务与审签接口",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/18-jobs-reviews",
+   "depends_on": [
+    {
+     "id": "T11",
+     "issue": 12
+    }
+   ],
+   "goal": "转写、解析、技能运行走长任务；公文、台账写入、技能上架走审签。",
+   "acceptance": [
+    "提交人审自己的返回 409 SELF_REVIEW",
+    "确认旧版本返回 409 STALE_VERSION",
+    "进程重启后进行中的任务继续执行",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #18`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/jobs/（ADR 0007 持久长任务 + 步骤检查点）",
+     "mode": "直接用",
+     "change": "路径就是 /api/v1/jobs；只加字段投影"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（submit_review / decide_review，已有 self_review、stale_version）",
+     "mode": "直接用",
+     "change": "错误码大小写与 decision 取值映射"
+    },
+    {
+     "module": "core/server/haiknow_core/api_v1.py（/reviews 路由）",
+     "mode": "直接用",
+     "change": "不改"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T18",
+   "issue": 19,
+   "title": "T18 待办、收件箱、团队动态、用量统计",
+   "milestone": "M1",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:adapt"
+   ],
+   "priority": "P0",
+   "wave": 6,
+   "branch": "feat/19-inbox-todos-usage",
+   "depends_on": [
+    {
+     "id": "T17",
+     "issue": 18
+    },
+    {
+     "id": "T14",
+     "issue": 15
+    }
+   ],
+   "goal": "侧栏收件箱三个箱和角标、我的待办、动态、管理员用量页都有真数据。",
+   "acceptance": [
+    "三个箱的条数与角标一致",
+    "完成待办后角标即时减少",
+    "用量按三个维度可查",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #19`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/api_v1.py + data.py（notifications、messages，ADR 0010）",
+     "mode": "改造",
+     "change": "收件箱 = reviews + 待办 + 消息的聚合视图"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/api.py（/admin/ai/usage）、main.py（/api/model/usage）",
+     "mode": "改造",
+     "change": "加按人维度并投影成规范格式"
+    },
+    {
+     "module": "—（todos、feed）",
+     "mode": "不复用",
+     "change": "新增两张表，迁移追加在 migrations.py 之后"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T19",
+   "issue": 20,
+   "title": "T19 部署演示环境（云服务器 + 反代 + 每晚重置）",
+   "milestone": "M1",
+   "labels": [
+    "area:deploy",
+    "type:chore",
+    "priority:P1",
+    "reuse:reference"
+   ],
+   "priority": "P1",
+   "wave": 4,
+   "branch": "chore/20-deploy-demo",
+   "depends_on": [
+    {
+     "id": "T10",
+     "issue": 11
+    }
+   ],
+   "goal": "尽早上线，问题早暴露。",
+   "acceptance": [
+    "公网地址可登录",
+    "重启容器后数据与进行中的任务不丢",
+    "仓库里没有任何真实 key 或服务器口令",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #20`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "scripts/start.sh、docs/deploy/离线启动.md、scripts/pack-offline.sh",
+     "mode": "参考",
+     "change": "启动参数与数据目录约定沿用"
+    },
+    {
+     "module": "docs/decisions/0007-持久长任务与步骤检查点.md",
+     "mode": "参考",
+     "change": "明确只能单 worker 运行"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T20",
+   "issue": 21,
+   "title": "T20 对话存储：会话、消息、卡片、面板状态落库",
+   "milestone": "M2",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/21-conversation-store",
+   "depends_on": [
+    {
+     "id": "T11",
+     "issue": 12
+    }
+   ],
+   "goal": "对话历史与右侧面板状态可恢复。",
+   "acceptance": [
+    "换浏览器登录同账号，历史与面板状态一致",
+    "看不到别人的会话",
+    "删除后可撤销",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #21`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/migrations.py、store.py（锁与审计）",
+     "mode": "直接用",
+     "change": "追加迁移建 conversations / messages 表"
+    },
+    {
+     "module": "core/server/haiknow_core/builder/__init__.py（sessions / messages 接口形状）",
+     "mode": "参考",
+     "change": "会话与消息的接口划分照此设计"
+    },
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "卫华没有聊天主界面，会话模型新写"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T21",
+   "issue": 22,
+   "title": "T21 对话编排：规则意图兜底 + 大模型工具调用 + 卡片",
+   "milestone": "M2",
+   "labels": [
+    "area:platform",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 6,
+   "branch": "feat/22-chat-orchestrator",
+   "depends_on": [
+    {
+     "id": "T15",
+     "issue": 16
+    },
+    {
+     "id": "T16",
+     "issue": 17
+    },
+    {
+     "id": "T20",
+     "issue": 21
+    }
+   ],
+   "goal": "一句话进来，先规则、再模型，调对工具、回卡片、能深链。",
+   "acceptance": [
+    "12 段演示话术的意图命中率 100%（规则表）",
+    "模型 mock 下工具调用链可复现",
+    "工具报错时回复里说明失败原因",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #22`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "T15 扩展后的 aihub chat（tools + 流式）",
+     "mode": "直接用",
+     "change": "编排层只调网关"
+    },
+    {
+     "module": "T16 的 /tools 注册表",
+     "mode": "直接用",
+     "change": "按权限取可用工具"
+    },
+    {
+     "module": "core/server/haiknow_core/builder/agent.py（模型 + 平台工具的多轮循环）",
+     "mode": "参考",
+     "change": "循环与终止条件的写法"
+    },
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "意图规则表与卡片渲染新写"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T22",
+   "issue": 23,
+   "title": "T22 对话附件上传与自动分流",
+   "milestone": "M2",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 6,
+   "branch": "feat/23-chat-attachments",
+   "depends_on": [
+    {
+     "id": "T16",
+     "issue": 17
+    },
+    {
+     "id": "T20",
+     "issue": 21
+    }
+   ],
+   "goal": "拖一个文件进对话，系统建议交给哪个应用、要不要顺手入知识库。",
+   "acceptance": [
+    "上传录音得到“会议记录”建议，上传政策 PDF 得到“入政策库”建议",
+    "附件只有本人可见",
+    "上传不支持的类型或超过大小上限时返回接口规范 §3.3 约定的错误码，前端给出提示",
+    "附件与分流建议写入对话记录，刷新页面后仍可见",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #23`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/api_v1.py + data.py（POST /files、save_file）",
+     "mode": "直接用",
+     "change": "文件存储与权限沿用"
+    },
+    {
+     "module": "T16 manifest accepts",
+     "mode": "直接用",
+     "change": "分流规则来自各应用清单"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T23",
+   "issue": 24,
+   "title": "T23 知识库：5 个空间、文档管理、种子导入",
+   "milestone": "M2",
+   "labels": [
+    "area:kb",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/24-kb-spaces-docs",
+   "depends_on": [
+    {
+     "id": "T11",
+     "issue": 12
+    },
+    {
+     "id": "T07",
+     "issue": 8
+    }
+   ],
+   "goal": "把卫华知识库改成经开区的 5 个空间，并灌入真实种子。",
+   "acceptance": [
+    "5 个空间按角色可见",
+    "替代旧版后，引用旧版的对话卡片显示“来源已修订”",
+    "种子导入幂等，重复启动不重复",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #24`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/knowledge/service.py",
+     "mode": "改造",
+     "change": "CATEGORIES 8 个工厂分类 → 5 个空间；空间授权映射到 visibility + roles；新增删除/撤销"
+    },
+    {
+     "module": "knowledge/service.py（versions、superseded 状态、references 引用反查）",
+     "mode": "直接用",
+     "change": "“来源已修订”直接基于 superseded + references"
+    },
+    {
+     "module": "core/server/haiknow_core/knowledge/seed.py",
+     "mode": "改造",
+     "change": "改为读 data/seed"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T24",
+   "issue": 25,
+   "title": "T24 知识库导入流水线：解析、切片、查重、网址导入",
+   "milestone": "M2",
+   "labels": [
+    "area:kb",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 6,
+   "branch": "feat/25-kb-import",
+   "depends_on": [
+    {
+     "id": "T23",
+     "issue": 24
+    },
+    {
+     "id": "T14",
+     "issue": 15
+    }
+   ],
+   "goal": "文件、粘贴文本、网址三种来源都能入库，入库前可预览。",
+   "acceptance": [
+    "同一 PDF 导两次第二次被跳过",
+    "网址导入拒绝内网地址",
+    "切片保留条款编号",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #25`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub/adapters.py（mineru_parse、parse_blocks）",
+     "mode": "直接用",
+     "change": "有 MinerU key 时走它；无 key 时本地解析兜底（新写）"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/reader.py（check_url 内网拦截、fetch_page、extract）",
+     "mode": "直接用",
+     "change": "网址导入直接调用"
+    },
+    {
+     "module": "apps/r16-quality-archive/api/domain.py（split_document）",
+     "mode": "改造",
+     "change": "按条款切片的思路改成政策文件的“第 X 条”切法"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T25",
+   "issue": 26,
+   "title": "T25 知识库检索：BM25、筛选与统计",
+   "milestone": "M2",
+   "labels": [
+    "area:kb",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 6,
+   "branch": "feat/26-kb-search",
+   "depends_on": [
+    {
+     "id": "T23",
+     "issue": 24
+    }
+   ],
+   "goal": "按相关度找到原文片段，能按空间、状态、时间筛。",
+   "acceptance": [
+    "“算力券 封顶”能命中原文条款且排第一",
+    "partner 搜不到 enterprise 空间",
+    "facets 数与列表一致",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #26`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/knowledge/service.py（search 的 allowed() 权限过滤）",
+     "mode": "直接用",
+     "change": "权限过滤沿用"
+    },
+    {
+     "module": "knowledge/service.py（search 现为子串匹配）",
+     "mode": "不复用",
+     "change": "检索算法新写 BM25"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub（embedding 能力）",
+     "mode": "直接用",
+     "change": "向量开关打开时使用"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T26",
+   "issue": 27,
+   "title": "T26 知识库问答：只基于片段作答、逐句带出处",
+   "milestone": "M2",
+   "labels": [
+    "area:kb",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:adapt"
+   ],
+   "priority": "P0",
+   "wave": 7,
+   "branch": "feat/27-kb-ask",
+   "depends_on": [
+    {
+     "id": "T25",
+     "issue": 26
+    },
+    {
+     "id": "T15",
+     "issue": 16
+    }
+   ],
+   "goal": "回答只摘原文，每句有出处；找不到就说找不到。",
+   "acceptance": [
+    "无命中问题返回 confidence:none 且网关无调用记录",
+    "每个 [n] 都能定位到片段原文",
+    "引用了失效文件时显示提示",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #27`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "apps/m04/api/router.py（check_evidence：引文须出现在来源原文）",
+     "mode": "改造",
+     "change": "抽成 kb 的引文校验函数"
+    },
+    {
+     "module": "apps/r16-quality-archive/api/domain.py（逐句出处、NOT_FOUND 处理）",
+     "mode": "参考",
+     "change": "“档案里没有找到”的诚实兜底写法"
+    },
+    {
+     "module": "apps/h03/api/rules.py（policy_preview：按有效条款核对）",
+     "mode": "参考",
+     "change": "失效条款的提示方式"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T27",
+   "issue": 28,
+   "title": "T27 前端平台层与知识库切到真后端",
+   "milestone": "M2",
+   "labels": [
+    "area:web",
+    "type:feat",
+    "priority:P0",
+    "reuse:reference"
+   ],
+   "priority": "P0",
+   "wave": 8,
+   "branch": "feat/28-web-platform-http",
+   "depends_on": [
+    {
+     "id": "T08",
+     "issue": 9
+    },
+    {
+     "id": "T12",
+     "issue": 13
+    },
+    {
+     "id": "T18",
+     "issue": 19
+    },
+    {
+     "id": "T21",
+     "issue": 22
+    },
+    {
+     "id": "T22",
+     "issue": 23
+    },
+    {
+     "id": "T26",
+     "issue": 27
+    }
+   ],
+   "goal": "平台层和知识库的界面走真后端。",
+   "acceptance": [
+    "契约测试 platform、kb 两模块对真后端通过",
+    "冒烟在 http 模式通过",
+    "断网时有可读提示",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #28`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/js/haiknow.js（请求封装、错误处理）",
+     "mode": "参考",
+     "change": "错误码到提示文案的处理方式"
+    },
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "前端仍是 v4"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T28",
+   "issue": 29,
+   "title": "T28 四个业务应用脚手架与种子加载",
+   "milestone": "M3",
+   "labels": [
+    "area:apps",
+    "type:chore",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 6,
+   "branch": "chore/29-apps-scaffold",
+   "depends_on": [
+    {
+     "id": "T16",
+     "issue": 17
+    },
+    {
+     "id": "T05",
+     "issue": 6
+    }
+   ],
+   "goal": "四个应用按卫华应用规范落位，后端各自从 data/seed 读种子。",
+   "acceptance": [
+    "4 个应用出现在 /api/v1/apps",
+    "check.py 与 pytest 全绿",
+    "make seed 可重置四个应用的数据",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #29`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "scripts/new_app.py、apps/_template",
+     "mode": "直接用",
+     "change": "生成目录"
+    },
+    {
+     "module": "scripts/check.py、scripts/ui_exemptions.json",
+     "mode": "改造",
+     "change": "加经开区豁免项"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T29",
+   "issue": 30,
+   "title": "T29 政策兑现：事项库、画像匹配、额度试算",
+   "milestone": "M3",
+   "labels": [
+    "area:policy",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 7,
+   "branch": "feat/30-policy-match-calc",
+   "depends_on": [
+    {
+     "id": "T28",
+     "issue": 29
+    }
+   ],
+   "goal": "企业画像进来，逐条说清为什么符合 / 不符合，金额算得出过程。",
+   "acceptance": [
+    "星河智驾示例匹配结果与人工核对表一致",
+    "试算过程文字与金额一致",
+    "事项都有 source.url",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #30`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c03.py（C03 对表计算：受限公式、计算留痕）",
+     "mode": "直接用",
+     "change": "比例与封顶用受限公式表达"
+    },
+    {
+     "module": "apps/h03/api/rules.py（按有效条款核对、冲突并列原文）",
+     "mode": "参考",
+     "change": "条件判定理由的写法"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T30",
+   "issue": 31,
+   "title": "T30 政策兑现：告知单、对话工具与卡片",
+   "milestone": "M3",
+   "labels": [
+    "area:policy",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/31-policy-notice-tools",
+   "depends_on": [
+    {
+     "id": "T29",
+     "issue": 30
+    },
+    {
+     "id": "T21",
+     "issue": 22
+    }
+   ],
+   "goal": "匹配结果一键生成告知单，并能在对话里调用。",
+   "acceptance": [
+    "对话里说“看看星河智驾能申请什么”出匹配卡片",
+    "告知单落款为真实责任部门",
+    "深链到公文后参数齐全",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #31`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c06.py（C06 资料汇编：槽位 + 模板 → HTML，查缺件）",
+     "mode": "直接用",
+     "change": "告知单模板用槽位填充"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（reviews）",
+     "mode": "直接用",
+     "change": "政策卡片对外发布需另一人确认"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T31",
+   "issue": 32,
+   "title": "T31 企业管理：一企一档台账、导入导出",
+   "milestone": "M3",
+   "labels": [
+    "area:enterprise",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 7,
+   "branch": "feat/32-enterprise-ledger",
+   "depends_on": [
+    {
+     "id": "T28",
+     "issue": 29
+    },
+    {
+     "id": "T13",
+     "issue": 14
+    }
+   ],
+   "goal": "台账能查能改能导入导出，每次修改留前后值。",
+   "acceptance": [
+    "导入 CSV 后导出内容一致",
+    "修改历史可看到前后值",
+    "导出 CSV 防公式注入",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #32`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/data.py（save_record / list_records / 版本）",
+     "mode": "直接用",
+     "change": "一家企业 = 一条带版本的记录"
+    },
+    {
+     "module": "apps/h01/api/rules.py（export_csv 的 safe() 防公式注入）",
+     "mode": "改造",
+     "change": "抽成通用 CSV 导出工具"
+    },
+    {
+     "module": "apps/m07/api（多台账汇总、数字回到来源行）",
+     "mode": "参考",
+     "change": "facets 统计口径"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T32",
+   "issue": 33,
+   "title": "T32 企业管理：走访随记 → 更新建议 → 逐条确认",
+   "milestone": "M3",
+   "labels": [
+    "area:enterprise",
+    "area:ai",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/33-enterprise-visits",
+   "depends_on": [
+    {
+     "id": "T31",
+     "issue": 32
+    },
+    {
+     "id": "T15",
+     "issue": 16
+    },
+    {
+     "id": "T17",
+     "issue": 18
+    }
+   ],
+   "goal": "随手记一段走访，系统提取更新建议，人逐条确认后才写台账。",
+   "acceptance": [
+    "每条建议都能定位到随记原句",
+    "拒绝的建议不写台账",
+    "台账版本号随确认递增",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #33`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c01.py（C01 采集填表：字段校验、缺项）",
+     "mode": "直接用",
+     "change": "提取结果按台账字段校验"
+    },
+    {
+     "module": "apps/m04/api/router.py（visit_sources、check_evidence）",
+     "mode": "改造",
+     "change": "走访原句出处校验"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（reviews）",
+     "mode": "直接用",
+     "change": "逐条确认"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T33",
+   "issue": 34,
+   "title": "T33 企业管理：诉求闭环与到期提醒",
+   "milestone": "M3",
+   "labels": [
+    "area:enterprise",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/34-enterprise-issues",
+   "depends_on": [
+    {
+     "id": "T31",
+     "issue": 32
+    },
+    {
+     "id": "T18",
+     "issue": 19
+    }
+   ],
+   "goal": "诉求有人跟、有进度、超期会提醒；资质到期会提醒。",
+   "acceptance": [
+    "超期诉求出现在 alerts 与收件箱",
+    "改期后提醒重算",
+    "同一事项一天只提醒一次",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #34`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c04.py（C04 进度和提醒：逾期规则、提醒去重）",
+     "mode": "直接用",
+     "change": "节点状态与去重"
+    },
+    {
+     "module": "core/server/haiknow_core/schedules/（ADR 0011 定时调度）",
+     "mode": "直接用",
+     "change": "每日扫描到期"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（send_message，ADR 0010）",
+     "mode": "直接用",
+     "change": "提醒投递到收件箱"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T34",
+   "issue": 35,
+   "title": "T34 转写适配器：国产语音转写 + 长音频分片",
+   "milestone": "M3",
+   "labels": [
+    "area:platform",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:adapt"
+   ],
+   "priority": "P0",
+   "wave": 5,
+   "branch": "feat/35-asr-adapter",
+   "depends_on": [
+    {
+     "id": "T14",
+     "issue": 15
+    }
+   ],
+   "goal": "会议录音能真转写，超过单次上限的音频自动分片。",
+   "acceptance": [
+    "一段 3–5 分钟演示录音转写成功并带时间戳",
+    "超过 20MB 的音频自动分片",
+    "无 key 时返回预置转写结果并标明",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #35`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub/gateway.py（transcribe 能力、20MB 上限、audio_mime）",
+     "mode": "改造",
+     "change": "新增 provider kind 与分片逻辑"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/adapters.py",
+     "mode": "改造",
+     "change": "新增国产转写适配器（OpenAI 兼容的 /audio/transcriptions 可直接走 kind=openai）"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T35",
+   "issue": 36,
+   "title": "T35 会议记录：上传与转写长任务",
+   "milestone": "M3",
+   "labels": [
+    "area:meeting",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 7,
+   "branch": "feat/36-meeting-transcribe",
+   "depends_on": [
+    {
+     "id": "T28",
+     "issue": 29
+    },
+    {
+     "id": "T34",
+     "issue": 35
+    },
+    {
+     "id": "T17",
+     "issue": 18
+    }
+   ],
+   "goal": "上传录音后立即返回任务号，界面轮询进度。",
+   "acceptance": [
+    "上传后界面看到进度，完成后显示逐字稿",
+    "重启服务后任务继续",
+    "失败可一键重试",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #36`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/jobs/（@operation、步骤检查点）",
+     "mode": "直接用",
+     "change": "分步执行与断点续跑"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（save_file / save_record）",
+     "mode": "直接用",
+     "change": "音频与会议记录存储"
+    },
+    {
+     "module": "core/sdk/js/preview/media.js（CAP-09 录音采集）",
+     "mode": "参考",
+     "change": "若要现场录音再接入；v4 已有上传"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T36",
+   "issue": 37,
+   "title": "T36 会议记录：纪要、改发言人、待办派发、关联企业诉求",
+   "milestone": "M3",
+   "labels": [
+    "area:meeting",
+    "area:ai",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 9,
+   "branch": "feat/37-meeting-minutes",
+   "depends_on": [
+    {
+     "id": "T35",
+     "issue": 36
+    },
+    {
+     "id": "T33",
+     "issue": 34
+    }
+   ],
+   "goal": "纪要每条结论能回到逐字稿，待办有负责人和期限，能挂到企业诉求。",
+   "acceptance": [
+    "每条纪要结论可跳回原句",
+    "缺负责人的待办被跳过并提示",
+    "关联后企业详情出现新诉求",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #37`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "apps/h01/api/rules.py（missing_task_owner：待办须有事项、负责人、期限）",
+     "mode": "改造",
+     "change": "规则搬进会议待办校验"
+    },
+    {
+     "module": "apps/m04/api/router.py（check_evidence）",
+     "mode": "改造",
+     "change": "纪要结论原句校验"
+    },
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c04.py",
+     "mode": "直接用",
+     "change": "待办提醒"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T37",
+   "issue": 38,
+   "title": "T37 公文协作：模板、起草、版本、定稿锁定",
+   "milestone": "M3",
+   "labels": [
+    "area:document",
+    "area:ai",
+    "type:feat",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 7,
+   "branch": "feat/38-document-draft",
+   "depends_on": [
+    {
+     "id": "T28",
+     "issue": 29
+    },
+    {
+     "id": "T15",
+     "issue": 16
+    }
+   ],
+   "goal": "按模板起草，可引用知识库，每次保存是新版本，定稿后锁定。",
+   "acceptance": [
+    "同一草稿保存 3 次有 3 个版本",
+    "定稿后修改返回 409 LOCKED",
+    "引用角标可跳到知识库原文",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #38`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/data.py（记录版本）",
+     "mode": "直接用",
+     "change": "草稿 = 带版本记录"
+    },
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c06.py",
+     "mode": "直接用",
+     "change": "模板槽位填充、缺件可见"
+    },
+    {
+     "module": "apps/m06/api（合同助手：缺信息不编）",
+     "mode": "参考",
+     "change": "缺项提示写法"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T38",
+   "issue": 39,
+   "title": "T38 公文协作：核查与一键修正",
+   "milestone": "M3",
+   "labels": [
+    "area:document",
+    "area:ai",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/39-document-check",
+   "depends_on": [
+    {
+     "id": "T37",
+     "issue": 38
+    }
+   ],
+   "goal": "规则核查文种要素、日期、文号、引用是否失效，问题可一键修正。",
+   "acceptance": [
+    "引用已失效政策时报 error",
+    "fix 后生成新版本且问题消失",
+    "每条问题能定位到原文段落",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #39`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c02.py（C02 文档审查：Rule × Clause → 带原文定位的提示，judge 注入 ctx.ai.chat）",
+     "mode": "直接用",
+     "change": "核查规则按 Rule 写，模型检查作为 judge 注入"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T39",
+   "issue": 40,
+   "title": "T39 公文协作：润色、两稿比对、批注",
+   "milestone": "M3",
+   "labels": [
+    "area:document",
+    "area:ai",
+    "type:feat",
+    "priority:P1",
+    "reuse:reference"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/40-document-polish",
+   "depends_on": [
+    {
+     "id": "T37",
+     "issue": 38
+    }
+   ],
+   "goal": "润色先预览再采用；任意两版可比对；可逐段批注。",
+   "acceptance": [
+    "润色不采用则不产生新版本",
+    "比对结果标出增删",
+    "批注可解决并留痕",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #40`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/sdk/haiknow_sdk/preview/components/c07.py（C07 修改意见与审核状态）",
+     "mode": "参考",
+     "change": "批注状态流转"
+    },
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "diff 用 Python difflib 新写"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T40",
+   "issue": 41,
+   "title": "T40 公文协作：送审签与导出 .docx",
+   "milestone": "M3",
+   "labels": [
+    "area:document",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/41-document-review-docx",
+   "depends_on": [
+    {
+     "id": "T37",
+     "issue": 38
+    },
+    {
+     "id": "T17",
+     "issue": 18
+    }
+   ],
+   "goal": "有 error 不能送审；审签通过即锁定该版本；能导出 Word。",
+   "acceptance": [
+    "有 error 送审返回 422",
+    "审签通过后再改返回 409",
+    "导出的 .docx 能用 Word / WPS 打开",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #41`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/data.py（submit_review / decide_review）",
+     "mode": "直接用",
+     "change": "审签流程"
+    },
+    {
+     "module": "apps/h01/api/router.py（导出 .doc）",
+     "mode": "参考",
+     "change": "导出前须已确认版本的校验"
+    },
+    {
+     "module": "core/server/haiknow_core/latex/（official-notice 模板，输出 PDF）",
+     "mode": "不复用",
+     "change": "本期要 .docx，不用 LaTeX"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T41",
+   "issue": 42,
+   "title": "T41 四个应用前端切 http + 跨应用链路测试",
+   "milestone": "M3",
+   "labels": [
+    "area:web",
+    "area:apps",
+    "type:test",
+    "priority:P0",
+    "reuse:reference"
+   ],
+   "priority": "P0",
+   "wave": 10,
+   "branch": "test/42-apps-http-e2e",
+   "depends_on": [
+    {
+     "id": "T27",
+     "issue": 28
+    },
+    {
+     "id": "T30",
+     "issue": 31
+    },
+    {
+     "id": "T32",
+     "issue": 33
+    },
+    {
+     "id": "T36",
+     "issue": 37
+    },
+    {
+     "id": "T38",
+     "issue": 39
+    },
+    {
+     "id": "T39",
+     "issue": 40
+    },
+    {
+     "id": "T40",
+     "issue": 41
+    }
+   ],
+   "goal": "四个应用全部走真后端，跨应用链路自动化。",
+   "acceptance": [
+    "四个模块契约测试对真后端通过",
+    "4 条链路用例进 CI",
+    "接口规范与实现无差异",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #42`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "tests/ui/real_flow.py（Playwright 真实流程走查）",
+     "mode": "参考",
+     "change": "链路用例写法"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T42",
+   "issue": 43,
+   "title": "T42 技能中心：增删改查、版本、复制改编、删除撤销",
+   "milestone": "M4",
+   "labels": [
+    "area:skills",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 6,
+   "branch": "feat/43-skills-crud",
+   "depends_on": [
+    {
+     "id": "T17",
+     "issue": 18
+    }
+   ],
+   "goal": "业务人员能自己建技能（无代码，只声明步骤与工具）。",
+   "acceptance": [
+    "已发布技能修改后生成新版本",
+    "fork 后来源可追溯",
+    "删除可撤销",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #43`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/data.py（记录版本）",
+     "mode": "直接用",
+     "change": "一个技能 = 一条带版本记录"
+    },
+    {
+     "module": "core/server/haiknow_core/builder/workspace.py（policy_problems）",
+     "mode": "参考",
+     "change": "技能规格的合规检查思路"
+    },
+    {
+     "module": "builder 的代码生成与沙箱",
+     "mode": "不复用",
+     "change": "技能不生成代码"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T43",
+   "issue": 44,
+   "title": "T43 技能中心：发布、分享、上架审核、评分",
+   "milestone": "M4",
+   "labels": [
+    "area:skills",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 7,
+   "branch": "feat/44-skills-publish",
+   "depends_on": [
+    {
+     "id": "T42",
+     "issue": 43
+    }
+   ],
+   "goal": "全区公开必须审核；分享范围可控。",
+   "acceptance": [
+    "全区公开未审核前别人看不到",
+    "审核驳回带理由",
+    "评分计入列表",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #44`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/data.py（reviews）",
+     "mode": "直接用",
+     "change": "上架审核"
+    },
+    {
+     "module": "core/server/haiknow_core/builder/published.py（门禁后才发布）",
+     "mode": "参考",
+     "change": "“过审才上架”的状态设计"
+    },
+    {
+     "module": "core/server/haiknow_core/rbac.py（audience 灰度受众）",
+     "mode": "参考",
+     "change": "分享范围判断"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T44",
+   "issue": 45,
+   "title": "T44 技能运行时与一句话起草",
+   "milestone": "M4",
+   "labels": [
+    "area:skills",
+    "area:ai",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 8,
+   "branch": "feat/45-skills-runtime",
+   "depends_on": [
+    {
+     "id": "T42",
+     "issue": 43
+    },
+    {
+     "id": "T26",
+     "issue": 27
+    },
+    {
+     "id": "T21",
+     "issue": 22
+    }
+   ],
+   "goal": "技能能跑：按步骤调工具 / 知识库 / 模型，结果带出处和缺项。",
+   "acceptance": [
+    "调用未声明工具被拒",
+    "试运行不保存草稿",
+    "必填未填项在结论中标“待确认”",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #45`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/jobs/",
+     "mode": "直接用",
+     "change": "运行即长任务"
+    },
+    {
+     "module": "core/server/haiknow_core/builder/agent.py（起草提示与约束）",
+     "mode": "参考",
+     "change": "一句话起草的提示写法"
+    },
+    {
+     "module": "builder/pi_runtime.py",
+     "mode": "不复用",
+     "change": "不引入 Node 子进程运行时"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T45",
+   "issue": 46,
+   "title": "T45 AI 操作员：意图目录、计划、执行回执",
+   "milestone": "M4",
+   "labels": [
+    "area:platform",
+    "type:feat",
+    "priority:P2",
+    "reuse:direct"
+   ],
+   "priority": "P2",
+   "wave": 7,
+   "branch": "feat/46-operator",
+   "depends_on": [
+    {
+     "id": "T16",
+     "issue": 17
+    },
+    {
+     "id": "T21",
+     "issue": 22
+    }
+   ],
+   "goal": "说一句话，系统在界面上一步步替你办，写操作必须确认。",
+   "acceptance": [
+    "无权应用的意图不返回",
+    "写步骤未确认不执行",
+    "审计里能看到 via=operator",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #46`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "T16 manifest intents",
+     "mode": "直接用",
+     "change": "意图目录来源"
+    },
+    {
+     "module": "core/server/haiknow_core/store.py（audit）",
+     "mode": "直接用",
+     "change": "执行回执留痕"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T46",
+   "issue": 47,
+   "title": "T46 电脑操作：模拟政务站",
+   "milestone": "M4",
+   "labels": [
+    "area:computer",
+    "type:feat",
+    "priority:P1",
+    "reuse:none"
+   ],
+   "priority": "P1",
+   "wave": 2,
+   "branch": "feat/47-mock-gov-site",
+   "depends_on": [
+    {
+     "id": "T01",
+     "issue": 2
+    }
+   ],
+   "goal": "给电脑操作一个安全的演练靶场，可提前独立做。",
+   "acceptance": [
+    "本地 make mock-gov 可打开",
+    "每个关键按钮都有 data-op 锚点",
+    "提交页明确标注“模拟”",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #47`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "",
+     "mode": "不复用",
+     "change": "全新静态站点"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T47",
+   "issue": 48,
+   "title": "T47 电脑操作：Playwright 运行器、runs 接口、提交前停下确认",
+   "milestone": "M4",
+   "labels": [
+    "area:computer",
+    "type:feat",
+    "priority:P1",
+    "reuse:direct"
+   ],
+   "priority": "P1",
+   "wave": 6,
+   "branch": "feat/48-computer-runner",
+   "depends_on": [
+    {
+     "id": "T46",
+     "issue": 47
+    },
+    {
+     "id": "T17",
+     "issue": 18
+    }
+   ],
+   "goal": "服务器端按步骤操作网页，逐步截图，遇到提交/签章/验证码停下。",
+   "acceptance": [
+    "在模拟政务站跑通一条申报",
+    "遇到提交步骤停下等确认",
+    "访问白名单外地址被拒",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #48`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/jobs/",
+     "mode": "直接用",
+     "change": "一次运行 = 一个长任务"
+    },
+    {
+     "module": "core/server/haiknow_core/data.py（reviews）",
+     "mode": "直接用",
+     "change": "提交前确认"
+    },
+    {
+     "module": "core/server/haiknow_core/aihub/reader.py（check_url 主机白名单）",
+     "mode": "参考",
+     "change": "系统白名单校验"
+    },
+    {
+     "module": "tests/ui/*.py、requirements-ui.txt（playwright==1.57.0）",
+     "mode": "参考",
+     "change": "Playwright 用法与版本对齐"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T48",
+   "issue": 49,
+   "title": "T48 电脑操作：经开区官网只读下载最新通知并入库",
+   "milestone": "M4",
+   "labels": [
+    "area:computer",
+    "area:kb",
+    "type:feat",
+    "priority:P2",
+    "reuse:direct"
+   ],
+   "priority": "P2",
+   "wave": 7,
+   "branch": "feat/49-official-site-import",
+   "depends_on": [
+    {
+     "id": "T47",
+     "issue": 48
+    },
+    {
+     "id": "T24",
+     "issue": 25
+    }
+   ],
+   "goal": "演示“让 AI 去官网拿最新通知并入库”，只读、可跳过。",
+   "acceptance": [
+    "拉到最新 3 条通知并入库",
+    "官网不可达时演示照常继续",
+    "抓取有限速（两次请求间隔 ≥ 2 秒）与重试（最多 3 次），日志中可见每次请求与结果",
+    "同一条通知重复运行不会重复入库（走 T24 查重）",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #49`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub/reader.py（fetch_page、looks_blocked）",
+     "mode": "直接用",
+     "change": "只读抓取与被拦截识别"
+    },
+    {
+     "module": "T24 导入流水线",
+     "mode": "直接用",
+     "change": "入库"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T49",
+   "issue": 50,
+   "title": "T49 演示稳定性：一键重置、兜底开关、12 段演示在真后端跑通",
+   "milestone": "M4",
+   "labels": [
+    "area:platform",
+    "area:web",
+    "type:test",
+    "priority:P0",
+    "reuse:direct"
+   ],
+   "priority": "P0",
+   "wave": 11,
+   "branch": "test/50-demo-stability",
+   "depends_on": [
+    {
+     "id": "T41",
+     "issue": 42
+    },
+    {
+     "id": "T44",
+     "issue": 45
+    },
+    {
+     "id": "T45",
+     "issue": 46
+    },
+    {
+     "id": "T47",
+     "issue": 48
+    },
+    {
+     "id": "T19",
+     "issue": 20
+    }
+   ],
+   "goal": "演示当天不翻车。",
+   "acceptance": [
+    "CI 中 12 段全部通过",
+    "断开模型 key 演示仍能走完并标明使用了预置结果",
+    "reset 后数据与初始快照一致",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #50`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "core/server/haiknow_core/aihub（kind=mock provider）",
+     "mode": "直接用",
+     "change": "CI 与兜底"
+    },
+    {
+     "module": "core/server/haiknow_core/migrations.py（一致性备份）",
+     "mode": "参考",
+     "change": "快照与恢复"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  },
+  {
+   "id": "T50",
+   "issue": 51,
+   "title": "T50 小白走查、浅深色两宽度回归、演示彩排",
+   "milestone": "M4",
+   "labels": [
+    "area:qa",
+    "type:test",
+    "priority:P1",
+    "reuse:reference"
+   ],
+   "priority": "P1",
+   "wave": 12,
+   "branch": "test/51-walkthrough",
+   "depends_on": [
+    {
+     "id": "T49",
+     "issue": 50
+    }
+   ],
+   "goal": "交付前用小白视角在公网环境完整走一遍。",
+   "acceptance": [
+    "四种组合截图无布局问题",
+    "阻断级问题全部关闭",
+    "试用记录放进 docs/",
+    "新增/修改的逻辑有自动化测试（单测、契约或 Playwright 任一），并进 CI",
+    "guard 防泄密检查与 CI 全绿",
+    "PR 描述写 `Closes #51`，附本地验证输出；改界面附 1440 与 1280 两张截图"
+   ],
+   "reuse": [
+    {
+     "module": "tests/ui/real_flow.py",
+     "mode": "参考",
+     "change": "走查脚本组织方式"
+    }
+   ],
+   "state": "open",
+   "assignees": [],
+   "prs": []
+  }
+ ]
+};
