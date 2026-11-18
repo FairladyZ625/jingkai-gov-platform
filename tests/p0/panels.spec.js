@@ -377,3 +377,127 @@ test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
   expect(errors).toEqual([]);
   console.log('一键演示：12/12 段，20 次操作员执行完成，0 次失败或停止，0 条页面错误或控制台警告。');
 });
+
+test('告知单往返后按原勾选和正文首次转公文', async ({ page }) => {
+  test.setTimeout(50000);
+  await login(page);
+  await say(page, '查一下星河智驾');
+  const other = page.locator('[data-conv]').filter({ hasText: '查一下星河智驾' });
+  await op(page, 'nav.chat').click();
+  await say(page, '帮我查一下书香里文化能申报哪些政策');
+  const savedChat = page.locator('[data-conv]').filter({ hasText: '帮我查一下书香里文化' });
+  await op(page, 'policy.pick-PI-03').uncheck();
+  await expect(op(page, 'policy.pick-RP-024')).toBeChecked();
+  await say(page, '给书香里生成政策告知单');
+  const notice = op(page, 'policy.notice-text');
+  const edited = (await notice.inputValue()) + '\n演示备注：已和企业确认补充材料。';
+  await notice.fill(edited);
+  await other.click();
+  await savedChat.click();
+  await expect(notice).toHaveValue(edited);
+  await login(page);
+  await savedChat.click();
+  await expect(notice).toHaveValue(edited);
+  await say(page, '把告知单转成公文答复');
+  await expect(op(page, 'document.in-policy')).toHaveValue('RP-024');
+  const params = await page.evaluate(() => JKShell.S.mounted.document.ctx.params);
+  expect(params.notice).toBe(edited);
+});
+
+test('公文初稿的未保存标题和段落在往返后可以保存', async ({ page }) => {
+  test.setTimeout(55000);
+  await login(page);
+  await say(page, '查一下星河智驾');
+  const other = page.locator('[data-conv]').filter({ hasText: '查一下星河智驾' });
+  await op(page, 'nav.chat').click();
+  await say(page, '写一份企业诉求答复意见');
+  const draftChat = page.locator('[data-conv]').filter({ hasText: '写一份企业诉求答复意见' });
+  const title = page.locator('[data-pe="title"]');
+  const body = page.locator('[data-pe="0"]');
+  await title.click();
+  await page.locator('[data-ed="title"]').fill('企业诉求答复意见演示稿');
+  await body.click();
+  await body.click();
+  await page.locator('[data-ed="0"]').fill('第一段保留的手填说明。');
+  await op(page, 'document.panel-check').click();
+  await expect(page.getByText('有未保存的修改', { exact: true })).toBeVisible();
+
+  await other.click();
+  await draftChat.click();
+  await expect(title).toHaveText('企业诉求答复意见演示稿');
+  await expect(body).toHaveText('第一段保留的手填说明。');
+  await expect(op(page, 'document.save')).toBeVisible();
+  await op(page, 'document.save').click();
+  await expect(op(page, 'document.save')).toHaveCount(0);
+
+  await other.click();
+  await draftChat.click();
+  await expect(title).toHaveText('企业诉求答复意见演示稿');
+  await expect(body).toHaveText('第一段保留的手填说明。');
+  await expect(op(page, 'document.save')).toHaveCount(0);
+});
+
+test('往返恢复实际政策步骤、企业筛选和公文页签', async ({ page }) => {
+  test.setTimeout(65000);
+  await login(page);
+  await say(page, '查一下书香里文化');
+  const other = page.locator('[data-conv] .t').getByText('查一下书香里文化', { exact: true });
+  await op(page, 'nav.chat').click();
+
+  await test.step('政策核对已手动退回选对象', async () => {
+    await say(page, '帮我查一下星河智驾能申报哪些政策');
+    const target = page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' });
+    await op(page, 'policy.step-0').click();
+    await other.click();
+    await target.click();
+    await expect(op(page, 'policy.step-0')).toHaveClass(/\bon\b/);
+    await expect(op(page, 'policy.ent')).toHaveValue('星河智驾');
+    await expectRoute(page, 'policy', 'home', { entId: 'E002' });
+  });
+
+  await test.step('企业列表沿用问句生效的标签和手动筛选', async () => {
+    await op(page, 'nav.chat').click();
+    await say(page, '打开企业台账筛选高新企业');
+    const target = page.locator('[data-conv]').filter({ hasText: '打开企业台账筛选高新企业' });
+    await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
+    await op(page, 'enterprise.list-q').fill('星河');
+    await op(page, 'enterprise.list-alert').check();
+    await page.locator('#lsort').selectOption('name');
+    await expect(op(page, 'enterprise.list-count')).toBeVisible();
+    await other.click();
+    await target.click();
+    await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
+    await expect(op(page, 'enterprise.list-q')).toHaveValue('星河');
+    await expect(op(page, 'enterprise.list-alert')).toBeChecked();
+    await expect(page.locator('#lsort')).toHaveValue('name');
+    await expectRoute(page, 'enterprise', 'list', { tag: '高新技术', q: '星河', alert: 1, sort: 'name' });
+  });
+
+  await test.step('公文从起草改看我的文稿', async () => {
+    await op(page, 'nav.chat').click();
+    await say(page, '帮我查一下书香里文化能申报哪些政策');
+    const target = page.locator('[data-conv]').filter({ hasText: '帮我查一下书香里文化' });
+    await op(page, 'nav.document').click();
+    await op(page, 'document.tpl-T10').click();
+    await expect(op(page, 'document.in-issue')).toBeVisible();
+    await op(page, 'document.tab-list').click();
+    await other.click();
+    await target.click();
+    await expect(op(page, 'document.tab-list')).toHaveClass(/\bon\b/);
+    await expect(op(page, 'document.row-DOC-1112')).toBeVisible();
+    await expectRoute(page, 'document', 'list', {});
+  });
+});
+
+test('通过对话切换视角后发起账号的任务卡已完成', async ({ page }) => {
+  await login(page);
+  const result = await page.evaluate(async () => {
+    const events = [];
+    JK.bus.on('op:done', (e) => events.push(e));
+    const key = 'jk4-convs:' + JKShell.S.me.id;
+    await JKShell.send('切换到领导视角');
+    const plan = JSON.parse(localStorage.getItem(key))[0].msgs.find((m) => m.role === 'plan');
+    return { username: JKShell.S.me.username, state: plan.state, steps: plan.steps.map(({ s }) => s), events };
+  });
+  expect(result).toEqual({ username: 'liyang', state: 'done', steps: ['done', 'done'], events: [{ appId: 'shell' }] });
+});
