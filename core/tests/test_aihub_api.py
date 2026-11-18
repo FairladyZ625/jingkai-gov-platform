@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from conftest import set_provider_credential
 from haiknow_core.main import create_app
 
 
@@ -7,7 +8,7 @@ def test_admin_configuration_and_app_call(tmp_path, monkeypatch):
     client = TestClient(create_app())
     assert client.get('/api/v1/admin/ai/providers').status_code == 401
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
-    provider = {'kind': 'mock', 'base_url': '', 'api_key': 'dummy', 'models': ['m'], 'enabled': True}
+    provider = {'kind': 'mock', 'base_url': '', 'models': ['m'], 'enabled': True}
     assert client.put('/api/v1/admin/ai/providers/a', json=provider).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/chat', json={'provider': 'a', 'model': 'm'}).status_code == 200
     assert client.app.state.platform.model.aihub.call('demo', 'chat', {'messages': [{'role': 'user', 'content': '示例'}]})['result'].startswith('[模拟模型]')
@@ -20,7 +21,7 @@ def test_switch_quota_and_disabled_provider(tmp_path, monkeypatch):
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
     gateway = client.app.state.platform.model.aihub
     for name in ('first', 'second'):
-        assert client.put(f'/api/v1/admin/ai/providers/{name}', json={'kind': 'mock', 'models': ['m'], 'api_key': 'dummy'}).status_code == 200
+        assert client.put(f'/api/v1/admin/ai/providers/{name}', json={'kind': 'mock', 'models': ['m']}).status_code == 200
     route = '/api/v1/admin/ai/routes/image'
     assert client.put(route, json={'provider': 'first', 'model': 'm'}).status_code == 200
     call = lambda: gateway.call('sample-app', 'image', {'prompt': '虚构样例'})
@@ -82,7 +83,7 @@ def test_invalid_admin_body_does_not_echo_secret(tmp_path, monkeypatch):
     monkeypatch.setenv('HAIKNOW_DATA_DIR', str(tmp_path))
     client = TestClient(create_app())
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
-    response = client.put('/api/v1/admin/ai/providers/p', json={'kind': 'mock', 'models': [], 'api_key': 'private-placeholder'})
+    response = client.put('/api/v1/admin/ai/providers/p', json={'kind': 'mock', 'models': ['m'], 'api_key': 'private-placeholder'})
     assert response.status_code == 422
     assert response.json()['error']['code'] == 'invalid_request'  # 请求体校验统一走 v1 信封
     assert 'private-placeholder' not in response.text
@@ -95,7 +96,8 @@ def test_legacy_model_preserves_error_kind_with_configured_route(tmp_path, monke
     monkeypatch.setenv('HAIKNOW_DATA_DIR', str(tmp_path))
     client = TestClient(create_app())
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
-    client.put('/api/v1/admin/ai/providers/p', json={'kind': 'openai', 'base_url': 'https://example.test', 'api_key': 'dummy', 'models': ['m']})
+    set_provider_credential(monkeypatch, 'p', 'https://example.test', 'dummy')
+    client.put('/api/v1/admin/ai/providers/p', json={'kind': 'openai', 'base_url': 'https://example.test', 'models': ['m']})
     client.put('/api/v1/admin/ai/routes/chat', json={'provider': 'p', 'model': 'm'})
     original = httpx.AsyncClient
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})), **kw))
@@ -111,7 +113,8 @@ def test_legacy_retries_and_preserves_http_status(tmp_path, monkeypatch):
     monkeypatch.setenv('HAIKNOW_DATA_DIR', str(tmp_path))
     client = TestClient(create_app())
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
-    client.put('/api/v1/admin/ai/providers/p', json={'kind': 'openai', 'base_url': 'https://example.test', 'api_key': 'dummy', 'models': ['m']})
+    set_provider_credential(monkeypatch, 'p', 'https://example.test', 'dummy')
+    client.put('/api/v1/admin/ai/providers/p', json={'kind': 'openai', 'base_url': 'https://example.test', 'models': ['m']})
     client.put('/api/v1/admin/ai/routes/chat', json={'provider': 'p', 'model': 'm'})
     requests = []
     def respond(request):
@@ -135,7 +138,7 @@ def _admin_client(tmp_path, monkeypatch):
 def _deepseek(client):
     return client.put('/api/v1/admin/ai/providers/ds', json={
         'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['deepseek-chat']})
+        'models': ['deepseek-chat']})
 
 
 def test_route_rejects_capability_unsupported_by_provider(tmp_path, monkeypatch):
@@ -155,7 +158,7 @@ def test_route_rejects_capability_unsupported_by_fallback(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/fake', json={'kind': 'mock', 'models': ['m']}).status_code == 200
     assert client.put('/api/v1/admin/ai/providers/mineru', json={
         'kind': 'mineru', 'base_url': 'https://mineru.example.test/api/v4',
-        'api_key': 'test-placeholder-key', 'models': ['vlm']}).status_code == 200
+        'models': ['vlm']}).status_code == 200
     refused = client.put('/api/v1/admin/ai/routes/chat', json={
         'provider': 'fake', 'model': 'm', 'fallback_provider': 'mineru', 'fallback_model': 'vlm'})
     assert refused.status_code == 400
@@ -167,8 +170,9 @@ def test_route_rejects_capability_unsupported_by_fallback(tmp_path, monkeypatch)
 
 def test_http_provider_reports_insecure_transport_warning(tmp_path, monkeypatch):
     client = _admin_client(tmp_path, monkeypatch)
+    set_provider_credential(monkeypatch, 'lan', 'http://192.168.1.10:8000/v1')
     saved = client.put('/api/v1/admin/ai/providers/lan', json={
-        'kind': 'openai', 'base_url': 'http://192.168.1.10:8000/v1', 'api_key': 'test-placeholder-key', 'models': ['m']})
+        'kind': 'openai', 'base_url': 'http://192.168.1.10:8000/v1', 'models': ['m']})
     assert saved.status_code == 200
     assert saved.json()['warnings'] == [{'code': 'insecure_transport', 'message': '接入地址使用 http，密钥将以明文传输。'}]
     items = {row['id']: row for row in client.get('/api/v1/admin/ai/providers').json()['items']}
@@ -176,7 +180,7 @@ def test_http_provider_reports_insecure_transport_warning(tmp_path, monkeypatch)
     assert items['lan']['api_key'] == '********'
     # 阴性：https、假服务商与内置读取器都没有传输告警。
     https = client.put('/api/v1/admin/ai/providers/cloud', json={
-        'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1', 'api_key': 'test-placeholder-key', 'models': ['deepseek-chat']})
+        'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1', 'models': ['deepseek-chat']})
     assert https.json()['warnings'] == []
     assert client.put('/api/v1/admin/ai/providers/fake', json={'kind': 'mock', 'models': ['m']}).json()['warnings'] == []
     assert client.put('/api/v1/admin/ai/providers/reader', json={'kind': 'builtin', 'models': ['reader-v1']}).json()['warnings'] == []
@@ -205,7 +209,7 @@ def test_delete_provider_clears_record_and_audits(tmp_path, monkeypatch):
     import sqlite3
     client = _admin_client(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/old', json={
-        'kind': 'openai', 'base_url': 'https://example.test/v1', 'api_key': 'test-placeholder-key', 'models': ['m']}).status_code == 200
+        'kind': 'openai', 'base_url': 'https://example.test/v1', 'models': ['m']}).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/chat', json={'provider': 'old', 'model': 'm'}).status_code == 200
     assert client.delete('/api/v1/admin/ai/routes/chat').status_code == 200
     assert client.delete('/api/v1/admin/ai/providers/old').status_code == 200
@@ -223,7 +227,7 @@ def test_capability_support_table_covers_every_provider_kind():
     from typing import get_args
     from haiknow_core.aihub.api import ProviderBody
     from haiknow_core.aihub.gateway import CAPABILITIES, CAPABILITY_SUPPORT
-    assert set(CAPABILITY_SUPPORT) == set(get_args(ProviderBody.model_fields['kind'].annotation))
+    assert set(CAPABILITY_SUPPORT) - {'codex-cli'} == set(get_args(ProviderBody.model_fields['kind'].annotation))
     assert set().union(*CAPABILITY_SUPPORT.values()) == CAPABILITIES
 
 
@@ -237,11 +241,11 @@ def test_provider_kind_change_rejects_capabilities_used_by_routes(tmp_path, monk
     client = _admin_client(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'ark', 'base_url': 'https://ark.example.test/api/v3',
-        'api_key': 'test-placeholder-key', 'models': ['m']}).status_code == 200
+        'models': ['m']}).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/image', json={'provider': 'p', 'model': 'm'}).status_code == 200
     refused = client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['m']})
+        'models': ['m']})
     assert refused.status_code == 409
     assert refused.json()['error']['code'] == 'invalid_state'
     assert refused.json()['error']['capabilities'] == ['image']
@@ -250,18 +254,18 @@ def test_provider_kind_change_rejects_capabilities_used_by_routes(tmp_path, monk
     # 阳性对照：新类型仍支持该能力时照常保存。
     assert client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'openai', 'base_url': 'https://example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['m']}).status_code == 200
+        'models': ['m']}).status_code == 200
 
 
 def test_provider_model_removal_rejects_models_used_by_routes(tmp_path, monkeypatch):
     client = _admin_client(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'openai', 'base_url': 'https://example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['m1', 'm2']}).status_code == 200
+        'models': ['m1', 'm2']}).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/chat', json={'provider': 'p', 'model': 'm1'}).status_code == 200
     refused = client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'openai', 'base_url': 'https://example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['m2']})
+        'models': ['m2']})
     assert refused.status_code == 409
     assert refused.json()['error']['capabilities'] == ['chat']
     assert 'chat·m1' in refused.json()['error']['message']
@@ -269,7 +273,7 @@ def test_provider_model_removal_rejects_models_used_by_routes(tmp_path, monkeypa
     # 阳性对照：保留路由正在用的模型即可保存。
     assert client.put('/api/v1/admin/ai/providers/p', json={
         'kind': 'openai', 'base_url': 'https://example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['m1', 'm2', 'm3']}).status_code == 200
+        'models': ['m1', 'm2', 'm3']}).status_code == 200
 
 
 def _fake_http(monkeypatch, respond):
@@ -278,16 +282,17 @@ def _fake_http(monkeypatch, respond):
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(respond), **kw))
 
 
-def _image_provider(client, ident='ark'):
+def _image_provider(client, monkeypatch, ident='ark'):
+    set_provider_credential(monkeypatch, ident, 'https://ark.example.test/api/v3')
     return client.put(f'/api/v1/admin/ai/providers/{ident}', json={
         'kind': 'ark', 'base_url': 'https://ark.example.test/api/v3',
-        'api_key': 'test-placeholder-key', 'models': ['image-model']})
+        'models': ['image-model']})
 
 
 def test_route_test_returns_success_preview_and_audits(tmp_path, monkeypatch):
     import httpx
     client = _admin_client(tmp_path, monkeypatch)
-    assert _image_provider(client).status_code == 200
+    assert _image_provider(client, monkeypatch).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/image', json={'provider': 'ark', 'model': 'image-model'}).status_code == 200
     _fake_http(monkeypatch, lambda request: httpx.Response(200, json={
         'data': [{'url': 'data:image/png;base64,AAAA'}]}))
@@ -310,7 +315,7 @@ def test_route_test_returns_success_preview_and_audits(tmp_path, monkeypatch):
 def test_provider_test_without_capability_picks_routed_capability_and_reports_failure(tmp_path, monkeypatch):
     import httpx
     client = _admin_client(tmp_path, monkeypatch)
-    assert _image_provider(client).status_code == 200
+    assert _image_provider(client, monkeypatch).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/image', json={'provider': 'ark', 'model': 'image-model'}).status_code == 200
     _fake_http(monkeypatch, lambda request: httpx.Response(401, json={'error': {'message': 'invalid api key'}}))
     response = client.post('/api/v1/admin/ai/providers/ark/test')
@@ -329,7 +334,7 @@ def test_provider_test_reports_unsupported_capability_in_chinese(tmp_path, monke
     client = _admin_client(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/ds', json={
         'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1',
-        'api_key': 'test-placeholder-key', 'models': ['deepseek-chat']}).status_code == 200
+        'models': ['deepseek-chat']}).status_code == 200
     response = client.post('/api/v1/admin/ai/providers/ds/test', json={'capability': 'image'})
     assert response.status_code == 200
     body = response.json()

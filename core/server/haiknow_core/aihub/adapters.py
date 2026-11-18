@@ -16,6 +16,7 @@ import anyio
 import httpx
 
 from . import reader
+from .config import auth_headers
 from .errors import AIError, TRANSPORT_ERRORS, mentions_model
 
 POLL_INTERVAL = 1.0
@@ -23,7 +24,7 @@ MINERU_STATES = {'waiting-file', 'uploading', 'pending', 'running', 'converting'
 
 
 def _headers(provider):
-    return {'Authorization': 'Bearer ' + provider['api_key'], 'Content-Type': 'application/json'}
+    return {**auth_headers(provider), 'Content-Type': 'application/json'}
 
 
 def _status_error(exc, message):
@@ -289,7 +290,7 @@ async def vision_candidates(provider, model, file, payload, timeout):
         ],
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=provider['kind'] != 'local') as client:
             response = await client.post(provider['base_url'] + '/chat/completions', headers=_headers(provider), json=body)
             response.raise_for_status()
             data = _json(response, '读图服务响应格式无效。')
@@ -330,7 +331,8 @@ async def probe(provider, timeout=10):
     if provider['kind'] in ('mock', 'builtin'):
         return {'ok': True, 'detail': '该服务商不需要外部连通。'}
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False,
+                                     trust_env=provider['kind'] != 'local') as client:
             if provider['kind'] == 'mineru':
                 response = await client.get(provider['base_url'] + '/extract-results/batch/connectivity-probe', headers=_headers(provider))
                 payload = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
