@@ -123,6 +123,15 @@ async function walkthrough(browser, rows) {
       await page.waitForFunction(i => !JKDemo.state.on || JKDemo.state.i > i, i, { timeout: 90000 });
     }
     assert.equal(await page.evaluate(() => JKDemo.state.i), labels.length, '一键演示提前退出');
+    const { domTheme, savedTheme } = await page.evaluate(() => ({
+      domTheme: document.documentElement.dataset.theme,
+      savedTheme: localStorage.getItem('jk4-theme2'),
+    }));
+    const evidence = `启动 ${theme} → 完成 ${labels.length} 段 → DOM ${domTheme}，偏好 ${savedTheme}`;
+    rows.at(-1).evidence += ' / ' + evidence;
+    console.log(`${width}px ${evidence}`);
+    assert.equal(domTheme, theme, `演示结束后 DOM 主题应为 ${theme}，实际 ${domTheme}`);
+    assert.equal(savedTheme, theme, `演示结束后持久偏好应为 ${theme}，实际 ${savedTheme}`);
   } catch (error) {
     markInterrupted(rows, current, (started ? '' : '初始化失败：') + error.message);
     if (page && !rows[current].file) await capture(rows[current], page, width + '-' + theme + '-interrupted');
