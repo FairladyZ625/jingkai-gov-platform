@@ -14,11 +14,13 @@ services:
       HAIKNOW_APPS_DIR: /srv/app/apps
       HAIKNOW_DATA_DIR: /state/live
       HAIKNOW_CONFIG_DIR: /srv/app/config
-    command: ["python", "-m", "uvicorn", "jkq.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "${APP_PORT:-8000}", "--workers", "1"]
+      APP_PORT: ${APP_PORT:-8000}
+      JKQ_DEPLOY_RUNTIME: "1"
+    command: ["python", "deploy/entrypoint.py"]
     volumes:
       - ${DEMO_STATE_DIR:-/var/lib/jkq-demo}/data:/state/live
     healthcheck:
-      test: ["CMD", "python", "-c", "import http.client,sys; c=http.client.HTTPConnection('127.0.0.1',${APP_PORT:-8000},timeout=3); c.request('GET','/api/health'); sys.exit(c.getresponse().status != 200)"]
+      test: ["CMD", "python", "deploy/healthcheck.py"]
       interval: 5s
       timeout: 4s
       retries: 12

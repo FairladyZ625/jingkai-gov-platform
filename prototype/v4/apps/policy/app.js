@@ -408,7 +408,7 @@
       });
       el.addEventListener('change', async (ev) => {
         const t = ev.target; const d = t.dataset;
-        if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); S.calc = {}; body(); return; }
+        if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); delete S.calc[d.pick]; body(); return; }
         if (d.lic) { if (t.checked) applyFill('license', d.lic); return; }
         if (d.camt) { if (S.calc[d.camt]?.edited) await recalc(d.camt); return; }
         if (d.mnum) { S.manual[d.mnum] = t.value; return; }
@@ -502,6 +502,16 @@
             render();
             if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then(() => { if (route === 'notice') return showNotice(); });
           });
+        },
+        getCalcAmounts() {
+          return Object.fromEntries(Object.entries(S.calc).filter(([, entry]) => entry.edited).map(([id, entry]) => [id, entry.amount]));
+        },
+        async restoreCalcAmounts(amounts) {
+          for (const { id } of chosen()) {
+            if (!Object.hasOwn(amounts, id) || !byId(id)?.rule?.base) continue;
+            S.calc[id] = { amount: amounts[id], result: null, edited: true };
+            await recalc(id);
+          }
         },
         actions,
         unmount() {},
