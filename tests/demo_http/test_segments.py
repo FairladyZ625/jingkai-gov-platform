@@ -110,8 +110,9 @@ def test_segment(server, title):
             assert hits
             assert data(c.get("/api/v1/kb/docs/" + hits[0]["id"]))["item"]["id"] == hits[0]["id"]
             missing = data(c.post("/api/v1/kb/ask", json={"q": "火星基地XYZ999"}))
-            assert missing["notFound"] and not missing["citations"]
+            assert missing["notFound"] and not missing["citations"] and "source" not in missing
             answer = data(c.post("/api/v1/kb/ask", json={"q": "数据券补贴最高能拿多少？", "space": "policy"}))
+            assert answer["source"] == "preset" and answer["answer"].startswith("【预置结果】")
             assert answer["citations"] and "最高100万元" in answer["answer"]
             imported = data(c.post("/api/v1/kb/import", json={
                 "url": "https://example.invalid/demo-notice", "space": "policy",
@@ -134,16 +135,30 @@ def test_segment(server, title):
                 data(c.post(url + "/confirm", json={"kind": kind, "decision": "approve" if kind == "otp" else "decline"}))
             assert data(c.get(url))["item"]["status"] == "stopped"
         elif title == "审签":
-            record = data(c.post("/api/v1/apps/document/records", json={
-                "project": "jkq", "type": "report", "data": {"title": "演示通知"},
-            }))
-            review = data(c.post("/api/v1/reviews", json={"appId": "document", "recordId": record["id"],
-                          "version": 1, "assignee": "u-liyang"}))
+            base = "/api/apps/document/drafts"
+            draft = data(c.post(base, json={"templateId": "T06", "inputs": {
+                "orig": "公开演示通知", "oldEnd": "2026-11-20", "newEnd": "2026-11-25",
+            }}))["item"]
+            path = base + "/" + draft["id"]
+            fields = {"title": "关于开展公开资料核验的通知", "docNo": "演示〔2026〕1号",
+                      "to": "各有关单位：", "paragraphs": ["请核对已公开的资料。"],
+                      "sign": "公文演示工作组", "date": "2026年11月18日"}
+            data(c.put(path, json={"content": fields}))
+            check = c.post(path + "/check", json={})
+            if check.status_code == 404 and "/api/apps/document/drafts/{identity}/check" not in data(c.get("/openapi.json"))["paths"]:
+                blocked = c.post(path + "/submit", json={"assignee": "u-liyang"})
+                assert (blocked.status_code, blocked.json()["error"]["code"]) == (503, "APP_UNAVAILABLE")
+                assert data(c.get(path))["item"]["status"] == "草稿"
+                pytest.skip("等待 #122 公文核查；公文专用送审已验证关闭")
+            issues = data(check)["issues"]
+            assert not any(issue["level"] == "error" for issue in issues)
+            review = data(c.post(path + "/submit", json={"assignee": "u-liyang"}))["review"]
+            assert review["ref"] == draft["id"]
             login(c, "liyang", password)
-            assert review["id"] in [item["id"] for item in data(c.get("/api/v1/reviews"))["items"]]
-            decided = data(c.post(f"/api/v1/reviews/{review['id']}/decisions",
-                                  json={"version": 1, "decision": "approve"}))
-            assert decided["item"]["status"] == "done"
+            assert review["id"] in [r["id"] for r in data(c.get("/api/v1/inbox?box=review"))["items"]]
+            data(c.post(f"/api/v1/reviews/{review['id']}/decisions",
+                        json={"decision": "approve", "version": review["version"]}))
+            assert data(c.get(path))["item"]["status"] == "已定稿"
         elif title == "外部协作者":
             path = "/api/apps/enterprise/companies"
             item = data(c.post(path, json={"name": "纸鹿二号智驾示例", "phone": "13900001111"}))["item"]
@@ -183,5 +198,6 @@ def test_reset_checks_real_session_before_host(server):
         finally:
             data(c.put("/api/v1/me/role", json={"role": "partner"}))
         login(c, "admin", password)
-        unavailable = c.post(path)
+        assert c.post(path).status_code == 403
+        unavailable = c.post(path, headers={"X-JKQ-Reset-Key": server.reset_key})
         assert unavailable.status_code == 503 and unavailable.json()["error"]["code"] == "RESET_UNAVAILABLE"
