@@ -5,7 +5,8 @@
 import sqlite3
 from contextlib import closing
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body, Depends
+from fastapi.responses import JSONResponse
 
 from .api.drafting_router import error
 from .api.drafts import RECORD_TYPE
@@ -18,6 +19,27 @@ records_guard = APIRouter(prefix="/api/v1/apps/document")
 @records_guard.put("/records/{identity}", include_in_schema=False)
 def use_document_routes():
     return error(405, "METHOD_NOT_ALLOWED", "请使用公文草稿接口写入文稿")
+
+
+def _reviews_guard(app):
+    """平台通用送审入口不做公文核查，公文只能从 /api/apps/document/drafts/{id}/submit 送审。
+
+    其他应用原样交给平台 DataService，行为与 core 的 POST /api/v1/reviews 相同。
+    审签决定仍走 #18 的 /api/v1/reviews/{id}/decisions。
+    """
+    from haiknow_core.main import current_user
+
+    service = app.state.platform.data
+    guard = APIRouter(prefix="/api/v1")
+
+    @guard.post("/reviews", status_code=201, include_in_schema=False)
+    def submit_review(body: dict = Body(...), user=Depends(current_user)):
+        if body.get("appId") == "document":
+            return error(405, "METHOD_NOT_ALLOWED", "公文须经核查后送审，请使用公文送审接口",
+                         path="/api/apps/document/drafts/{id}/submit")
+        return JSONResponse(service.submit_review(user, body, generic_http=True), status_code=201)
+
+    return guard
 
 
 def _install_storage_guard(platform):
@@ -57,4 +79,5 @@ def install(app):
     routes = app.router.routes
     count = len(routes)
     app.include_router(records_guard)
+    app.include_router(_reviews_guard(app))
     routes[:] = routes[count:] + routes[:count]
