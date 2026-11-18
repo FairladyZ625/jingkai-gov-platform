@@ -6,7 +6,10 @@ import shutil
 import subprocess
 import time
 import sys
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 import pytest
 
@@ -15,6 +18,8 @@ DEPLOY = Path(__file__).resolve().parent
 
 @pytest.fixture
 def site(tmp_path):
+    if fcntl is None:
+        pytest.skip("deploy/demo 运维脚本与 fcntl 文件锁测试仅支持 POSIX 环境")
     repo = tmp_path / "repo"
     target = repo / "deploy"
     target.mkdir(parents=True)
@@ -195,8 +200,9 @@ def test_compose(site):
     )
     services = json.loads(result)["services"]
     app, proxy = services["app"], services["proxy"]
-    assert app["command"][-2:] == ["--workers", "1"]
-    assert app["command"][3:5] == ["jkq.app:create_app", "--factory"]
+    assert app["command"] == ["python", "deploy/entrypoint.py"]
+    entry = (DEPLOY / "entrypoint.py").read_text(encoding="utf-8")
+    assert "jkq.app:create_app" in entry and '"--factory"' in entry and '"--workers", "1"' in entry
     assert app["volumes"][0]["target"] == app["environment"]["HAIKNOW_DATA_DIR"]
     assert "ports" not in app
     assert {port["target"] for port in proxy["ports"]} == {80, 443}
@@ -204,8 +210,8 @@ def test_compose(site):
 
 
 def test_image_context_keeps_runtime_directories():
-    allowed = set((DEPLOY / "Dockerfile.dockerignore").read_text().split())
-    dockerfile = (DEPLOY / "Dockerfile").read_text()
+    allowed = set((DEPLOY / "Dockerfile.dockerignore").read_text(encoding="utf-8").split())
+    dockerfile = (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
     pythonpath = next(line for line in dockerfile.splitlines() if "PYTHONPATH=" in line)
     for entry in pythonpath.split("PYTHONPATH=")[1].split()[0].split(":"):
         relative = entry.removeprefix("/srv/app").strip("/")
