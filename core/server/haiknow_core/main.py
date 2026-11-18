@@ -395,8 +395,10 @@ def create_app(root: Path | None = None) -> FastAPI:
         if "admin" not in plat.rbac.actions(user, "*"):
             raise PermissionDenied("*", "admin")
         usage = plat.model.usage()
+        target = plat.model.chat_route()
         return {
             "mode": "configured" if plat.model.configured else "mock",
+            **({"model_name": target[1]} if target else {}),
             "calls": {app_id: counts["total"] for app_id, counts in usage.items()},
             "usage": usage,
             "scope": "process",
