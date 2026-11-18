@@ -46,12 +46,12 @@
     mount(el, ctx) {
       const { ui, api, perms } = ctx; const D = api.document; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canView = perms.can('view') && !perms.isPartner, canOp = canView && perms.can('operate'), canApprove = canView && perms.can('approve');
-      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
+      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, notice: '', refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, checkError: '', polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
       let TPLS = [], GROUPS = [], DOCS = [], POLS = null, ENTS = null, loaded = false, loadErr = null;
       const $ = (s) => el.querySelector(s);
       const tplOf = (id) => TPLS.find((t) => t.id === id);
       const latest = () => S.doc.versions[S.doc.versions.length - 1];
-      const shown = () => (S.view ? S.doc.versions.find((v) => v.v === S.view).content : S.edit || latest().content);
+      const shown = () => (S.view != null ? S.doc.versions.find((v) => v.v === S.view).content : S.edit || latest().content);
       const locked = () => S.doc && S.doc.status === '已定稿';
       const lvl = (l) => C.levels[l] || l;
 
@@ -61,10 +61,27 @@
         render();
       }
       async function refreshList() { try { DOCS = (await D.list()).items; } catch (e) { /* 列表刷新失败不影响当前稿 */ } }
+      function resetDraft(tpl = null) {
+        Object.assign(S, {
+          tpl, inputs: {}, from: null, notice: '', refs: new Set(), hits: null, id: null, doc: null, view: null,
+          panel: 'check', issues: null, checkError: '', polish: null, cmp: null, cmpA: null, cmpB: null,
+          edit: null, editing: null, hl: null, cpara: 0, busy: false,
+        });
+      }
       async function openDoc(id, step) {
-        S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
+        resetDraft();
+        S.id = id;
         S.tab = 'flow'; S.step = step == null ? 2 : step; render();
-        try { S.doc = (await D.get(id)).item; S.tpl = tplOf(S.doc.templateId); if (step == null && ['审签中', '已定稿', '已退回'].includes(S.doc.status)) S.step = 3; } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; }
+        const active = S.inputs;
+        try {
+          const { item } = await D.get(id);
+          if (S.inputs !== active) return;
+          S.doc = item; S.tpl = tplOf(item.templateId);
+          if (step == null && ['审签中', '已定稿', '已退回'].includes(item.status)) S.step = 3;
+        } catch (e) {
+          if (S.inputs !== active) return;
+          ui.toast(e.message, { type: 'err' }); S.step = 0;
+        }
         body();
       }
 
@@ -100,14 +117,20 @@
         foot('', canOp ? '' : '<span class="meta">只读：没有起草权限</span>');
       }
       const docRow = (d) => `<div class="card tight li" data-open="${d.id}" data-op="document.doc-${d.id}"><span class="ini h-${ui.hue((tplOf(d.templateId) || {}).groupName || '', 'docGroup')}">${icon('doc')}</span><div class="grow"><div class="t clip">${esc(d.title)}</div><div class="s">${esc((tplOf(d.templateId) || {}).name || '')} · ${esc(d.author)} · ${esc(d.updated)} · 第 ${d.versions} 版</div></div>${tag(d.status, 'docStatus')}</div>`;
-      function pickTpl(id, inputs, from) {
-        S.tpl = tplOf(id); S.inputs = {}; S.tpl.inputs.forEach(([k]) => (S.inputs[k] = inputs && inputs[k] != null ? String(inputs[k]) : ''));
-        S.from = from || null; S.refs = new Set(); S.hits = null; S.doc = null; S.id = null; S.step = 1; body(); loadRefs();
+      function pickTpl(id, inputs, from, notice, autogen) {
+        const tpl = tplOf(id);
+        if (!canOp || !tpl) return;
+        resetDraft(tpl);
+        tpl.inputs.forEach(([key, , sample]) => {
+          S.inputs[key] = String(inputs?.[key] ?? (autogen ? sample : '') ?? '');
+        });
+        S.from = from || null;
+        S.notice = typeof notice === 'string' && notice.trim() ? notice : '';
+        S.step = 1; body(); loadRefs();
       }
 
       /* ---------- 第 2 步：填要素 ---------- */
-      async function ensureOpts() {
-        const need = S.tpl.inputs.map(([k]) => C.inputTypes[k]);
+      async function ensureOpts(need) {
         try { if (need.includes('policy') && !POLS && api.policy) { const r = await api.policy.items({}); POLS = r.items.slice().sort((a, b) => (b.real ? 1 : 0) - (a.real ? 1 : 0)); } } catch (e) { POLS = []; }
         try { if (need.includes('ent') && !ENTS && api.enterprise) ENTS = (await api.enterprise.list({})).items; } catch (e) { ENTS = []; }
       }
@@ -121,7 +144,12 @@
       }
       async function step1() {
         const ds = $('#ds'); const t = S.tpl; if (!t) { S.step = 0; return body(); }
-        if (!POLS && !ENTS && t.inputs.some(([k]) => ['policy', 'ent'].includes(C.inputTypes[k]))) { ds.innerHTML = skel(); await ensureOpts(); if (S.step !== 1 || !$('#ds')) return; }
+        const inputs = S.inputs;
+        const need = t.inputs.map(([key]) => C.inputTypes[key]);
+        if ((!POLS && need.includes('policy')) || (!ENTS && need.includes('ent'))) {
+          ds.innerHTML = skel(); await ensureOpts(need);
+          if (S.step !== 1 || S.inputs !== inputs || !$('#ds')) return;
+        }
         const pol = S.inputs.policy && (POLS || []).find((p) => p.id === S.inputs.policy);
         const missing = t.inputs.filter(([k]) => !String(S.inputs[k] || '').trim()).length;
         $('#ds').innerHTML = `<div class="q">${esc(T.fillQ)} <span class="t-3">· ${esc(t.name)}</span></div><div class="q-sub">${esc(T.fillSub)}</div>
@@ -134,24 +162,29 @@
       }
       const refsHtml = () => (S.hits == null ? '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>' : S.hits.length ? `<div class="stack rows">${S.hits.map((h) => `<label class="card tight li dc-ref"><input type="checkbox" class="cb" data-ref="${esc(h.id)}" ${S.refs.has(h.id) ? 'checked' : ''}><div class="grow"><div class="t clip">${esc(h.title)}</div><div class="s clip2">${esc((h.snippet || '').replace(/<[^>]+>/g, '').slice(0, 70))}</div></div><button class="btn icon sm ghost" data-kb="${esc(h.id)}" title="看原文">${icon('external')}</button></label>`).join('')}</div>` : '<div class="meta">知识库里暂时没有相近的范文</div>');
       async function loadRefs() {
-        const t = S.tpl; let hits = [];
+        const t = S.tpl, inputs = S.inputs; let hits = [];
         try { const q = `${t.name.replace(/通知|公示|意见/g, '')} ${String(S.inputs[t.inputs[0][0]] || t.inputs[0][2] || '').slice(0, 20)}`; const r = await ctx.kb.search(q, { space: 'template', limit: 8 }); const seen = new Set(); hits = (r.hits || []).filter((h) => !seen.has(h.title) && seen.add(h.title)).slice(0, 4); } catch (e) { hits = []; }
-        if (S.tpl !== t) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
+        if (S.inputs !== inputs) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
       }
       async function generate() {
-        if (S.busy) return; S.busy = true; if (S.step === 1) step1();
+        if (!canOp || S.busy || !S.tpl) return;
+        const { tpl, inputs, notice } = S;
+        S.busy = true; if (S.step === 1) step1();
         try {
           const refs = (S.hits || []).filter((h) => S.refs.has(h.id)).map((h) => ({ id: h.id, title: h.title }));
-          const r = await D.draft({ templateId: S.tpl.id, inputs: S.inputs, refs });
-          S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${S.tpl.name} · ${r.item.title}`);
-          await refreshList(); S.busy = false; render(); await runCheck(true);
-        } catch (e) { S.busy = false; ui.toast(e.message, { type: 'err' }); if (S.step === 1) step1(); }
+          const r = await D.draft({ templateId: tpl.id, inputs, refs, ...(notice ? { extra: [notice] } : {}) });
+          if (S.inputs !== inputs) return;
+          S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.checkError = ''; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${tpl.name} · ${r.item.title}`);
+          await refreshList();
+          if (S.inputs !== inputs) return;
+          S.busy = false; render(); await runCheck(true);
+        } catch (e) { if (S.inputs === inputs) { S.busy = false; ui.toast(e.message, { type: 'err' }); if (S.step === 1) step1(); } }
       }
 
       /* ---------- 稿纸 ---------- */
       function paraHtml(p) { return esc(p).replace(/【待补：(.+?)】/g, '<mark class="dc-miss">待补：$1</mark>'); }
       function paper(c, mode) {
-        const editable = mode === 'edit' && canOp && !locked() && !S.view;
+        const editable = mode === 'edit' && canOp && !locked() && S.view == null;
         const cm = mode === 'comment' ? S.doc.comments || [] : [];
         const badge = (i) => { const n = cm.filter((x) => x.para === i && !x.resolved).length; return mode === 'comment' ? `<button class="dc-cb ${n ? 'on' : ''}" data-cpara="${i}" title="批注">${icon('chat')}${n || ''}</button>` : ''; };
         return `<div class="dc-paper ${locked() ? 'final' : ''}" data-op="document.paper">${locked() ? '' : `<div class="dc-wm">${esc(T.watermark)}</div>`}
@@ -159,23 +192,31 @@
           ${S.editing === 'docNo' && editable ? `<textarea class="textarea dc-ed dc-ed-t" data-ed="docNo" aria-label="发文字号">${esc(c.docNo || '')}</textarea>` : `<div class="dc-no" ${editable ? 'data-pe="docNo"' : ''}>${paraHtml(c.docNo || numberLabel)}</div>`}<div class="dc-rule"></div>
           ${S.editing === 'title' && editable ? `<textarea class="textarea dc-ed dc-ed-t" data-ed="title">${esc(c.title)}</textarea>` : `<h1 class="dc-title" ${editable ? 'data-pe="title"' : ''}>${esc(c.title)}</h1>`}
           ${c.to ? `<div class="dc-to">${esc(c.to)}</div>` : ''}
-          ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}">${paraHtml(p)}</p></div>`).join('')}
+          ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}" style="white-space:pre-wrap">${paraHtml(p)}</p></div>`).join('')}
           <div class="dc-sign">${esc(c.sign)}</div><div class="dc-sign">${esc(c.date)}</div></div>`;
       }
       function startEdit(k) { if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = k === 'title' || k === 'docNo' ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
       function endEdit(t) { const k = t.dataset.ed; const v = t.value.trim(); if (k === 'title' || k === 'docNo') S.edit[k] = v; else S.edit.paragraphs[+k] = v; S.editing = null; if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null; step2(); }
       async function saveEdit(note) {
-        if (!S.edit) return; try { const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' }); S.doc = r.item; S.edit = null; S.issues = null; ctx.audit('保存公文', `${S.doc.title} · 第 ${S.doc.versions.length} 版`); ui.toast(`已保存为第 ${S.doc.versions.length} 版`, { type: 'ok' }); }
-        catch (e) { ui.toast(e.status === 409 || e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message, { type: 'err' }); }
+        if (!S.edit) return true;
+        try {
+          const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' });
+          S.doc = r.item; S.edit = null; S.issues = null; S.checkError = '';
+          ctx.audit('保存公文', `${S.doc.title} · 第 ${latest().v} 版`); ui.toast(`已保存为第 ${latest().v} 版`, { type: 'ok' });
+          return true;
+        } catch (e) {
+          ui.toast(e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message, { type: 'err' });
+          return false;
+        }
       }
 
       /* ---------- 第 3 步：初稿与核查 ---------- */
       function step2() {
         const ds = $('#ds'); if (!ds) return; if (!S.doc) { ds.innerHTML = skel(); foot(); return; }
         const c = shown(); const vs = S.doc.versions;
-        ds.innerHTML = `<div class="row" style="margin-bottom:var(--s3)"><div class="grow"><div class="q" style="margin:0">${esc(T.draftQ)} ${tag(S.doc.status, 'docStatus')} <span class="meta">第 ${S.view || vs.length} 版${S.view ? '（只读）' : ''}</span></div><div class="q-sub" style="margin:2px 0 0">${esc(locked() ? '已定稿，内容已锁定' : T.draftSub)}</div></div></div>
-          ${S.view ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(vs.find((v) => v.v === S.view).at)}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
-          ${S.edit ? `<div class="callout h-blue" style="margin-bottom:var(--s3)">${icon('edit')}<div class="grow">有未保存的修改</div><button class="btn sm" data-act="discard">放弃</button><button class="btn sm" data-act="saveEdit" data-op="document.save">保存为第 ${vs.length + 1} 版</button></div>` : ''}
+        ds.innerHTML = `<div class="row" style="margin-bottom:var(--s3)"><div class="grow"><div class="q" style="margin:0">${esc(T.draftQ)} ${tag(S.doc.status, 'docStatus')} <span class="meta">第 ${S.view ?? latest().v} 版${S.view != null ? '（只读）' : ''}</span></div><div class="q-sub" style="margin:2px 0 0">${esc(locked() ? '已定稿，内容已锁定' : T.draftSub)}</div></div></div>
+          ${S.view != null ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(vs.find((v) => v.v === S.view).at)}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
+          ${S.edit ? `<div class="callout h-blue" style="margin-bottom:var(--s3)">${icon('edit')}<div class="grow">有未保存的修改</div><button class="btn sm" data-act="discard">放弃</button><button class="btn sm" data-act="saveEdit" data-op="document.save">保存为第 ${latest().v + 1} 版</button></div>` : ''}
           <div class="dc-split"><div>${paper(c, 'edit')}</div><div class="dc-side">${sidePanel()}</div></div>`;
         foot(`<button class="btn ghost" data-step="1" ${S.tpl ? '' : 'disabled'}>${icon('chevron-left')}要素</button><button class="btn" data-act="word" data-op="document.word">${icon('download')}导出 Word</button>`,
           `<button class="btn primary" data-step="3" data-op="document.to-review">批注与送审 ${icon('arrow-right')}</button>`);
@@ -187,7 +228,7 @@
       }
       const fixable = (i) => i.fix || /^c-(ni|bb)$/.test(i.id);
       function checkPanel() {
-        if (!S.issues) return `<div class="dc-empty">${icon('shield', 20)}<div class="meta">核对文号、日期、数字一致、错别字、语体</div><button class="btn sm" data-act="check" data-op="document.check" ${canOp ? '' : 'disabled'}>开始核查</button></div>`;
+        if (!S.issues) return `<div class="dc-empty">${icon('shield', 20)}<div class="meta">${esc(S.checkError || '核对文号、日期、数字一致、错别字、语体')}</div><button class="btn sm" data-act="check" data-op="document.check" ${canOp ? '' : 'disabled'}>开始核查</button></div>`;
         const ok = S.issues.length === 1 && S.issues[0].level === 'ok';
         if (ok) return `<div class="dc-empty">${tag('通过', 'checkLevel')}<div>${esc(S.issues[0].text)}</div><button class="btn sm ghost" data-act="check">再核查一次</button></div>`;
         const cnt = (l) => S.issues.filter((i) => i.level === l).length; const nf = S.issues.filter(fixable).length;
@@ -204,29 +245,57 @@
             : p.changed ? `${diffHtml(shortEq(p.parts))}<div class="row" style="margin-top:var(--s3)"><button class="btn sm" data-act="polishNo">放弃</button><span class="sp"></span><button class="btn sm" data-act="polishYes" data-op="document.polish-yes">采用（存为新版）</button></div>` : '<div class="dc-empty"><div class="meta">已经很规范，没有需要润色的地方</div></div>'}`;
       }
       function versionsPanel() {
-        const vs = S.doc.versions; const a = S.cmpA || (vs.length > 1 ? vs[vs.length - 2].v : 1), b = S.cmpB || vs[vs.length - 1].v;
+        const vs = S.doc.versions; const a = S.cmpA ?? (vs.at(-2) || latest()).v, b = S.cmpB ?? latest().v;
         const opt = (sel) => vs.map((v) => `<option value="${v.v}" ${v.v === sel ? 'selected' : ''}>第 ${v.v} 版</option>`).join('');
-        return `<div class="tl dc-vs">${vs.slice().reverse().map((v) => `<div class="tl-i ${(S.view || vs.length) === v.v ? 'on' : ''}" data-ver="${v.v}" data-op="document.ver-${v.v}"><div class="t">第 ${v.v} 版 ${(S.view || vs.length) === v.v ? '<span class="tag" data-hue="blue">正在看</span>' : ''}</div><div class="m">${esc(v.by)} · ${esc(v.at)}</div></div>`).join('')}</div>
+        return `<div class="tl dc-vs">${vs.slice().reverse().map((v) => `<div class="tl-i ${(S.view ?? latest().v) === v.v ? 'on' : ''}" data-ver="${v.v}" data-op="document.ver-${v.v}"><div class="t">第 ${v.v} 版 ${(S.view ?? latest().v) === v.v ? '<span class="tag" data-hue="blue">正在看</span>' : ''}</div><div class="m">${esc(v.by)} · ${esc(v.at)}</div></div>`).join('')}</div>
           ${vs.length > 1 ? `<div class="sec">对比</div><div class="row gap2"><select class="select sm" data-cmp="a" data-op="document.cmp-a">${opt(a)}</select><span class="t-3">→</span><select class="select sm" data-cmp="b" data-op="document.cmp-b">${opt(b)}</select><button class="btn sm" data-act="compare" data-op="document.compare">对比</button></div>
             ${S.cmp ? `<div class="row gap2" style="margin:var(--s3) 0 var(--s2)"><span class="tag" data-hue="green">+${S.cmp.stats.add} 字</span><span class="tag" data-hue="red">−${S.cmp.stats.del} 字</span><span class="meta">第 ${S.cmp.a} 版 → 第 ${S.cmp.b} 版</span></div>${diffHtml(shortEq(S.cmp.parts))}` : ''}` : '<div class="meta">只有一个版本。修改、润色、一键修正都会生成新版本。</div>'}`;
       }
       async function runCheck(silent) {
-        if (S.edit) await saveEdit();
-        try { S.issues = (await D.check(S.id)).issues; } catch (e) { ui.toast(e.message, { type: 'err' }); return; }
+        if (!canOp || !await saveEdit()) return;
+        const id = S.id, version = latest().v;
+        const sameVersion = () => S.id === id && S.doc && latest().v === version;
+        try {
+          const { issues } = await D.check(id);
+          if (!sameVersion()) return;
+          S.issues = issues; S.checkError = '';
+        } catch (e) {
+          if (!sameVersion()) return;
+          S.issues = null;
+          S.checkError = e.status === 404 || e.status === 503 ? '暂时无法核查当前文稿' : e.message;
+          if (!silent) ui.toast(S.checkError, { type: 'err' });
+          if (S.step === 2) step2();
+          return;
+        }
         S.panel = 'check'; if (S.step === 2) step2();
         if (!silent) { const e = S.issues.filter((i) => i.level === 'error').length; ui.toast(e ? `核查完成：${e} 处必须改` : '核查完成', { type: e ? 'warn' : 'ok' }); }
         return S.issues;
       }
       async function fix(ids) {
         if (S.edit) await saveEdit();
-        try { const r = await D.fix(S.id, { ids }); S.doc = r.item; S.issues = r.issues; S.view = null; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${S.doc.versions.length} 版`, { type: 'ok' }); step2(); return r; }
+        try { const r = await D.fix(S.id, { ids }); S.doc = r.item; S.issues = r.issues; S.view = null; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${latest().v} 版`, { type: 'ok' }); step2(); return r; }
         catch (e) { ui.toast(e.message, { type: 'err' }); }
       }
-      async function polishPreview() { if (S.edit) await saveEdit(); try { S.polish = await D.polish(S.id, { style: S.pstyle }); S.panel = 'polish'; step2(); return S.polish; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
+      async function polishPreview() { if (!await saveEdit()) return; try { S.polish = await D.polish(S.id, { style: S.pstyle }); S.panel = 'polish'; step2(); return S.polish; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
       async function polishApply() { S.edit = S.polish.preview; S.polish = null; await saveEdit(`润色·${(C.polishStyles.find((x) => x[0] === S.pstyle) || [, ''])[1]}`); step2(); }
       async function compare(a, b) { S.cmpA = a; S.cmpB = b; try { const r = await D.compare({ a: { id: S.id, v: a }, b: { id: S.id, v: b } }); S.cmp = Object.assign(r, { a, b }); S.panel = 'versions'; step2(); return S.cmp; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
       async function restore() { const v = S.view; S.edit = JSON.parse(JSON.stringify(S.doc.versions.find((x) => x.v === v).content)); S.view = null; await saveEdit(`恢复第 ${v} 版`); step2(); }
-      async function exportWord() { try { const r = await D.exportWord(S.id); ui.download(r.filename, r.html, 'application/msword'); ctx.audit('导出 Word', r.filename); ui.toast(r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' }); return r; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
+      async function exportWord() {
+        try {
+          if (!await saveEdit()) return;
+          const r = await D.exportWord(S.id);
+          if (r.url) {
+            const link = document.createElement('a');
+            link.href = r.url; link.download = ''; link.target = '_blank'; link.rel = 'noopener';
+            document.body.appendChild(link); link.click(); link.remove();
+          } else {
+            ui.download(r.filename, r.html, 'application/msword');
+            ctx.audit('导出 Word', r.filename);
+            ui.toast(r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' });
+          }
+          return r;
+        } catch (e) { ui.toast(e.message, { type: 'err' }); }
+      }
 
       /* ---------- 第 4 步：批注与送审 ---------- */
       function step3() {
@@ -240,7 +309,7 @@
               ${d.status === '审签中' && !canApprove ? `<div class="meta">${icon('clock')}等待 ${esc(C.approvers[0])} 审签</div>` : ''}</div>
             <div class="sec row">批注 <span class="meta">${open ? `${open} 条未解决` : cm.length ? '都已解决' : ''}</span></div>
             ${cm.length ? `<div class="stack rows dc-cms">${cm.map(cmHtml).join('')}</div>` : '<div class="meta">还没有批注。点左侧段落旁的气泡可加批注</div>'}
-            ${!locked() ? `<div class="dc-newc"><div class="meta">给第 ${S.cpara + 1} 段加批注</div><textarea class="textarea" rows="2" id="dcn" data-op="document.cm-text" placeholder="写下修改意见"></textarea><div class="row" style="margin-top:6px"><span class="sp"></span><button class="btn sm" data-act="addCm" data-op="document.cm-add">添加批注</button></div></div>` : ''}
+            ${canOp && !locked() ? `<div class="dc-newc"><div class="meta">给第 ${S.cpara + 1} 段加批注</div><textarea class="textarea" rows="2" id="dcn" data-op="document.cm-text" placeholder="写下修改意见"></textarea><div class="row" style="margin-top:6px"><span class="sp"></span><button class="btn sm" data-act="addCm" data-op="document.cm-add">添加批注</button></div></div>` : ''}
           </div></div>`;
         const right = locked() ? `<button class="btn primary" data-act="word" data-op="document.word">${icon('download')}导出 Word</button>`
           : d.status === '审签中' ? (canApprove ? `<button class="btn" data-act="reject" data-op="document.reject">退回</button><button class="btn primary" data-act="approve" data-op="document.approve">${icon('check')}审签通过</button>` : '')
@@ -257,16 +326,23 @@
       async function addComment(text) { const t = (text || ($('#dcn') || {}).value || '').trim(); if (!t) return; const r = await D.comment(S.id, { para: S.cpara, text: t }); S.doc.comments.push(r.item); ctx.audit('添加批注', `${S.doc.title} · 第 ${S.cpara + 1} 段`); step3(); return r.item; }
       function submitModal() {
         const open = (S.doc.comments || []).filter((c) => !c.resolved).length;
-        return ui.modal({ title: '送审签', okText: '确认送审', body: `<div class="field"><label>审签人</label><select class="select" id="dsa">${C.approvers.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div><div class="meta">送审第 ${S.doc.versions.length} 版。${open ? `还有 ${open} 条批注未解决。` : ''}送审后修改会退回草稿。</div>`, ok: async (box) => { await doSubmit(box.querySelector('#dsa').value); } });
+        const approver = D.isHttp() ? '<div class="meta">由具备权限的人员审签。</div>' : `<div class="field"><label for="dsa">审签人</label><select class="select" id="dsa">${C.approvers.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div>`;
+        return ui.modal({ title: '送审签', okText: '确认送审', body: `${approver}<div class="meta">送审第 ${latest().v} 版。${open ? `还有 ${open} 条批注未解决。` : ''}送审后修改会退回草稿。</div>`, ok: async (box) => {
+          const confirm = box.querySelector('[data-ok]');
+          confirm.disabled = true;
+          try { if ((await doSubmit(box.querySelector('#dsa')?.value))?.error) return false; }
+          finally { confirm.disabled = false; }
+        } });
       }
       async function doSubmit(assignee) {
-        if (S.edit) await saveEdit();
-        try { const r = await D.submit(S.id, { assignee }); S.doc = r.item; ctx.audit('送审签', `${S.doc.title} → ${assignee}`); ctx.bus.emit('inbox:changed', { app: 'document', ref: S.id }); await refreshList(); ui.toast(`已送 ${assignee} 审签，结果会在收件箱通知你`, { type: 'ok' }); step3(); return r; }
+        if (!await saveEdit()) return { error: { message: '请先保存修改' } };
+        const target = assignee || '有权限的审签人';
+        try { const r = await D.submit(S.id, { assignee }); S.doc = r.item; ctx.audit('送审签', `${S.doc.title} → ${target}`); ctx.bus.emit('inbox:changed', { app: 'document', ref: S.id }); await refreshList(); ui.toast(`已送 ${target} 审签，结果会在收件箱通知你`, { type: 'ok' }); step3(); return r; }
         catch (e) { if (e.status === 422 || e.code === 'CHECK_FAILED') { ui.toast(e.message, { type: 'err', action: { label: '去核查', fn: () => { S.step = 2; body(); runCheck(); } } }); S.step = 2; body(); await runCheck(true); return { error: e }; } ui.toast(e.message, { type: 'err' }); return { error: e }; }
       }
       async function decide(decision, comment) {
         try { const rs = (await api.reviews.list()).items; const r = rs.find((x) => x.ref === S.id && x.status === 'pending'); if (!r) { ui.toast('没有找到待审签记录', { type: 'err' }); return; }
-          await api.reviews.decide(r.id, { decision, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
+          await api.reviews.decide(r.id, { decision, version: r.version, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
           ui.toast(decision === 'approve' ? `已定稿 · ${latest().content.docNo || numberLabel}` : '已退回起草人', { type: 'ok' }); step3(); return S.doc; }
         catch (e) { ui.toast(e.message, { type: 'err' }); return { error: e }; }
       }
@@ -295,7 +371,13 @@
       el.addEventListener('click', async (ev) => {
         const x = ev.target.closest('[data-tab],[data-step],[data-tpl],[data-open],[data-act],[data-pe],[data-panel],[data-fix],[data-goto],[data-iss],[data-pstyle],[data-ver],[data-cpara],[data-resolve],[data-kb],[data-empty-action]'); if (!x || x.disabled) return; const d = x.dataset;
         if (d.tab) { S.tab = d.tab; render(); return; }
-        if (d.step != null && !x.classList.contains('on')) { const k = +d.step; if (k >= 2 && !S.doc) return; if (k === 1 && !S.tpl) return; if (S.edit && k !== 2) await saveEdit(); S.step = k; body(); return; }
+        if (d.step != null && !x.classList.contains('on')) {
+          const k = +d.step;
+          if (k >= 2 && !S.doc || k === 1 && (!S.tpl || !canOp)) return;
+          if (k !== 2 && !await saveEdit()) return;
+          if (k === 0) resetDraft();
+          S.step = k; body(); return;
+        }
         if (d.tpl) return pickTpl(d.tpl);
         if (d.open) return openDoc(d.open);
         if (d.kb) { ev.preventDefault(); return ctx.kb.open(d.kb); }
@@ -305,13 +387,13 @@
         if (d.goto != null) { S.hl = +d.goto; return startEdit(d.goto); }
         if (d.iss) { const i = S.issues.find((y) => y.id === d.iss); if (i && i.para != null) { S.hl = i.para; step2(); const p = el.querySelector(`[data-op="document.p-${i.para}"]`); if (p) p.scrollIntoView({ block: 'center', behavior: 'smooth' }); } return; }
         if (d.pstyle) { S.pstyle = d.pstyle; S.polish = null; step2(); return; }
-        if (d.ver) { const v = +d.ver; S.view = v === S.doc.versions.length ? null : v; S.edit = null; step2(); return; }
+        if (d.ver) { const v = +d.ver; S.view = v === latest().v ? null : v; S.edit = null; step2(); return; }
         if (d.cpara != null) { S.cpara = +d.cpara; step3(); const t = $('#dcn'); if (t) t.focus(); return; }
         if (d.resolve) { const c = S.doc.comments.find((y) => y.id === d.resolve); const r = await D.patchComment(S.id, c.id, { resolved: !c.resolved }); Object.assign(c, r.item); step3(); return; }
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); return load(); } if (S.lq) { S.lq = ''; return renderList($('#db')); } S.tab = 'flow'; S.step = 0; render(); return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.doc ? `「${S.doc.title}」还有哪些地方要改？` : '公文里日期、文号有哪些规范？');
-        if (a === 'new') { S.tab = 'flow'; S.step = 0; S.tpl = null; S.doc = null; render(); return; }
+        if (a === 'new') { resetDraft(); S.tab = 'flow'; S.step = 0; render(); return; }
         if (a === 'sample') { S.tpl.inputs.forEach(([k, , v]) => { if (!String(S.inputs[k] || '').trim()) S.inputs[k] = v; }); return step1(); }
         if (a === 'gen') return generate();
         if (a === 'check') return runCheck();
@@ -364,20 +446,22 @@
           if (S.step !== 0) { S.step = 0; body(); }
           await run.step(1); await run.click(`[data-op="document.tpl-${id}"]`); await run.wait('[data-op="document.sample"]', 6000);
           await run.step(2); if (inputs) { for (const [k, v] of Object.entries(inputs)) if (el.querySelector(`[data-op="document.in-${k}"]`)) { S.inputs[k] = String(v); } step1(); await run.sleep(300); } await run.click('[data-op="document.sample"]');
-          await run.step(3); await run.click('[data-op="document.gen"]'); await run.wait(() => S.doc && S.issues && el.querySelector('[data-op="document.paper"]'), 10000);
+          await run.step(3); await run.click('[data-op="document.gen"]'); await run.wait(() => S.doc && (S.issues || S.checkError) && el.querySelector('[data-op="document.paper"]'), 10000);
+          if (S.checkError) { run.done(`已起草「${S.doc.title}」。${S.checkError}。`); return S.doc; }
           await run.step(4); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length;
           run.done(`已起草「${S.doc.title}」，${sumIssues()}`, [...(nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []), { label: '润色', say: '润色一下，更正式些' }, { label: '送审签', say: '送审签' }]);
           return S.doc;
         },
         async check({ text } = {}, run) {
-          await ready(); if (!(await needDoc(text, run, 2))) return;
-          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); if (el.querySelector('[data-op="document.check"]')) await run.click('[data-op="document.check"]'); else await runCheck(true); await run.wait(() => S.issues); await run.step(2); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length; run.done(sumIssues(), nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []); }
+          await ready(); if (!canOp) return noPerm(run); if (!(await needDoc(text, run, 2))) return;
+          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); if (!await runCheck(true)) return run.fail(S.checkError || '无法核查当前文稿'); await run.step(2); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length; run.done(sumIssues(), nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []); }
           else await runCheck(true);
           return S.issues;
         },
         async fix({ text } = {}, run) {
           await ready(); if (!canOp) return noPerm(run); if (!(await needDoc(text, run, 2))) return; if (locked()) { run && run.fail('已定稿，不能修改'); return; }
-          if (!S.issues) await runCheck(true); const ids = S.issues.filter(fixable).map((i) => i.id);
+          if (!S.issues && !await runCheck(true)) return run && run.fail(S.checkError || '无法核查当前文稿');
+          const ids = S.issues.filter(fixable).map((i) => i.id);
           if (!ids.length) { run && run.done(`没有可自动修正的问题。${sumIssues()}`); return; }
           if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); await run.click('[data-op="document.fix-all"]'); const n0 = S.doc.versions.length; await run.wait(() => S.doc.versions.length > n0); await run.step(2); const left = S.issues.filter((i) => i.level === 'error').length; run.done(`已修正 ${ids.length} 处，生成第 ${S.doc.versions.length} 版。${left ? `还有 ${left} 处必须人工改` : sumIssues()}`, [{ label: '看改了什么', say: '这版改了哪些地方' }]); }
           else await fix(ids);
@@ -393,7 +477,7 @@
         },
         async compare({ text, a, b } = {}, run) {
           await ready(); if (!(await needDoc(text, run, 2))) return; const vs = S.doc.versions; if (vs.length < 2) { run && run.done('这份文稿只有一个版本'); return; }
-          const nums = String(text || '').match(/第\s*(\d+)\s*版/g); let va = a, vb = b; if (nums && nums.length >= 2) { va = +nums[0].match(/\d+/)[0]; vb = +nums[1].match(/\d+/)[0]; } va = va || vs[vs.length - 2].v; vb = vb || vs[vs.length - 1].v;
+          const nums = String(text || '').match(/第\s*(\d+)\s*版/g); let va = a, vb = b; if (nums && nums.length >= 2) { va = +nums[0].match(/\d+/)[0]; vb = +nums[1].match(/\d+/)[0]; } va = va ?? vs.at(-2).v; vb = vb ?? latest().v;
           if (!run) return compare(va, vb);
           await run.step(1); await run.click('[data-op="document.panel-versions"]'); await run.select('[data-op="document.cmp-a"]', String(va)); await run.select('[data-op="document.cmp-b"]', String(vb)); await run.step(2); await run.click('[data-op="document.compare"]'); await run.wait(() => S.cmp && S.cmp.a === va && S.cmp.b === vb);
           await run.highlight('.dc-diff'); run.done(`第 ${va} 版 → 第 ${vb} 版：新增 ${S.cmp.stats.add} 字、删除 ${S.cmp.stats.del} 字（绿色新增、红色删除）`, canOp && !locked() ? [{ label: `恢复第 ${va} 版`, say: `恢复第 ${va} 版` }] : []);
@@ -402,15 +486,20 @@
         async submit({ text } = {}, run) {
           await ready(); if (!canOp) return noPerm(run); if (!(await needDoc(text, run, 3))) return;
           if (S.doc.status === '审签中' || locked()) { run && run.done(`这份文稿${S.doc.status}，不需要再送审`); return; }
-          if (!run) return doSubmit(C.approvers[0]);
-          await run.step(1); const iss = (await D.check(S.id)).issues; const errs = iss.filter((i) => i.level === 'error');
+          const assignee = D.isHttp() ? undefined : C.approvers[0];
+          const target = assignee || '有权限的审签人';
+          if (!run) return doSubmit(assignee);
+          await run.step(1);
+          const iss = await runCheck(true);
+          if (!iss) return run.fail(S.checkError || '无法核查当前文稿');
+          const errs = iss.filter((i) => i.level === 'error');
           if (errs.length) { S.issues = iss; S.step = 2; body(); await run.highlight('.dc-side'); run.fail(`还有 ${errs.length} 处必须改的问题：${errs.map((e) => e.text).join('；')}`); return; }
           await run.step(2); await run.highlight('[data-op="document.submit"]', '确认后才送审');
           const open = (S.doc.comments || []).filter((c) => !c.resolved).length;
-          const c = await run.ask(`送 ${C.approvers[0]} 审签第 ${S.doc.versions.length} 版「${S.doc.title}」${open ? `（还有 ${open} 条批注未解决）` : ''}，确认吗？`, ['确认送审', '再看看']);
+          const c = await run.ask(`送 ${target} 审签第 ${latest().v} 版「${S.doc.title}」${open ? `（还有 ${open} 条批注未解决）` : ''}，确认吗？`, ['确认送审', '再看看']);
           if (c !== '确认送审') { run.done('好的，没有送审'); return; }
           await run.step(3); await run.click('[data-op="document.submit"]'); await run.wait('[role="dialog"] [data-ok]'); await run.click('[role="dialog"] [data-ok]'); await run.wait(() => S.doc.status === '审签中');
-          run.done(`已送 ${C.approvers[0]} 审签，结果会在收件箱通知你`);
+          run.done(`已送 ${target} 审签，结果会在收件箱通知你`);
         },
         async approve({ text } = {}, run) {
           await ready(); if (!canApprove) return noPerm(run, '需要审签权限：请用审签领导账号（如 李阳）处理');
@@ -429,7 +518,12 @@
         },
         async export({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, S.step >= 2 ? S.step : 2))) return;
-          if (run) { await run.step(1); await run.click('[data-op="document.word"]'); run.done(`已导出「${S.doc.title}」Word${locked() ? '（正式版式）' : `（带“${T.watermark}”水印）`}`); } else return exportWord();
+          if (!run) return exportWord();
+          await run.step(1);
+          const result = await exportWord();
+          if (!result) return run.fail('未能导出当前文稿');
+          run.done(result.url ? `已请求下载「${S.doc.title}」Word，请查看浏览器下载状态`
+            : `已导出「${S.doc.title}」Word${locked() ? '（正式版式）' : `（带“${T.watermark}”水印）`}`);
         },
         async open({ text } = {}, run) {
           await ready(); const id = resolveDoc(text);
@@ -448,13 +542,30 @@
         },
       };
       return {
-        go(route, params = {}) {
-          ready().then(() => {
-            if (route === 'list') { S.tab = 'list'; render(); return; }
-            if (route === 'new') { S.tab = 'flow'; render(); if (params.templateId && tplOf(params.templateId)) { const fromMap = { policy: '政策匹配', meeting: '会议纪要', enterprise: '企业管理' }; const f = params.from; pickTpl(params.templateId, params.inputs, f ? { label: typeof f === 'string' ? fromMap[f] || f : `${fromMap[f.app] || f.app}${f.title ? `「${f.title}」` : ''}` } : null); } else { S.step = 0; S.tpl = null; S.doc = null; body(); } return; }
-            if ((route === 'detail' || route === 'compare') && params.id) { openDoc(params.id, route === 'compare' ? 2 : null).then(() => { if (route === 'compare' && S.doc && S.doc.versions.length > 1) compare(S.doc.versions[S.doc.versions.length - 2].v, latest().v); }); return; }
-            S.tab = 'flow'; render();
-          });
+        async go(route, params = {}) {
+          await ready();
+          if (!canView) return;
+          if (route === 'list') { S.tab = 'list'; render(); return; }
+          const id = params.draftId || ((route === 'detail' || route === 'compare') && params.id);
+          if (id) {
+            await openDoc(id, route === 'compare' ? 2 : null);
+            if (route === 'compare' && S.doc?.id === id && S.doc.versions.length > 1) {
+              await compare(S.doc.versions.at(-2).v, latest().v);
+            }
+            return;
+          }
+          S.tab = 'flow';
+          if (route === 'new' || params.templateId) {
+            resetDraft(); S.step = 0; render();
+            const fromMap = { policy: '政策匹配', meeting: '会议纪要', enterprise: '企业管理' };
+            const from = params.from || (params.fromMeeting ? 'meeting' : null);
+            const app = typeof from === 'string' ? from : from?.app;
+            const label = fromMap[app] || app;
+            pickTpl(params.templateId, params.inputs, label ? { label: label + (from.title ? `「${from.title}」` : '') } : null,
+              params.notice, params.autogen === true);
+            return;
+          }
+          render();
         },
         actions,
         unmount() {},
