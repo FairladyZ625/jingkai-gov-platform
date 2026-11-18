@@ -183,7 +183,8 @@ def test_http_with_cookie_auth_and_partner_space_filter(instance_factory, monkey
     def search(docs, question, *, filters):
         calls.append(filters)
         assert [doc["space"] for doc in docs] == ["policy"]
-        return {"hits": {"问题": [enterprise, public], "无命中": [], "只有企业": [enterprise]}[question]}
+        return {"hits": {"问题": [enterprise, public], "无命中": [], "只有企业": [enterprise],
+                         "只有标题": [dict(public, snippet="不在正文里的标题")]}[question]}
 
     monkeypatch.setattr(module, "_load_search", lambda: search)
     app = instance_factory()
@@ -214,7 +215,7 @@ def test_http_with_cookie_auth_and_partner_space_filter(instance_factory, monkey
             {"passage": 1, "sentences": [public["snippet"]]},
         ]}, "internal")]
         assert calls[0]["space"] == "policy" and calls[0]["validOnly"] is True
-        for q in ("无命中", "只有企业", " ，？！ "):
+        for q in ("无命中", "只有企业", "只有标题", " ，？！ "):
             assert client.post(endpoint, json={"q": q}).json()["notFound"] is True
         for body in ({"q": "问题", "space": "enterprise"},
                      {"q": "问题", "filters": {"space": "enterprise"}}):

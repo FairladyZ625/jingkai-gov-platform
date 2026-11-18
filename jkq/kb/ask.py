@@ -188,6 +188,9 @@ def install(app, platform, current_user):
             )
             return result["result"]
 
-        return ask(body.q, (hit for hit in hits if hit["space"] in allowed), complete)
+        # 只有标题命中时检索会以标题充当片段；问答只引用正文原文。
+        texts = {doc["id"]: doc["text"] for doc in docs}
+        return ask(body.q, (hit for hit in hits
+                            if hit["space"] in allowed and hit["snippet"] in texts.get(hit["id"], "")), complete)
 
     app.include_router(router)
