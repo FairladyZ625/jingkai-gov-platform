@@ -1,14 +1,17 @@
-import { ensureStyles, h, PageHeader, WorkbenchLayout } from '/sdk/ui/index.js';
+// 公文协作脚手架入口：业务界面由后续 Issue 实现；此处满足 module 型挂载与界面规范门禁。
+import { h, PageHeader, Card, EmptyState } from '/sdk/ui/index.js';
 
-export async function mount(el, ctx) {
-  ensureStyles();
+export async function mount(el) {
   el.replaceChildren(
-    WorkbenchLayout({
-      header: PageHeader({
-        title: '公文协作',
-        description: '按模板起草、保存版本，定稿后锁定。',
-      }),
-      main: h('p', {}, '请从对话或接口发起起草。完整编辑界面将在后续任务接入。'),
+    PageHeader({ title: "公文协作" }),
+    Card({
+      title: '脚手架',
+      children: [
+        EmptyState({
+          title: '业务界面尚未接入',
+          description: '后端健康检查已就绪；完整流程见关联业务 Issue。',
+        }),
+      ],
     }),
   );
 }
