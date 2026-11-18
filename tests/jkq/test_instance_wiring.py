@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 import shutil
 from pathlib import Path
 
@@ -11,6 +12,8 @@ pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-
 
 from fastapi.testclient import TestClient
 
+from haiknow_core.passwords import hash_password
+
 from jkq.app import create_app
 
 
@@ -18,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONVERSATIONS = "/api/v1/conversations"
 REVIEWS = "/api/v1/reviews"
 JOBS = "/api/v1/jobs"
+PASSWORD = secrets.token_urlsafe(12)  # 每次运行随机，避免口令字面量入库
 PANEL = {"app": "policy", "route": "detail", "params": {"id": "PI-03"}}
 
 
@@ -42,16 +46,33 @@ def client(monkeypatch, tmp_path, cheap_password_hash):
     monkeypatch.delenv("HAIKNOW_ROOT", raising=False)
     monkeypatch.delenv("JKQ_WEB_DIR", raising=False)
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
-    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "1")
+    monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
+    monkeypatch.delenv("JKQ_DEMO_MODE", raising=False)
+    shutil.copyfile(ROOT / "config/roles.yaml", config / "roles.yaml")
     monkeypatch.setenv("HAIKNOW_CONFIG_DIR", str(config))
     monkeypatch.setenv("HAIKNOW_APPS_DIR", str(apps))
     monkeypatch.setenv("HAIKNOW_DATA_DIR", str(tmp_path / "data"))
-    with TestClient(create_app()) as client:
+    app = create_app()
+    store = app.state.platform.store
+    with store._lock, store._db as db:
+        store.begin_write()
+        for uid, roles in users:
+            # 经开区关闭卫华免密演示登录，测试账号走真实口令登录。
+            db.execute(
+                "insert into users (id,username,name,password_hash,status,last_login,failed_logins,"
+                "locked_until,demo,all_projects,session_gen) values (?,?,?,?,'active',null,0,0,0,0,0)",
+                (uid, uid, uid, hash_password(PASSWORD)),
+            )
+            db.executemany("insert or ignore into roles values (?,?,1)", [(role, role) for role in roles])
+            db.executemany("insert into user_roles values (?,?)", [(uid, role) for role in roles])
+            db.execute("insert into project_members values (?,?)", ("jkq", uid))
+    with TestClient(app) as client:
         yield client
 
 
 def login(client, uid):
-    assert client.post("/api/auth/login", json={"user_id": uid}).status_code == 200
+    response = client.post("/api/v1/auth/login", json={"username": uid, "password": PASSWORD})
+    assert response.status_code == 200, response.text
 
 
 def assert_error(response, status, code):
