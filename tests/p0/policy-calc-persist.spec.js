@@ -172,3 +172,38 @@ test('慢重算中编辑告知单后立即切对话仍保留备注', async ({ pa
   await saved.click();
   await expect(notice).toHaveValue(edited);
 });
+
+test('首次恢复匹配失败后再次返回仍保留告知单和手填房租', async ({ page }) => {
+  const { other, saved } = await openPolicyConversation(page);
+  const { rent, total } = await editRent(page);
+  await op(page, 'policy.to-notice').click();
+  const notice = page.locator('#pn');
+  await expect(notice).toHaveValue(/1\s*万元\s*×\s*50%\s*=\s*5000\s*元/);
+  const edited = (await notice.inputValue()) + '\n备注：首次返回前已核对房租';
+  await notice.fill(edited);
+  const items = op(page, 'policy.tab-items');
+  await items.click();
+  await other.click();
+
+  const failure = '首次恢复匹配暂时失败';
+  await page.evaluate((message) => {
+    const match = JKApi.policy.match;
+    JKApi.policy.match = async () => {
+      JKApi.policy.match = match;
+      throw new Error(message);
+    };
+  }, failure);
+  await saved.click();
+  await expect(page.getByText(failure, { exact: true })).toBeVisible();
+  await other.click();
+  await saved.click();
+  await expect(items).toHaveClass(/\bon\b/);
+  await op(page, 'policy.tab-flow').click();
+  await expect(op(page, 'policy.step-3'), '再次返回办理应恢复到告知单步骤').toHaveClass(/\bon\b/);
+  await expect(notice).toHaveValue(edited);
+  await op(page, 'policy.step-1').click();
+  await expect(page.locator('[data-pick="PI-03"]')).toBeChecked();
+  await op(page, 'policy.next').click();
+  await expect(rent).toHaveValue('1');
+  await expect(total).toHaveText(/5000\s*元/);
+});
