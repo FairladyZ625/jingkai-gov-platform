@@ -49,7 +49,7 @@ HA 每 20 分钟巡检一次。已经 assign 的 Issue 不会再派给 Codex。
 - `00_内部资料`
 - 局方或客户的私有样例（放在 `data/private/`，该目录已加入 `.gitignore`）
 - 任何 token、密钥、密码、部署凭据
-- 报价、人天、毛利等内部商务内容
+- 内部商务核算类内容（关键词清单见 `scripts/guard_rules.json`，提交前由 guard 自动检查）
 
 ## 有问题
 

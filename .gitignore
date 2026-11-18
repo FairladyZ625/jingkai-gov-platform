@@ -12,3 +12,17 @@ dist/
 .wrangler/
 __pycache__/
 .DS_Store
+
+# 本地派工与独立工作树
+/harness/
+/.harness/
+/.worktrees/
+
+# 录音
+*.[mM][pP]3
+*.[wW][aA][vV]
+*.[mM]4[aA]
+*.[aA][aA][cC]
+*.[fF][lL][aA][cC]
+*.[oO][gG][gG]
+*.[aA][mM][rR]

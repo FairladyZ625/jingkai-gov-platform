@@ -27,7 +27,10 @@ WORKER_CAP = int(os.environ.get('PLAN_WORKER_CAP', '8'))
 STALL_MIN = int(os.environ.get('PLAN_STALL_MIN', '60'))
 TZ = ZoneInfo('Asia/Taipei')
 # 额外敏感词（如内部域名）可通过环境变量 PLAN_EXTRA_BANNED 以逗号分隔传入，不写进仓库
-BANNED = [w for w in os.environ.get('PLAN_EXTRA_BANNED', '').split(',') if w] + ['00_内部资料', '勿外发', '人天', '报价', '毛利', '采购价', '硬件价', '/Users/', '/home/', '/tmp/',
+# 商务核算类关键词与 guard 共用一份清单（scripts/guard_rules.json），不在代码里重复书写
+_GUARD_RULES = Path(__file__).resolve().with_name('guard_rules.json')
+_GUARD_KEYWORDS = json.loads(_GUARD_RULES.read_text(encoding='utf-8')).get('keywords', []) if _GUARD_RULES.exists() else []
+BANNED = [w for w in os.environ.get('PLAN_EXTRA_BANNED', '').split(',') if w] + _GUARD_KEYWORDS + ['00_内部资料', '勿外发', '硬件价', '/Users/', '/home/', '/tmp/',
           'gitlab.', 'ssh://', 'ghp_', 'gho_', 'github_pat_', 'CLOUDFLARE_API_TOKEN',
           '.harness', 'eventStreamRef', 'providerSessionId', 'runtimeSessionId', 'dispatch_', 'runtime_']
 SECRET_RE = re.compile(r'sk-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
