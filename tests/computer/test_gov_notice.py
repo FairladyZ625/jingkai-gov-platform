@@ -263,3 +263,114 @@ def test_preflight_dns(site, transport, monkeypatch, temporary, attempts):
     assert len(result["log"]) == attempts
     assert [e["at"] for e in result["log"]] == list(range(0, attempts * 2, 2))
     opener.open.assert_not_called()
+
+
+def _notice_runs(site):
+    from jkq.computer.runs import Runs
+
+    class Unused:
+        url = "http://127.0.0.1:1/"
+
+        async def __call__(self, run):
+            raise AssertionError("通知任务不应启动模拟站运行器")
+
+    pages = site
+
+    def get(address):
+        response = pages[address]
+        if isinstance(response, list):
+            response = response.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    now = 0
+
+    def clock():
+        return now
+
+    def wait(seconds):
+        nonlocal now
+        now += seconds
+
+    return Runs(Unused.url, Unused(), lambda *args: None, fetch=get,
+                site_requests=_SiteRequests(clock, wait))
+
+
+async def _wait_status(run, status, timeout=2):
+    import asyncio
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if run.data["status"] == status:
+            return run.snapshot()
+        if run.job.done() and run.data["status"] != status:
+            raise AssertionError(f"任务已结束为 {run.data['status']}: {run.data.get('error')}")
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"等待 {status} 超时，当前为 {run.data['status']}")
+
+
+def test_runner_waits_for_import_confirm(site):
+    import asyncio
+    from jkq.computer.runs import ComputerError
+
+    async def scenario():
+        runs = _notice_runs(site)
+        run = runs.start("owner", "王敏", {"task": "notice", "ent": None, "from": "api"}, None, lambda: True)
+        item = await _wait_status(run, "waiting")
+        assert item["pending"]["kind"] == "import"
+        assert item["notice"]["count"] == 3
+        assert item["task"] == "notice"
+        with pytest.raises(ComputerError, match="确认类型"):
+            run.confirm("approve", "submit")
+        run.confirm("approve", "import")
+        await run.job
+        done = run.snapshot()
+        assert done["status"] == "done"
+        assert len(done["result"]["docs"]) == 3
+        assert all(entry["method"] == "GET" for entry in done["requests"])
+        # 第二次运行走桩去重
+        again = runs.start("owner", "王敏", {"task": "notice", "ent": None, "from": "api"}, "k2", lambda: True)
+        await _wait_status(again, "waiting")
+        again.confirm("approve", "import")
+        await again.job
+        assert again.snapshot()["result"]["docs"] == []
+        assert len(again.snapshot()["result"]["skipped"]) == 3
+        assert {item["reason"] for item in again.snapshot()["result"]["skipped"]} == {"已在库中"}
+        await runs.close()
+
+    asyncio.run(scenario())
+
+
+def test_runner_decline_stops_without_import(site):
+    import asyncio
+
+    async def scenario():
+        runs = _notice_runs(site)
+        run = runs.start("owner", "王敏", {"task": "notice", "ent": None, "from": "api"}, None, lambda: True)
+        await _wait_status(run, "waiting")
+        run.confirm("decline", "import")
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run.job, 2)
+        item = run.snapshot()
+        assert item["status"] == "stopped"
+        assert item.get("result") is None
+        await runs.close()
+
+    asyncio.run(scenario())
+
+
+def test_runner_marks_unreachable_as_failed_and_skipped(site):
+    import asyncio
+
+    async def scenario():
+        site[ROBOTS] = OSError("官网不可达")
+        runs = _notice_runs(site)
+        run = runs.start("owner", "王敏", {"task": "notice", "ent": None, "from": "api"}, None, lambda: True)
+        await asyncio.wait_for(run.job, 2)
+        item = run.snapshot()
+        assert item["status"] == "failed" and item.get("skipped") is True
+        assert item["error"]["details"]["skipped"] is True
+        assert item.get("result") is None
+        await runs.close()
+
+    asyncio.run(scenario())

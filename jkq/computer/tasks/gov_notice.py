@@ -24,6 +24,18 @@ ARTICLE = re.compile(r"/zwgkkfq/tzgg/\d{6}/t\d{8}_\d+\.html")
 FILES = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|zip|ofd|wps)$", re.I)
 
 
+TASK = {
+    "id": "notice", "title": "官网通知入库", "icon": "kb", "system": "kfqgw",
+    "needsEnt": False, "desc": "从经开区官网只读下载最新通知并入库",
+    "stop": "入库前停下确认",
+    "keywords": ["下载通知", "最新通知", "官网通知", "通知入库", "存到知识库"],
+}
+SITE_SYSTEM = {
+    "id": "kfqgw", "name": "经开区官网", "url": COLUMN,
+    "kind": "通知", "account": "只读", "allowed": True, "confirmOn": ["import"],
+}
+
+
 class NoticeError(Exception):
     """本步失败，主演示可继续。"""
 
