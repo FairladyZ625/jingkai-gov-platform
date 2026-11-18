@@ -6,9 +6,10 @@ from fastapi import APIRouter, FastAPI, HTTPException
 
 from .kb import install as install_kb
 from .models import install as install_models
+from .transcribe import router as transcribe_router
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
-ROUTERS: tuple[APIRouter, ...] = ()
+ROUTERS: tuple[APIRouter, ...] = (transcribe_router,)
 
 health = APIRouter()
 stubs = APIRouter(prefix="/api/v1", include_in_schema=False)

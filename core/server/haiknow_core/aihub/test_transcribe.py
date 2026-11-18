@@ -264,7 +264,7 @@ def test_instance_route_uses_core_file_permissions_and_v1_error_envelope(monkeyp
         encoding='utf-8',
     )
     monkeypatch.setenv('HAIKNOW_SECRET', 'jkq-test-session-signing')
-    monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, transcribe.router))
+    assert transcribe.router in routers.ROUTERS
     with TestClient(create_app()) as client:
         body = {'appId': 'sample-app', 'fileId': 'not-found'}
         assert client.post(PATH, json=body).status_code == 401
