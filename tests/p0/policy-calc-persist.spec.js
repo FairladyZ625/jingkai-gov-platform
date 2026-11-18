@@ -120,3 +120,55 @@ for (const [tab, label] of [['items', '事项库'], ['docs', '政策文件']]) {
     await expect(total).toHaveText(/5000\s*元/);
   });
 }
+
+async function holdNextPolicyResponse(page, method) {
+  await page.evaluate((method) => {
+    const original = JKApi.policy[method];
+    JKApi.policy[method] = async (params) => {
+      JKApi.policy[method] = original;
+      const response = await original(params);
+      await new Promise((resolve) => { window.releasePolicyResponse = resolve; });
+      return response;
+    };
+  }, method);
+}
+
+test('旧匹配晚于个人画像核对完成时保留新办理', async ({ page }) => {
+  const { other, saved } = await openPolicyConversation(page);
+  await editRent(page);
+  await op(page, 'policy.tab-items').click();
+  await other.click();
+  await holdNextPolicyResponse(page, 'match');
+  await saved.click();
+  await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
+  await op(page, 'policy.tab-flow').click();
+  await op(page, 'policy.step-0').click();
+  await op(page, 'policy.mode-manual').click();
+  await page.locator('[data-mobj="个人"]').click();
+  await op(page, 'policy.go').click();
+  const heading = page.locator('#ps .q');
+  await expect(heading).toContainText('个人');
+  const selection = await op(page, 'policy.selection').innerText();
+  await page.evaluate(() => window.releasePolicyResponse());
+  await expect(heading).toContainText('个人');
+  await expect(op(page, 'policy.selection')).toHaveText(selection);
+  await expect(page.locator('[data-camt="PI-03"]')).toHaveCount(0);
+});
+
+test('慢重算中编辑告知单后立即切对话仍保留备注', async ({ page }) => {
+  const { other, saved } = await openPolicyConversation(page);
+  await editRent(page);
+  await op(page, 'policy.to-notice').click();
+  const notice = page.locator('#pn');
+  await expect(notice).toHaveValue(/5000\s*元/);
+  const edited = (await notice.inputValue()) + '\n备注：已核对房租';
+  await other.click();
+  await holdNextPolicyResponse(page, 'calc');
+  await saved.click();
+  await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
+  await notice.fill(edited);
+  await other.click();
+  await page.evaluate(() => window.releasePolicyResponse());
+  await saved.click();
+  await expect(notice).toHaveValue(edited);
+});

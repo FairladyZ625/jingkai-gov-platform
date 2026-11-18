@@ -44,7 +44,16 @@
       const canOp = perms.can('operate');
       const S = { tab: canOp ? 'flow' : 'items', step: 0, mode: 'ent', entId: null, manual: { object: '企业', tags: [], license: [], yearsInZone: '', amounts: {} }, overrides: {}, match: null, filter: null, picked: new Set(), open: new Set(), calc: {}, notice: '', q: '', obj: '', win: '', busy: false, error: null };
       let ITEMS = [], DOCS = [], ENTS = [], loaded = false, loadErr = null;
+      let matchVersion = 0;
+      let restoringFlow = false;
       let restoringAmounts = false;
+      function invalidateMatch() {
+        matchVersion++;
+        restoringFlow = false;
+        restoringAmounts = false;
+        S.busy = false;
+        S.match = null;
+      }
       const restoreStatus = () => restoringAmounts ? '<span class="meta" role="status">' + restoringText + '</span>' : '';
       const byId = (id) => ITEMS.find((x) => x.id === id);
       const ent = () => ENTS.find((e) => e.id === S.entId);
@@ -340,15 +349,24 @@
           defaultItemIds: response.defaultItemIds ?? (ok.length ? ok : eligible.slice(0, 2)).map((x) => x.id),
         };
       }
-      async function runMatch() {
-        S.busy = true; S.match = null; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
+      async function runMatch(fromSnapshot = false) {
+        invalidateMatch();
+        const version = matchVersion;
+        restoringFlow = fromSnapshot;
+        S.busy = true; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
         try {
           let b;
           if (S.mode === 'ent') b = { entId: S.entId, overrides: S.overrides };
           else { const m = S.manual; b = { profile: Object.assign({ subjectType: m.object === '其他组织' ? '其他组织' : m.object, tags: [...m.tags], license: [...m.license], regInZone: true }, m.yearsInZone !== '' ? { yearsInZone: +m.yearsInZone } : {}, m.amounts, S.overrides) }; }
-          S.match = normalizeMatch(await P.match(b));
+          const response = await P.match(b);
+          if (version !== matchVersion) return;
+          S.match = normalizeMatch(response);
           S.picked = new Set(S.match.defaultItemIds);
-        } catch (e) { ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0; }
+        } catch (e) {
+          if (version !== matchVersion) return;
+          restoringFlow = false;
+          ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0;
+        }
         S.busy = false; if (S.tab === 'flow') body(); return S.match;
       }
       async function applyFill(field, unitVal) {
@@ -400,7 +418,7 @@
         return { route: flowRoutes[S.step], params };
       }
       function snapshot(route, params) {
-        if (!loaded) return;
+        if (!loaded || restoringFlow) return;
         const flow = canOp ? snapshotFlow() : null;
         if (S.tab === 'flow') return flow;
         const next = {};
@@ -415,7 +433,9 @@
         return { route: S.tab, params: next };
       }
       async function restore(route, params) {
+        restoringFlow = true;
         await ready();
+        restoringFlow = false;
         if (!el.isConnected || !loaded) return;
         const browsing = ['items', 'docs', 'detail'].includes(route);
         if (!browsing && !flowRoutes.includes(route)) return go(route, params);
@@ -436,8 +456,9 @@
         const step = flowRoutes.indexOf(flow?.route);
         if (!canOp || step < 1 || !(manual || entId)) return;
 
-        const match = await runMatch();
-        if (!el.isConnected || !match || S.step !== 1) return;
+        const match = await runMatch(true);
+        if (!match || S.match !== match || !el.isConnected) return;
+        restoringFlow = false;
         if (Array.isArray(pickedIds)) S.picked = new Set(pickedIds);
         S.showAll = !!expanded;
         S.filter = filter || null;
@@ -451,6 +472,7 @@
 
         if (restoringAmounts) {
           await Promise.all(ids.map(recalc));
+          if (S.match !== match) return;
           restoringAmounts = false;
           if (!el.isConnected) return;
           if (S.tab === 'flow' && S.step === 1 && S.match) matchFooter();
@@ -464,7 +486,7 @@
         const t = ev.target.closest('[data-tab],[data-step],[data-mode],[data-ent],[data-act],[data-filter],[data-toggle],[data-src],[data-detail],[data-doc],[data-obj],[data-mobj],[data-mtag],[data-mlic],[data-sample],[data-empty-action]');
         if (!t) return; const d = t.dataset;
         if (d.tab) { S.tab = d.tab; render(); return; }
-        if (d.step != null && !t.disabled) { S.step = +d.step; body(); return; }
+        if (d.step != null && !t.disabled) { S.step = +d.step; if (S.step === 0) invalidateMatch(); body(); return; }
         if (d.mode) { S.mode = d.mode; body(); return; }
         if (d.ent) { S.entId = d.ent; S.overrides = {}; S.match = null; body(); return; }
         if (d.filter) { S.filter = S.filter === d.filter ? null : d.filter; body(); return; }
@@ -512,7 +534,7 @@
           await ready(); const id = resolveEnt(es, text);
           if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (!canOp) { run && run.fail(T.viewOnly); return; }
-          gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.match = null; S.overrides = {}; body();
+          invalidateMatch(); gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.overrides = {}; body();
           const e = ENTS.find((x) => x.id === id);
           if (run) { await run.step(1); await run.fill('[data-op="policy.ent"]', e.short); await run.wait(`[data-op="policy.opt-${id}"]`); await run.click(`[data-op="policy.opt-${id}"]`); await run.step(2); await run.click('[data-op="policy.go"]'); await run.wait(() => S.match && el.querySelector('[data-op="policy.kpi-ok"]')); await run.step(3); await run.highlight('[data-op="policy.kpi-ok"]'); }
           else { S.entId = id; await runMatch(); }
@@ -585,17 +607,17 @@
         if (route === 'items' || route === 'docs') { S.tab = route; if (params.q != null) S.q = params.q; if (params.object != null) S.obj = params.object; render(); return; }
         if (route === 'detail') { S.tab = 'items'; render(); openDetail(params.itemId || params.id); return; }
         S.tab = 'flow';
-        if (params.entId && params.entId !== S.entId) { S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; S.match = null; }
+        if (params.entId && params.entId !== S.entId) { invalidateMatch(); S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; }
         if (route === 'calc' && params.itemId) { render(); calcModal(params.itemId, params.amount); return; }
         render();
-        if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then(() => { if (route === 'notice') return showNotice(); });
+        if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then((match) => { if (match && route === 'notice') return showNotice(); });
       }
       return {
         go,
         snapshot,
         restore,
         actions,
-        unmount() {},
+        unmount() { invalidateMatch(); },
       };
     },
   });

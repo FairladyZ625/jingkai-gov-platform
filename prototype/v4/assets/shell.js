@@ -420,8 +420,9 @@
   }
   function snapshotPanel(slot) {
     if (!slot) return;
-    if (slot.restoring) return slot.panel;
     const { app, route, params } = slot.panel;
+    // 政策应用在画像与手填金额就位后即可保存，后台试算可以继续。
+    if (slot.restoring && app !== 'policy') return slot.panel;
     const query = (selector) => slot.el.querySelector(selector);
     const tab = query('.ap-tabs .tab.on')?.dataset.tab;
     const step = query('.wiz-step.on')?.dataset.op;
