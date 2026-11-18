@@ -14,7 +14,10 @@ for (const extension of [false, true]) {
     load('config/app.config.js');
     const config = context.window.JK_CONFIG.modelRouting;
     load('config/mock-data.js');
+    load('config/accounts.js');
+    load('data/real-policies.js');
     load('mock/mock-api.js');
+    load('mock/computer.js');
     if (extension) load('mock/policy.js');
 
     const api = context.window.JKAPI;
@@ -35,6 +38,18 @@ for (const extension of [false, true]) {
         assert.equal(model, local.name, action + ' 实际记录 ' + model);
       }
     }
+    // 固定脚本启动、步骤回报和人工确认均无模型调用。
+    const runs = '/api/apps/computer/runs';
+    const { item: run } = await api.post(runs, { task: 'apply', ent: company.id });
+    await api.patch(runs + '/' + run.id, { log: '打开统一身份认证 ✓' });
+    await api.post(runs + '/' + run.id + '/confirm', { decision: 'approve' });
+    const computerRows = (await audit()).slice(0, 3);
+    assert.deepEqual(Array.from(computerRows, r => r[3]), [
+      run.title + ' · ' + api.ext.me().name + ' 人工确认提交',
+      run.title + ' · 打开统一身份认证 ✓',
+      '开始任务 · ' + run.title + '（' + run.system.name + '）',
+    ]);
+    for (const row of computerRows) assert.equal(row[4], '—', row[3]);
     await match({ profile: {} });
     assert.equal((await audit())[0][4], cloud.name);
     config.defaultChannel = 'local';
