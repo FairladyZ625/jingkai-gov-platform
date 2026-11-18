@@ -41,6 +41,8 @@ def test_new_app_replaces_placeholders_and_registers_codeowner(tmp_path):
     assert manifest["sdk"] == "1"
     readme = (app / "README.md").read_text(encoding="utf-8")
     assert "#17" in readme and "tester" in readme
+    assert "../../core/README.md#启动" in readme
+    assert "scripts/dev.sh" not in readme
     assert f"/apps/{APP}/ @tester" in (root / "CODEOWNERS").read_text(encoding="utf-8")
     for path in app.rglob("*"):
         if path.is_file() and path.suffix in {".json", ".py", ".js", ".md"}:
@@ -99,6 +101,36 @@ def test_generated_app_runs_full_flow(tmp_path, make_client):
     actions = [item["action"] for item in client.get(f"/api/audit?app_id={APP}").json()["items"]]
     assert {"create", "submit", "confirm", "export"} <= set(actions)
 
+
+def test_check_generated_app_exercises_its_own_router(tmp_path):
+    root = _root(tmp_path)
+    assert _new_app(root, APP, "验收样本", "--owner", "tester").returncode == 0
+    for path in ("conftest.py", "pytest.ini", "scripts/check.py"):
+        destination = root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / path, destination)
+    for path in ("core/server", "core/sdk", "tests/fixtures"):
+        shutil.copytree(ROOT / path, root / path, ignore=shutil.ignore_patterns("__pycache__"))
+
+    def check():
+        return subprocess.run(
+            [sys.executable, "scripts/check.py", "--only", "tests", "--app", APP],
+            cwd=root, capture_output=True, text=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+
+    router = root / "apps" / APP / "api/router.py"
+    original = router.read_text(encoding="utf-8")
+    router.write_text(original.replace('post("/records", status_code=201)', 'post("/records", status_code=202)'),
+                      encoding="utf-8")
+    failed = check()
+    assert failed.returncode == 1 and "assert 202 == 201" in failed.stdout, failed.stdout + failed.stderr
+
+    router.write_text(original, encoding="utf-8")
+    repaired = check()
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+
+
 def test_name_with_quotes_and_backslash_stays_valid(tmp_path):
     """O'Brien 这类名称要能生成；按目标文件语法转义，不能靠拒绝合法名字。"""
     root = _root(tmp_path)
@@ -152,7 +184,8 @@ def test_two_generated_apps_collect_without_import_file_mismatch(tmp_path):
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "import file mismatch" not in output
-    assert output.count("test_permissions.py") == 2
+    for app_id in ("_template", "import-one", "import-two"):
+        assert f"apps/{app_id}/tests/test_permissions.py::" in output
 
 
 def test_generated_frontend_filters_empty_cards(tmp_path):

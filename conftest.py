@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import MutableMapping
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,13 @@ sys.path[:0] = [str(ROOT), str(ROOT / "core/server"), str(ROOT / "core/sdk"), st
 os.environ["HAIKNOW_NO_AUTOAPP"] = "1"
 # 测试默认不导入 CAP-04 开发种子，需要样本的用例自行打开 HAIKNOW_KB_SEED=1。
 os.environ.setdefault("HAIKNOW_KB_SEED", "0")
+
+
+def pytest_configure(config):
+    # 仓库 CI 只安装 pytest。显式指定 core 或 apps 时，缺依赖仍由收集报错。
+    if config.args_source is pytest.Config.ArgsSource.TESTPATHS and find_spec("fastapi") is None:
+        config.option.ignore = [*(config.option.ignore or []), "core/tests", "apps"]
+
 
 # 直接 pytest 也要能跑：本机开着代理时，测试内起的回环 HTTP/WS 服务不该走代理。
 LOOPBACK_NO_PROXY = ("127.0.0.1", "localhost", "::1")
@@ -137,17 +145,19 @@ def make_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, mo
 
 
 @pytest.fixture
-def client_for(make_client, tmp_path):
-    """为模板自己的测试实例化应用，并签发指定测试用户的会话。"""
+def client_for(make_client, tmp_path, request):
+    """测试实际应用。只有位于模板目录的测试需要先生成应用。"""
+    app_dir = request.path.parents[1]
+    apps = app_dir.parent if app_dir.name != "_template" else tmp_path / "template-repo/apps"
 
     def make(app_id: str, user: str = "sampleadmin"):
-        apps = tmp_path / "template-repo/apps"
-        if not (apps / app_id).exists():
-            if not (apps / "_template").exists():
-                shutil.copytree(ROOT / "apps/_template", apps / "_template")
-            new_app_cmd = [sys.executable, str(ROOT / "scripts/new_app.py"), app_id,
-                           "模板测试应用", "--owner", "tester", "--root", str(apps.parent)]
-            subprocess.run(new_app_cmd, check=True, capture_output=True)
+        if app_dir.name == "_template" and not (apps / app_id).exists():
+            shutil.copytree(app_dir, apps / "_template", dirs_exist_ok=True)
+            subprocess.run(
+                [sys.executable, str(ROOT / "scripts/new_app.py"), app_id,
+                 "模板测试应用", "--owner", "tester", "--root", str(apps.parent)],
+                check=True, capture_output=True,
+            )
         c = make_client(apps)
         assert c.post("/api/auth/login", json={"user_id": user}).status_code == 200
         return c

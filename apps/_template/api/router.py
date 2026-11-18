@@ -19,17 +19,27 @@ router = APIRouter()
 RECORD_TYPE = "note"
 
 
+def _csv_text(value: str) -> str:
+    """显式标记会被电子表格解释为公式的文本。"""
+    if value.startswith(("\t", "\r", "\n")) or value.lstrip().startswith(("=", "+", "-", "@", "＝", "＋", "－", "＠")):
+        return "'" + value
+    return value
+
+
 def to_csv(record: dict) -> str:
     """把一条已确认记录拼成 CSV；纯函数，测试用手工样本断言。"""
     data = record.get("data") or {}
-    buf = io.StringIO()
-    writer = csv.writer(buf, lineterminator="\n")
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf)
     writer.writerow(["字段", "内容"])
-    writer.writerow(["标题", data.get("title", "")])
-    writer.writerow(["内容", data.get("content", "")])
-    writer.writerow(["状态", record.get("status", "")])
-    writer.writerow(["提交人", record.get("submitter", "")])
-    writer.writerow(["确认人", record.get("confirmedBy") or ""])
+    for label, value in (
+        ("标题", data.get("title")),
+        ("内容", data.get("content")),
+        ("状态", record.get("status")),
+        ("提交人", record.get("submitter")),
+        ("确认人", record.get("confirmedBy")),
+    ):
+        writer.writerow([label, _csv_text("" if value is None else str(value))])
     return buf.getvalue()
 
 
