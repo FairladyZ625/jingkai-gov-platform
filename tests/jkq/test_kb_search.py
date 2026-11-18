@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-dev.txt")
+
 from jkq.kb.search import install, search
 from jkq.kb.stats import stats
 
