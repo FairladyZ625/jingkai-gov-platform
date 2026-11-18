@@ -125,7 +125,7 @@ def test_department_dependencies_and_snapshots(client):
     assert renamed == dict(created, name='新名称')
     created_user = ok(client.post(USERS, json=dict(username='new.user', name='验收员', role='member',
                                                     deptId=created['id'], title='专员')))['item']
-    assert created_user['dept'] == '新名称'
+    assert created_user['dept'] == 'AI 工作组 · 新名称'
     denied(client.delete(path), 409, 'NOT_EMPTY')  # 只有成员
     updated = ok(client.patch(USERS + '/' + created_user['id'], json={'deptId': None}))['item']
     assert updated == dict(created_user, deptId=None, dept='')
@@ -191,8 +191,8 @@ def test_revoke_operate_same_cookie(client):
         else:
             denied(response, 403, 'FORBIDDEN')
     row = items(client, AUDIT, action='identity.grant.update')[0]['detail']
-    for snapshot, actions in ((row['before'], ['view', 'operate']), (row['after'], ['view'])):
-        assert (snapshot['actions'] if isinstance(snapshot, dict) else snapshot) == actions
+    assert row['before'] == dict(role='member', app=APP, actions=['view', 'operate'])
+    assert row['after'] == dict(role='member', app=APP, actions=['view'])
 
 
 def test_nonadmin_routes(client):
@@ -223,8 +223,7 @@ def test_role_settings_and_app_snapshots(client, build):
     after = ok(client.get(settings))
     assert after['settings']['platformName'] == '验收平台'
     audit = detail(client, 'identity.settings.update')
-    for value, snapshot in ((before, audit['before']), (after, audit['after'])):
-        assert snapshot.get('settings', snapshot)['platformName'] == value['settings']['platformName']
+    assert (audit['before'], audit['after']) == (before, after)
 
     def app_item(reader):
         return next(x for x in items(reader, '/api/v1/apps') if x['id'] == APP)
@@ -233,9 +232,8 @@ def test_role_settings_and_app_snapshots(client, build):
     changed = ok(client.patch(ADMIN + 'apps/' + APP, json=dict(status='maintenance', statusNote='例行维护')))['item']
     assert changed['status'] == app_item(client)['status'] == app_item(build())['status'] == 'maintenance'
     audit = detail(client, 'app.update')
-    assert audit['before']['status'] == initial['status']
-    assert audit['after']['status'] == changed['status']
-    assert audit['after']['statusNote'] == '例行维护'
+    assert audit['before'] == {key: initial[key] for key in ('status', 'statusNote')}
+    assert audit['after'] == dict(status='maintenance', statusNote='例行维护')
 
 
 def test_audit_filters_and_csv(client):
