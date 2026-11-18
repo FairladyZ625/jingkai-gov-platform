@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; form-action 'none'; base-uri 'none'">
+  <title>模拟政务站 · 企业事项申报</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header><strong>经开区 · 模拟政务站</strong><span>模拟系统，不收集真实信息</span></header>
+  <main>
+    <h1>企业事项申报</h1>
+    <div class="workspace">
+      <aside aria-label="办理流程"><h2>办理流程</h2>
+        <ol><li aria-current="step">模拟登录</li><li>填写申报</li><li>上传附件</li><li>验证码核验</li><li>确认提交</li></ol>
+      </aside>
+      <article>
+        <section id="login"><h2 tabindex="-1">模拟登录</h2>
+          <p>使用预设身份进入演练，全程只使用本页提供的示例资料。</p>
+          <dl><dt>登录身份</dt><dd>演示企业经办人</dd></dl>
+          <button data-op="login">以演示身份登录</button>
+        </section>
+        <section id="apply" hidden><h2 tabindex="-1">填写申报</h2>
+          <p>为演示企业选择本次申报的事项。</p>
+          <label for="service">申报事项</label>
+          <select id="service" data-op="service"><option value="">请选择事项</option><option>模拟企业备案</option><option>模拟信息变更</option></select>
+          <button data-op="apply-next" disabled>下一步：上传附件</button>
+        </section>
+        <section id="upload" hidden><h2 tabindex="-1">上传附件</h2>
+          <p>使用本站提供的样例材料完成模拟上传。</p>
+          <dl><dt>申报材料</dt><dd>演示申请书.txt</dd></dl>
+          <button data-op="upload">上传样例附件</button><p role="status" id="upload-status"></p>
+          <div class="actions"><button class="back" data-op="upload-back">上一步</button><button data-op="upload-next" disabled>下一步：核验</button></div>
+        </section>
+        <section id="captcha" hidden><h2 tabindex="-1">验证码核验</h2>
+          <p>输入下方四位演练码，核验后可查看提交清单。</p>
+          <div class="code" aria-label="演练码">2468</div>
+          <label for="digits">演练码</label><input data-op="captcha" id="digits" inputmode="numeric" maxlength="4" autocomplete="off">
+          <p role="alert" id="error"></p>
+          <div class="actions"><button class="back" data-op="captcha-back">上一步</button><button data-op="verify">核验演练码</button></div>
+        </section>
+        <section id="confirm" hidden><h2 tabindex="-1">确认提交</h2>
+          <p>模拟系统，不收集真实信息。请核对本次演练的申报资料。</p>
+          <dl><dt>申报事项</dt><dd id="summary"></dd><dt>申报材料</dt><dd>演示申请书.txt</dd></dl>
+          <div class="actions"><button class="back" data-op="confirm-back">返回修改</button><button data-op="submit">确认模拟提交</button></div>
+        </section>
+        <section id="done" hidden><h2 tabindex="-1">模拟申报已受理</h2>
+          <p>本次演练已完成，受理编号仅供本页核对。</p>
+          <dl><dt>模拟受理编号</dt><dd id="receipt"></dd></dl><button data-op="restart">重新演练</button>
+        </section>
+      </article>
+    </div>
+  </main>
+</body>
+</html>
