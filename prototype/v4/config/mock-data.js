@@ -30,27 +30,10 @@
   ];
 
   /* ---------- 模型（统一模型网关，可随时替换） ---------- */
-  D.models = [
-    { id: 'auto', name: '自动选择', provider: '模型网关', group: '推荐', kind: 'route', desc: '按任务自动路由：敏感数据走本地，写作走旗舰，问答走高速', tags: ['推荐'], enabled: true },
-    { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '复杂推理、政策条件分析', tags: ['推理'], ctx: '1M', enabled: true },
-    { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '高频问答、信息提取，速度快', tags: ['高速'], ctx: '1M', enabled: true },
-    { id: 'qwen4-max', name: '通义千问 Qwen4-Max', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '旗舰多模态，长文写作与工具调用', tags: ['旗舰', '写作'], ctx: '1M', enabled: true },
-    { id: 'qwen3.8-flash', name: '通义千问 Qwen3.8-Flash', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '低成本日常任务', tags: ['高速'], ctx: '1M', enabled: true },
-    { id: 'glm-5.3', name: '智谱 GLM-5.3', provider: '智谱 AI', group: '国产云端', kind: 'cloud', desc: '规则梳理、方案检查', tags: ['推理'], ctx: '1M', enabled: true },
-    { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', provider: '月之暗面', group: '国产云端', kind: 'cloud', desc: '超长文档阅读，政策原文通读', tags: ['长文'], ctx: '1M', enabled: true },
-    { id: 'doubao-seed-2', name: '豆包 Seed-2.0', provider: '字节跳动', group: '国产云端', kind: 'cloud', desc: '口语化改写、通知摘要，响应快', tags: ['快速'], ctx: '256K', enabled: true },
-    { id: 'ernie-5.5', name: '文心 5.5', provider: '百度智能云', group: '国产云端', kind: 'cloud', desc: '可经“亦智”平台纳管调用', tags: ['亦智'], ctx: '128K', enabled: true },
-    { id: 'hunyuan-hy4', name: '腾讯混元 Hy4', provider: '腾讯云', group: '国产云端', kind: 'cloud', desc: '视觉理解、读图', tags: ['读图'], ctx: '1M', enabled: true },
-    { id: 'local-qwen-32b', name: 'Qwen3-32B（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '企业台账、未公开公文等敏感数据只走本地', tags: ['数据不出局'], ctx: '128K', enabled: true },
-    { id: 'local-deepseek', name: 'DeepSeek 蒸馏版（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '离线兜底', tags: ['数据不出局'], ctx: '64K', enabled: true },
-    { id: 'gpt', name: 'GPT 系列', provider: 'OpenAI', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
-    { id: 'claude', name: 'Claude 系列', provider: 'Anthropic', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
-  ];
-  D.capabilities = [
-    { id: 'chat', name: '对话', route: 'auto' }, { id: 'transcribe', name: '语音转写', route: 'FunASR / SenseVoice（本地）' },
-    { id: 'embedding', name: '向量检索', route: 'BGE-M3（本地）' }, { id: 'parse', name: '文档解析', route: 'MinerU（本地）' },
-    { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
-  ];
+  const routing = window.JK_CONFIG.modelRouting;
+  D.models = routing.models;
+  D.capabilities = routing.capabilities;
+  const modelName = (id) => D.models.find((m) => m.id === id).name;
 
   /* ---------- 小应用注册表（复用卫华 apps/<id>/app.json 清单规范） ---------- */
   D.apps = [
@@ -342,7 +325,7 @@
     { id: 'T03', group: 'B', groupName: '面向企业组织事项', name: '奖励申报通知', purpose: '某项政策进入申报期，告知企业如何申报', inputs: [['policy', '政策依据', 'PI-03'], ['start', '申报开始', '2026-12-01'], ['end', '申报截止', '2026-12-31'], ['contact', '咨询电话', '010-6788XXXX']], kind: '通知' },
     { id: 'T04', group: 'B', groupName: '面向企业组织事项', name: '项目公开征集通知', purpose: '向企业征集项目、课题或方案', inputs: [['title', '征集方向', 'AI 场景应用示范项目'], ['end', '截止时间', '2026-12-20'], ['support', '支持方式', '按投入 30%，最高 500 万元']], kind: '通知' },
     { id: 'T05', group: 'B', groupName: '面向企业组织事项', name: '项目榜单发布通知', purpose: '发布可揭榜的项目清单', inputs: [['batch', '榜单批次', '第四批'], ['count', '项目数量', '12']], kind: '通知' },
-    { id: 'T06', group: 'B', groupName: '面向企业组织事项', name: '申报期限调整通知', purpose: '已发布事项需要延长或变更时间', inputs: [['orig', '原通知名称', '关于开展 2026 年数据券申报工作的通知'], ['oldEnd', '原截止时间', '2026-11-02'], ['newEnd', '新截止时间', '2026-11-06'], ['reason', '调整原因', '部分企业交易凭证开具延迟']], kind: '通知' },
+    { id: 'T06', group: 'B', groupName: '面向企业组织事项', name: '申报期限调整通知', purpose: '已发布事项需要延长或变更时间', inputs: [['orig', '原通知名称', '关于开展 2026 年数据券后续批次申报工作的通知'], ['oldEnd', '原截止时间', '2026-11-30'], ['newEnd', '新截止时间', '2026-12-15'], ['reason', '调整原因', '部分企业交易凭证开具延迟']], kind: '通知' },
     { id: 'T07', group: 'B', groupName: '面向企业组织事项', name: '企业经营情况调查通知', purpose: '要求企业按口径和期限填报经营数据', inputs: [['period', '统计期间', '2026 年 1—10 月'], ['end', '填报截止', '2026-11-28']], kind: '通知' },
     { id: 'T08', group: 'C', groupName: '公开结果与回应', name: '拟推荐结果公示', purpose: '最终确定前公开候选名单', inputs: [['title', '公示事项', '2026 年度接诉即办先进单位'], ['days', '公示期（工作日）', '5'], ['list', '拟推荐名单', '书香里文化、星河智驾、天工机器人']], kind: '公示' },
     { id: 'T09', group: 'C', groupName: '公开结果与回应', name: '行政许可事项公示', purpose: '许可事项依法公示', inputs: [['item', '许可事项', '互联网上网服务营业场所筹建'], ['applicant', '申请主体', '北京亦城网咖有限公司']], kind: '公示' },
@@ -370,7 +353,7 @@
     F('F005', 'policy', '京技管发〔2024〕10号 AI原生产业创新高地政策（3月版）.pdf', '2.0 MB', '2026-11-12', 12, ['AI', '已失效'], '来源已修订', { snippet: '算力采购费用按30%或40%给予支持（已被11月版替代）。' }),
     F('F006', 'policy', '京技管发〔2026〕12号 支持人工智能原生人才发展的若干措施.pdf', '980 KB', '2026-11-13', 38, ['人才', '现行'], '已入库', { snippet: '对人工智能原生创业者，给予个人最高50万元奖励。' }),
     F('F007', 'policy', '关于开展2026年数据券申报工作的通知.pdf', '420 KB', '2026-10-12', 29, ['数据券', '批次'], '已入库', { snippet: '申报时间：2026年10月12日至11月2日。' }),
-    F('F008', 'policy', '关于数据券申报延期的通知.pdf', '210 KB', '2026-11-03', 22, ['数据券', '批次'], '已入库', { snippet: '申报截止时间延长至2026年11月6日。' }),
+    F('F008', 'policy', '关于数据券申报延期的通知（往期）.pdf', '210 KB', '2026-11-03', 22, ['数据券', '批次'], '已入库', { snippet: '往期通知的申报截止时间延长至2026年11月6日。' }),
     F('F009', 'policy', '政策兑现内部问答 FAQ（2026版）.docx', '156 KB', '2026-11-01', 57, ['FAQ'], '已入库', { snippet: '问：新开书店能否申请房租补贴？答：需经营满一年。' }),
     F('F010', 'enterprise', '重点企业台账 2026Q3.xlsx', '3.4 MB', '2026-10-15', 120, ['台账'], '已入库', { snippet: '共 412 家，字段 46 列。' }),
     F('F011', 'enterprise', '书香里文化-营业执照.pdf', '1.1 MB', '2026-03-02', 4, ['E001'], '已入库'),
@@ -398,11 +381,11 @@
     ['25 分钟前', '刘翔 复制改编了「走访随记转台账」'], ['1 小时前', '孙婷 发布「政策新旧版本对比」v1.0.3'], ['今天 08:15', 'NAS 同步 12 份资料到「政策法规库」'], ['昨天', '「京技管发〔2024〕10号」被新版替代，3 条历史答复已标记“来源已修订”'],
   ];
   D.audit = [
-    ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', 'DeepSeek-V4.1-Flash'], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', 'Qwen3-32B（本地）'],
-    ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', 'Qwen4-Max'], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
-    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', 'GLM-5.3'], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', 'SenseVoice（本地）'],
+    ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', modelName(routing.channels.local)], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', modelName(routing.channels.local)],
+    ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', modelName(routing.taskModels.writing)], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
+    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', modelName(routing.taskModels.rules)], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', routing.transcriptionModel],
   ];
-  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [['DeepSeek-V4.1-Flash', 34], ['Qwen3-32B（本地）', 27], ['Qwen4-Max', 18], ['GLM-5.3', 9], ['Kimi K3.1 Pro', 7], ['其他', 5]] };
+  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [...routing.usageBuckets.map(([id, share]) => [modelName(id), share]), ['其他', 5]] };
 
   /* ---------- 对话历史 ---------- */
   D.conversations = [

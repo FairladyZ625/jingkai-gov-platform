@@ -59,7 +59,7 @@
     if (b.entId) { const e = ent(b.entId); if (!e) X.err(404, 'NOT_FOUND', '企业不存在'); pf = profileOf(e); Object.assign(pf, b.overrides || {}); if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])]; }
     else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
     const results = matchAll(pf);
-    X.audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, 'DeepSeek-V4.1-Flash');
+    X.audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, X.pickModel(S().modelId, !!b.entId).used.name);
     return { profile: pf, results, summary: { ok: results.filter((r) => r.level === 'ok').length, check: results.filter((r) => r.level === 'check').length, no: results.filter((r) => r.level === 'no').length } };
   });
   X.first('POST', '/api/apps/policy/calc', (b) => {
