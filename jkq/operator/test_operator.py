@@ -7,10 +7,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
-from haiknow_core.main import current_user
 from jkq.app import create_app
-
-from jkq.operator.routes import install
 
 BASE = "/api/v1/operator"
 LOGIN = "/api/v1/auth/login"
@@ -28,7 +25,6 @@ def instance(tmp_path, monkeypatch, reuse_loaded_routers, cheap_password_hash):
     for role in ("admin", "leader", "member", "partner"):
         monkeypatch.setenv(f"JKQ_DEMO_{role.upper()}_PASSWORD", f"test-{role}")
     app = create_app()
-    install(app, current_user)
     monkeypatch.setattr(app.state.platform, "model", SimpleNamespace(configured=False))
     return app
 
@@ -61,6 +57,14 @@ def codes(response, status, code):
 def operator_audit(instance):
     return [item for item in instance.state.platform.store.audit_list()
             if item["action"].startswith("operator.")]
+
+
+def test_routes_are_wired_into_instance_factory(instance):
+    # 实例工厂直接挂好操作员路由：未登录得到 401 而不是 404。
+    client = TestClient(instance)
+    codes(client.get(f"{BASE}/intents"), 401, "UNAUTHENTICATED")
+    codes(client.post(f"{BASE}/plan", json={"text": VISIT}), 401, "UNAUTHENTICATED")
+    codes(client.post(f"{BASE}/runs/run-x/stop"), 401, "UNAUTHENTICATED")
 
 
 def test_catalog_and_forbidden_plan_under_real_partner_session(instance):
