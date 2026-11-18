@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 from starlette.exceptions import HTTPException
 
 from .browser import PlaywrightRunner
-from .runs import ComputerError, PREFIX, Runs, TASK
+from .runs import ComputerError, PREFIX, Runs, TASKS
 
 
 APP_ID = "computer"
@@ -20,7 +20,7 @@ HTTP_STATUS = {
     "UNAUTHENTICATED": 401, "FORBIDDEN": 403, "NOT_FOUND": 404, "LOCKED": 409,
     "CHECK_FAILED": 422, "OUTBOUND_DENIED": 403, "QUOTA_EXCEEDED": 429,
 }
-KIND_ALIASES = {"captcha": "otp", "验证码": "otp", "签章": "sign", "付款": "pay", "提交": "submit"}
+KIND_ALIASES = {"captcha": "otp", "验证码": "otp", "签章": "sign", "付款": "pay", "提交": "submit", "入库": "import"}
 
 
 class ComputerRoute(APIRoute):
@@ -101,7 +101,7 @@ def create_router(runs: Runs, current_user, current_actions) -> APIRouter:
 
     @router.get("/tasks")
     async def tasks(user=view):
-        return {"items": [TASK], "systems": [runs.system()]}
+        return {"items": list(TASKS.values()), "systems": runs.systems()}
 
     @router.patch("/systems/{system_id}")
     async def update_system(system_id: str, body: SystemBody, user=admin):
@@ -109,7 +109,9 @@ def create_router(runs: Runs, current_user, current_actions) -> APIRouter:
 
     @router.post("/match")
     async def match(body: MatchBody, user=view):
-        task = TASK if any(word in body.text for word in TASK["keywords"]) else None
+        # 先匹配通知，避免「申报通知」被申报填表抢走。
+        task = next((item for item in (TASKS["notice"], TASKS["apply"])
+                     if any(word in body.text for word in item["keywords"])), None)
         ent = re.search(r"(?<![A-Za-z0-9])E[0-9]{3,12}(?![A-Za-z0-9])", body.text)
         return {"task": task, "entId": ent[0] if ent else None}
 

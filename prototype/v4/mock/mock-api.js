@@ -110,9 +110,14 @@
   }
 
   function refreshExtensionNoticeSeeds() {
-    // 已存状态也包含种子副本。只更新延期通知的模板示例和往期标注。
+    // 已存状态也包含种子副本。刷新延期通知的模板示例、往期标注和原始定稿落款。
     const template = S.docTemplates?.find((t) => t.id === 'T06');
     if (template) template.inputs = clone(SEED.docTemplates.find((t) => t.id === 'T06').inputs);
+    const original = S.drafts?.['DOC-1108']?.versions?.[0];
+    const seed = SEED.documents.find((d) => d.id === 'DOC-1108');
+    if (original?.content?.date === '2026年11月17日' && original.at === seed.updated + ' 10:00' && original.by === seed.author) {
+      original.content.date = cnDate(seed.updated);
+    }
     const notice = S.files?.find((f) => f.id === 'F008');
     if (notice) {
       const { name, snippet } = SEED.files.find((f) => f.id === 'F008');
@@ -358,7 +363,7 @@
     return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '' };
   }
   const DOC_DATE_PREFIX = /^\s*(\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-])))/;
-  const EXTENSION_DATES = /申报截止时间\s*由([^。；]*?)延长至([^。；]+)/;
+  const EXTENSION_DATES = /申报截止时间\s*由\s*(?:原定[的于]?)?([^。；]*?)延长至([^。；]+)/;
   function docDateValue(text) {
     // 规则按日历日比较，日期后的时分和时区注记不参与比较。
     const match = DOC_DATE_PREFIX.exec(text || '');
@@ -459,6 +464,7 @@
         reason: '部分企业交易凭证开具延迟',
       } : Object.fromEntries(tt.inputs.map(([key, , value]) => [key, value]));
       const content = genDoc(tt, inp);
+      if (d.id === 'DOC-1108') content.date = cnDate(d.updated);
       content.title = d.title;
       S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author,
         versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content }], comments: [] };
