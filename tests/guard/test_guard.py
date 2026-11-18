@@ -27,7 +27,7 @@ class GuardTest(unittest.TestCase):
 
     def run_git(self, *args, check=True):
         return subprocess.run(["git", *args], cwd=self.repo, check=check,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8")
 
     def commit(self, check=True):
         return self.run_git("-c", "user.name=Guard Test", "-c", "user.email=test@example.org",
@@ -81,5 +81,5 @@ class GuardTest(unittest.TestCase):
     def test_ci_entry_reads_index(self):
         self.stage("normal.md", "公开文档")
         result = subprocess.run([sys.executable, "scripts/guard.py"], cwd=self.repo,
-                                check=True, capture_output=True, text=True)
+                                check=True, capture_output=True, text=True, encoding="utf-8")
         self.assertIn("发现 0 项问题", result.stdout)
