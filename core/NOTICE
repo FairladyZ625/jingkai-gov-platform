@@ -1,0 +1,10 @@
+本目录的平台服务端与 SDK，以及仓库中的应用模板和配套检查、回归测试，
+源自 haiknow-app-platform。源快照及提交时间见 VERSION。
+
+源 commit 无 LICENSE。经仓库所有者 Ben 于 2026-11-18 确认，
+按 AGPL-3.0 向本仓库公开该快照。许可证全文见仓库根目录 LICENSE。
+
+2026-11-18 经项目 CEO 裁决，本次快照暂保留上游模型凭据契约。
+管理员通过网关配置服务商凭据，SQLite 保存密文。加密主密钥位于
+`HAIKNOW_DATA_DIR` 下的 `ai-master.key`，根目录 `.gitignore` 的
+`*.key` 规则覆盖该文件。本项为环境变量凭据规则的已知例外，待 Ben 裁定。
