@@ -72,11 +72,15 @@ def test_auth_mapping_preserves_cookie_and_session(client):
     client.cookies.clear()
     login = client.post("/api/v1/auth/login", json=credentials)
     assert login.status_code == 200
-    assert login.json() == {"ok": True}
+    assert login.json()["user"]["username"] == "test-admin"
     assert "set-cookie" in login.headers
-    assert client.get("/api/v1/me").json()["isAdmin"] is True
+    assert client.get("/api/v1/auth/session").json()["user"]["username"] == "test-admin"
+    me = client.get("/api/v1/me").json()
+    assert me["role"]["id"] == "admin"
+    assert "admin" in me["grants"]["*"]
     assert client.post("/api/auth/logout").status_code == 200
     assert client.get("/api/v1/me").status_code == 401
+    assert client.get("/api/v1/auth/session").json() == {"user": None}
 
 
 def test_admin_mapping_preserves_query_and_reaches_core(client):
@@ -129,7 +133,6 @@ def test_unmapped_routes_use_error_envelope(client, path):
 
 
 @pytest.mark.parametrize(("method", "path"), [
-    ("GET", "/api/v1/auth/session"),
     ("POST", "/api/v1/admin/departments"),
     ("DELETE", "/api/v1/admin/departments/example"),
     ("GET", "/api/v1/kb/libraries"),
@@ -254,7 +257,8 @@ def test_web_directory_selection(data_dir, tmp_path, monkeypatch, configured):
     root = tmp_path / "instance"
     root.mkdir()
     (root / "config").mkdir()
-    copyfile(REPO_ROOT / "config/projects.yaml", root / "config/projects.yaml")
+    for name in ("projects.yaml", "roles.yaml"):
+        copyfile(REPO_ROOT / "config" / name, root / "config" / name)
     monkeypatch.setenv("HAIKNOW_ROOT", str(root))
     (root / "web").mkdir()
     (root / "web/index.html").write_text("web 优先", encoding="utf-8")

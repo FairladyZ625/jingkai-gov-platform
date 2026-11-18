@@ -366,6 +366,20 @@ def test_login_admin_denial_logout_are_audited_once(instance, path):
     assert_public(rows)
 
 
+def test_instance_factory_installs_demo_auth(instance, monkeypatch):
+    from jkq.app import create_app as create_instance
+
+    monkeypatch.setenv('JKQ_DEMO_MODE', '1')
+    client = TestClient(create_instance())
+    for role, (username, _name) in ACCOUNTS.items():
+        assert response(login(client, role), 200)['role']['id'] == role
+        assert response(client.get(SESSION), 200)['user']['username'] == username
+    error(client.get(ADMIN), 403, 'FORBIDDEN', {'app': '*', 'need': 'admin'})
+    response(client.put(ROLE, json={'role': 'admin'}), 200)
+    response(client.get(ADMIN), 200)
+    error(client.post('/api/v1/auth/bootstrap', json={}), 404, 'NOT_FOUND')
+
+
 def test_generated_password_once_then_environment_does_not_overwrite(instance, monkeypatch, capsys):
     build, _ = instance
     monkeypatch.delenv('JKQ_DEMO_MEMBER_PASSWORD')
