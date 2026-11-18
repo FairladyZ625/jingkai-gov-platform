@@ -6,7 +6,10 @@ import shutil
 import subprocess
 import time
 import sys
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 import pytest
 
@@ -15,6 +18,8 @@ DEPLOY = Path(__file__).resolve().parent
 
 @pytest.fixture
 def site(tmp_path):
+    if fcntl is None:
+        pytest.skip("deploy/demo 运维脚本与 fcntl 文件锁测试仅支持 POSIX 环境")
     repo = tmp_path / "repo"
     target = repo / "deploy"
     target.mkdir(parents=True)
@@ -204,8 +209,8 @@ def test_compose(site):
 
 
 def test_image_context_keeps_runtime_directories():
-    allowed = set((DEPLOY / "Dockerfile.dockerignore").read_text().split())
-    dockerfile = (DEPLOY / "Dockerfile").read_text()
+    allowed = set((DEPLOY / "Dockerfile.dockerignore").read_text(encoding="utf-8").split())
+    dockerfile = (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
     pythonpath = next(line for line in dockerfile.splitlines() if "PYTHONPATH=" in line)
     for entry in pythonpath.split("PYTHONPATH=")[1].split()[0].split(":"):
         relative = entry.removeprefix("/srv/app").strip("/")
