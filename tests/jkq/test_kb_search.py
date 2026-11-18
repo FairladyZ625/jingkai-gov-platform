@@ -34,6 +34,8 @@ def test_public_clause_and_seed_counts(seed):
     assert set(result) == {"hits", "total", "terms", "facets"}
     assert "算力券" in hit["snippet"] and "最高2000万元" in hit["snippet"]
     assert hit["snippet"] in next(d["text"] for d in seed if d["id"] == hit["id"])
+    assert hit["id"] == "KB-P3950424" and hit["chunk"] == 0
+    assert hit["spaceName"] == "政策库" and hit["chunks"] == 1
     counts = stats(seed)
     assert counts["docs"] == len(seed)
     assert counts["real"] == sum(bool(d["real"]) for d in seed)
@@ -114,16 +116,102 @@ def test_partner_errors_stats_suggest_and_default_vector(monkeypatch, seed):
     assert len(client.get(base + "suggest").json()["items"]) >= 3
 
 
+def local_settings(providers, route):
+    class Settings:
+        def route(self, capability):
+            return route if capability == "embedding" else None
+
+        def provider(self, ident):
+            return providers.get(ident)
+
+    return SimpleNamespace(settings=Settings(), files=None, audit=None)
+
+
+def local_provider(ident="local-emb", *, enabled=True, allow="confidential",
+                   kind="local", url="http://127.0.0.1:8080", models=("emb-a",)):
+    return dict(id=ident, kind=kind, enabled=enabled, base_url=url, models=list(models),
+                allow_outbound=allow, api_key="")
+
+
+def test_passage_selection_single_char_and_expired_tie():
+    docs = [
+        document("toc", title="算力券申报", text="目录。\n申报材料应包括算力券申报要求。"),
+        document("tax", title="通知", text="企业税收申报。"),
+        document("live", title="办法", text="支持企业年度申报。", status="现行有效"),
+        document("dead", title="办法", text="支持企业年度申报。", status="已失效"),
+    ]
+    toc = search(docs, "算力券")
+    assert toc["hits"][0]["id"] == "toc"
+    assert toc["hits"][0]["snippet"] == "申报材料应包括算力券申报要求。"
+    assert search(docs, "税")["hits"][0]["id"] == "tax"
+    ranked = search([docs[2], docs[3]], "企业")["hits"]
+    assert [h["id"] for h in ranked] == ["live", "dead"]
+    assert ranked[1]["status"] == "已失效"
+
+
+def test_search_parameter_errors(monkeypatch):
+    client = api(monkeypatch)
+    base = "/api/v1/kb/search"
+    bad = client.post(base, json={"q": "企业", "sort": "unknown"})
+    zero = client.post(base, json={"q": "企业", "limit": 0})
+    for response in (bad, zero):
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["code"] == "CHECK_FAILED" and "message" in error and "details" in error
+
+
 def test_vector_startup_and_semantic_hit(monkeypatch):
     with pytest.raises(RuntimeError, match="embedding"):
         api(monkeypatch, vector=True)
+
+    disabled = local_settings({"cloud": local_provider("cloud", enabled=False, kind="openai",
+                                                       url="https://example.com")},
+                              dict(provider="cloud", model="emb-a",
+                                   fallback_provider=None, fallback_model=None))
+    with pytest.raises(RuntimeError, match="本地 embedding"):
+        api(monkeypatch, vector=True, gateway=disabled)
+
+    remote = local_settings({"cloud": local_provider("cloud", kind="openai", url="https://example.com")},
+                            dict(provider="cloud", model="emb-a",
+                                 fallback_provider=None, fallback_model=None))
+    with pytest.raises(RuntimeError, match="本地 embedding"):
+        api(monkeypatch, vector=True, gateway=remote)
+
+    providers = {
+        "cloud": local_provider("cloud", kind="openai", url="https://example.com"),
+        "local-emb": local_provider(),
+        "local-b": local_provider("local-b", models=("emb-b",)),
+    }
+    gateway = local_settings(providers, dict(provider="cloud", model="emb-a",
+                                             fallback_provider="local-emb", fallback_model="emb-a"))
     calls = []
-    def call(app_id, capability, payload, principal):
-        calls.append(payload)
-        assert (app_id, capability, principal.id) == ("kb", "embedding", "demo")
-        return {"result": [{"embedding": [1, 0]}]}
-    gateway = SimpleNamespace(settings=SimpleNamespace(route=lambda capability: {"model": "demo"}), call=call)
-    client = api(monkeypatch, vector=True, gateway=gateway)
-    r = client.post("/api/v1/kb/search", json={"q": "补贴"}).json()
-    assert r["total"] == 1 and r["hits"][0]["score"] == 1
-    assert len(calls) == 2 and all(c["classification"] == "confidential" for c in calls)
+
+    def fake_call(self, app_id, capability, payload, timeout=50, *, principal=None, **kwargs):
+        provider, model = self._route_candidates(capability)[0][0]["id"], self._route_candidates(capability)[0][1]
+        calls.append((provider, payload["input"], payload["classification"]))
+        assert (app_id, capability, principal.id, payload["classification"]) == (
+            "kb", "embedding", "demo", "confidential")
+        assert provider == "local-emb"
+        return {"result": [{"embedding": [1, 0]}], "provider": provider, "model": model}
+
+    docs = [document(1), document(2, title="另一份指南", text="企业应当按时申报。")]
+    monkeypatch.setattr("haiknow_core.aihub.gateway.Gateway.call", fake_call)
+    client = api(monkeypatch, vector=True, gateway=gateway, docs=docs)
+    first = client.post("/api/v1/kb/search", json={"q": "企业", "limit": 1}).json()
+    assert first["total"] == 2 and len(first["hits"]) == 1
+    # 查询向量 + 1 条重排候选，不会把可见库全部向量化。
+    assert len(calls) == 2 and {c[0] for c in calls} == {"local-emb"}
+    client.post("/api/v1/kb/search", json={"q": "企业", "limit": 1})
+    assert len(calls) == 2  # 重复查询走缓存
+
+    # 跨模型或维度不一致时退回 BM25 顺序。
+    def mixed_call(self, app_id, capability, payload, timeout=50, *, principal=None, **kwargs):
+        provider, model = "local-emb", "emb-a"
+        if payload["input"] != "企业":
+            provider, model = "local-b", "emb-b"
+        return {"result": [{"embedding": [1, 0]}], "provider": provider, "model": model}
+
+    monkeypatch.setattr("haiknow_core.aihub.gateway.Gateway.call", mixed_call)
+    baseline = search(docs, "企业")
+    mixed = client.post("/api/v1/kb/search", json={"q": "企业"}).json()
+    assert [h["id"] for h in mixed["hits"]] == [h["id"] for h in baseline["hits"]]

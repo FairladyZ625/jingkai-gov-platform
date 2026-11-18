@@ -1,5 +1,6 @@
 """在 #24 已授权的候选文档上按片段检索，以文档为单位分页和计数。"""
-from collections import Counter
+from collections import Counter, OrderedDict
+from threading import Lock
 from functools import lru_cache
 import math
 import os
@@ -20,10 +21,12 @@ def tokens(text):
 
 
 @lru_cache(maxsize=16384)
-def indexed(title, snippet):
-    frequencies = Counter(tokens(snippet))
-    frequencies.update(tokens(title))
-    return frequencies, sum(frequencies.values())
+def indexed(text, singles):
+    frequencies = Counter(tokens(text))
+    size = sum(frequencies.values())
+    for term in singles:
+        frequencies[term] = text.count(term)
+    return frequencies, size
 
 
 def matches(doc, filters):
@@ -41,45 +44,135 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
     if "封顶" in terms:
         for synonym in CAP_TERMS:
             expanded.update(tokens(synonym))
-    rows, df, length = [], Counter(), 0
+    singles = tuple(t for t in terms if len(t) == 1 and "\u3400" <= t <= "\u9fff")
+    rows, df, length, npassages = [], Counter(), 0, 0
     for doc in docs:
         if not matches(doc, filters or {}):
             continue
-        for chunk, snippet in enumerate(passages(doc)):
-            frequencies, size = indexed(doc["title"], snippet)
-            found = expanded.intersection(frequencies)
-            df.update(found)
+        title, title_size = indexed(doc["title"], singles)
+        title_terms = [t for t in expanded if title[t]]
+        snippets = []
+        present = set(title_terms)
+        for snippet in passages(doc):
+            frequencies, size = indexed(snippet, singles)
+            found = [t for t in expanded if frequencies[t]]
+            present.update(found)
             length += size
-            rows.append((doc, chunk, snippet, frequencies, size, found))
-    average = length / len(rows) if length else 1
+            npassages += 1
+            snippets.append((snippet, frequencies, size, found))
+        df.update(present)
+        rows.append((doc, title, title_size, title_terms, snippets))
+    average = length / npassages if npassages else 1
     weights = {t: math.log1p((len(rows) - n + 0.5) / (n + 0.5)) * (1 if t in terms else 0.45)
                for t, n in df.items()}
-    query_vector = embed(q, "confidential") if embed and rows else None
+
+    def bm25(frequencies, size, found):
+        norm = 1.2 * (0.25 + 0.75 * (size or 1) / average)
+        return sum(weights[t] * frequencies[t] * 2.2 / (frequencies[t] + norm) for t in found)
+
     best = {}
-    for doc, chunk, snippet, frequencies, size, found in rows:
-        norm = 1.2 * (0.25 + 0.75 * size / average)
-        score = sum(weights[t] * frequencies[t] * 2.2 / (frequencies[t] + norm) for t in found)
-        if query_vector is not None:
-            vector = embed(snippet, doc.get("classification") or "confidential")
-            if len(vector) != len(query_vector):
-                raise ValueError("embedding 向量维度不匹配")
-            magnitude = math.hypot(*vector) * math.hypot(*query_vector)
-            if magnitude:
-                score += max(0, sum(x*y for x, y in zip(query_vector, vector)) / magnitude)
-        if score <= 0:
-            continue
-        if doc["status"] == "已失效":
-            score *= 0.6
-        ident = doc["id"]
-        if ident not in best or score > best[ident][0]:
-            best[ident] = (score, chunk, snippet, doc)
-    ranked = sorted(best.values(), key=lambda hit: (-hit[0], hit[3]["id"]))
+    for doc, title, title_size, title_terms, snippets in rows:
+        title_score = bm25(title, title_size or 1, title_terms)
+        picked = None
+        for snippet, frequencies, size, found in snippets:
+            body = bm25(frequencies, size, found)
+            original = sum(t in terms for t in found)
+            key = (original, len(found) - original, body)
+            if picked is None or key > picked[0]:
+                picked = (key, snippet, body)
+        if picked is None:
+            coverage, snippet, body = (0, 0), doc["title"], 0
+        else:
+            coverage, snippet, body = picked[0][:2], picked[1], picked[2]
+        # 标题只轻微影响文档排序；片段选择优先覆盖原查询词，再看同义扩充。
+        score = body + 0.25 * title_score
+        if (coverage != (0, 0) or title_terms) and (
+            doc["id"] not in best or (coverage, score) > (best[doc["id"]][3], best[doc["id"]][0])
+        ):
+            best[doc["id"]] = (score, snippet, doc, coverage)
+
+    def rank(hit):
+        score, _, doc, coverage = hit
+        expired = doc["status"] == "已失效"
+        return (-coverage[0], -coverage[1], -score * (0.6 if expired else 1), expired, doc["id"])
+
+    ranked = sorted(best.values(), key=rank)
+    if embed and ranked:
+        # 只重排 BM25 候选；total 和 facets 不依赖分页或模型响应。
+        count = min(len(ranked), limit, 8)
+        bonuses = embed(q, ranked[:count])
+        for i, bonus in enumerate(bonuses):
+            score, snippet, doc, coverage = ranked[i]
+            ranked[i] = (score + bonus, snippet, doc, coverage)
+        ranked.sort(key=rank)
     if sort == "date":
-        ranked.sort(key=lambda hit: hit[3]["source"].get("date") or "", reverse=True)
-    hits = [dict(metadata(doc), chunk=chunk, snippet=snippet, score=score,
-                 citationId=f"{doc['id']}@v{doc.get('version', 1)}")
-            for score, chunk, snippet, doc in ranked[:min(limit, 50)]]
-    return dict(hits=hits, total=len(ranked), terms=terms, facets=facets(hit[3] for hit in ranked))
+        ranked.sort(key=lambda hit: hit[2]["source"].get("date") or "", reverse=True)
+    hits = []
+    for hit in ranked[:min(limit, 50)]:
+        score, snippet, doc, coverage = hit
+        hits.append(dict(metadata(doc), chunk=0, snippet=snippet, score=-rank(hit)[1]))
+    return dict(hits=hits, total=len(ranked), terms=terms, facets=facets(hit[2] for hit in ranked))
+
+
+def local_reranker(gateway):
+    from haiknow_core.aihub.config import valid_base_url
+    from haiknow_core.aihub.errors import AIError
+    from haiknow_core.aihub.gateway import Gateway, allowed_outbound
+
+    class LocalEmbedding(Gateway):
+        def _route_candidates(self, capability, model=None):
+            pairs = super()._route_candidates(capability, model)
+            local = [(p, m) for p, m in pairs if p["kind"] == "local" and m.strip()
+                     and valid_base_url(p["base_url"]) and allowed_outbound(p, "confidential")]
+            if not local:
+                raise AIError("not_configured", "缺少可处理机密资料的本地 embedding 服务")
+            return local
+
+    if gateway is None:
+        raise RuntimeError("请先配置本地 aihub embedding 路由")
+    scoped = LocalEmbedding(gateway.settings, getattr(gateway, 'files', None),
+                               getattr(gateway, 'audit', None))
+    try:
+        scoped._route_candidates("embedding")
+    except AIError as exc:
+        raise RuntimeError("请配置已启用且可处理机密资料的本地 embedding 服务及模型") from exc
+    cache = OrderedDict()
+    lock = Lock()
+
+    def rerank(user, q, candidates):
+        def vector(text):
+            key = ("text", text)
+            with lock:
+                existing = cache.get(key)
+                if existing is not None:
+                    cache.move_to_end(key)
+                    return existing
+            response = scoped.call("kb", "embedding", dict(input=text, classification="confidential"),
+                                   principal=user)
+            value = ((response["provider"], response["model"]), response["result"][0]["embedding"])
+            with lock:
+                cache[key] = value
+                if len(cache) > 4096:
+                    cache.popitem(last=False)
+            return value
+
+        try:
+            identity, query = vector(q)
+            bonuses = []
+            for item in candidates:
+                snippet, doc = item[1], item[2]
+                actual, existing = vector(snippet)
+                if actual != identity or len(existing) != len(query):
+                    return []
+                magnitude = math.hypot(*query) * math.hypot(*existing)
+                bonuses.append(max(0, sum(x*y for x, y in zip(query, existing)) / magnitude)
+                               if magnitude else 0)
+            return bonuses
+        except AIError:
+            # 配额耗尽、服务停用或上游失败时保留整组 BM25 顺序。
+            return []
+
+    return rerank
 
 
 def install(app, platform, current_user, visible_spaces=None):
@@ -91,11 +184,9 @@ def install(app, platform, current_user, visible_spaces=None):
 
     if visible_spaces is None:
         from .spaces import visible_spaces
-    gateway = None
+    rerank = None
     if os.getenv("JKQ_KB_VECTOR_SEARCH", "0").lower() in ("1", "true", "yes"):
-        gateway = getattr(getattr(platform, "model", None), "aihub", None)
-        if not gateway or not gateway.settings.route("embedding"):
-            raise RuntimeError("已开启知识库向量检索，请先配置 aihub embedding 路由")
+        rerank = local_reranker(getattr(getattr(platform, "model", None), "aihub", None))
 
     class Filters(BaseModel):
         space: str = ""
@@ -113,7 +204,30 @@ def install(app, platform, current_user, visible_spaces=None):
         limit: int = Field(default=8, ge=1)
         filters: Optional[Filters] = None
 
-    router = APIRouter(prefix="/api/v1/kb")
+    try:
+        from .docs import KbRoute
+    except ModuleNotFoundError as exc:
+        if exc.name != __package__ + ".docs":
+            raise
+        # #24 尚未合入时，保持相同的路由级错误契约。
+        from fastapi.exceptions import RequestValidationError
+        from fastapi.routing import APIRoute
+
+        class KbRoute(APIRoute):
+            def get_route_handler(self):
+                handle = super().get_route_handler()
+
+                async def checked(request):
+                    try:
+                        return await handle(request)
+                    except RequestValidationError as exc:
+                        fields = [list(error["loc"]) for error in exc.errors()]
+                        error = dict(code="CHECK_FAILED", message="知识库请求参数无效",
+                                     details=dict(fields=fields))
+                        return JSONResponse({"error": error}, status_code=422)
+                return checked
+
+    router = APIRouter(prefix="/api/v1/kb", route_class=KbRoute)
     session = Depends(current_user)
 
     @router.post("/search")
@@ -130,13 +244,8 @@ def install(app, platform, current_user, visible_spaces=None):
             return JSONResponse({"error": dict(code="INVALID_QUERY", message="请输入有效的检索词",
                                                details={})}, status_code=400)
 
-        def embed(text, classification):
-            result = gateway.call("kb", "embedding", dict(input=text, classification=classification),
-                                  principal=user)
-            return result["result"][0]["embedding"]
-
         return search(docs, body.q, filters=filters, sort=body.sort, limit=body.limit,
-                      embed=embed if gateway else None)
+                      embed=(lambda q, rows: rerank(user, q, rows)) if rerank else None)
 
     @router.get("/stats")
     def statistics(user=session):

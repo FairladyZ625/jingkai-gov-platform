@@ -12,7 +12,15 @@ def passages(doc):
 
 
 def metadata(doc):
-    return {k: v for k, v in doc.items() if k not in ("text", "excerpts", "embedding")}
+    """#24 的候选记录每份非空正文对应详情 chunkList[0]。"""
+    names = {"policy": "政策库", "template": "公文范文", "minutes": "会议纪要",
+             "rules": "部门制度", "enterprise": "企业档案"}
+    fields = ("id", "title", "space", "kind", "tags", "real", "example", "source",
+              "expire", "status", "version", "from")
+    result = {k: doc[k] for k in fields if k in doc}
+    return dict(result, chunks=int(bool(doc.get("text"))), spaceName=names.get(doc["space"], doc["space"]),
+                citationId=f"{doc['id']}@v{doc.get('version', 1)}")
+
 
 
 def facet_values(doc):
@@ -35,7 +43,7 @@ def stats(docs):
     latest = sorted(docs, key=lambda d: d.get("addedAt") or d["source"].get("date") or "", reverse=True)
     return dict(docs=len(docs), real=sum(bool(d.get("real")) for d in docs),
                 example=sum(bool(d.get("example")) for d in docs),
-                chunks=sum(1 for d in docs for _ in passages(d)),
+                chunks=sum(bool(d.get("text")) for d in docs),
                 status=dict(Counter(d["status"] for d in docs)),
                 recent=[metadata(d) for d in latest[:5]], facets=facets(docs), log=[])
 
