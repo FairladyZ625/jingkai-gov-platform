@@ -113,7 +113,7 @@
     const work = appsVisible('work').some((a) => a.id === S.active);
     const it = (k, ic, t, on, extra = '') => `<button class="rail-i ${on ? 'on' : ''}" ${k} title="${esc(t)}"><span class="ri">${ic}${extra}</span><span class="rt">${esc(t)}</span></button>`;
     const has = (id) => appsVisible('platform').some((a) => a.id === id);
-    const pending = S.inbox.length;
+    const pending = pendingCount();
     el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏">${icon('cube')}</button>
       ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !S.active || work)}
       ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
@@ -129,7 +129,7 @@
     renderRail();
     const el = $('#side-sc'); if (!el) return;
     const navApp = (a) => { const m = mf(a.id); return `<button class="nav-i ${S.active === a.id ? 'on' : ''}" data-app="${a.id}" data-op="nav.${a.id}" title="${esc(m.summary || m.name)}">${appIcon(a.id, 'sm')}<span class="t">${esc(m.name)}</span></button>`; };
-    const pending = S.inbox.length;
+    const pending = pendingCount();
     el.innerHTML = `
       <button class="nav-i entry" data-nav="chat" data-op="nav.chat" title="新对话">${icon('chat')}<span class="t">总控对话</span><span class="kbd">新</span></button>
       <button class="nav-i" data-nav="cmdk" data-op="nav.cmdk">${icon('search')}<span class="t">搜索与命令</span><span class="kbd">⌘K</span></button>
@@ -822,6 +822,8 @@
   }
 
   /* ---------------- 收件箱 ---------------- */
+  // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
+  function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
   async function refreshInbox() {
     try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
     try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }

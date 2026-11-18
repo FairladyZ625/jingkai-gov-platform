@@ -223,7 +223,6 @@ class BadgeMismatch(AssertionError):
     pass
 
 
-@pytest.mark.xfail(strict=True, raises=BadgeMismatch, reason='shell.js:116、132 漏计第 834 行的我的待办')
 def test_sidebar_badge_counts_inbox_rows():
     playwright = pytest.importorskip('playwright.sync_api')
     entry = Path(__file__).resolve().parents[2] / 'prototype/v4/index.html'
