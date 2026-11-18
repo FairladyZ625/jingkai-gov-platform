@@ -4,17 +4,12 @@ from pathlib import Path
 
 import pytest
 
-import secrets
-
-import yaml
-
 from jkq.admin.usage import usage_page
 from jkq.feed import feed_page, publish
 from jkq.inbox import add_todo
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PASSWORD = secrets.token_urlsafe(12)  # 每次运行随机，避免口令字面量入库
 
 
 def test_gateway_attempts():
@@ -52,48 +47,23 @@ def client(request, monkeypatch):
     pytest.importorskip('fastapi')
     from fastapi.testclient import TestClient
     from jkq import routers
-    from jkq.app import create_app
     from jkq.inbox import router
-    from haiknow_core.passwords import hash_password
     config, _ = request.getfixturevalue('isolated_platform')
+    create, sign_in = request.getfixturevalue('jkq_accounts')
     seed = ROOT / 'config/projects.yaml'
     (config / 'projects.yaml').write_bytes(seed.read_bytes())
-    request.getfixturevalue('cheap_password_hash')
-    # 经开区实例关闭卫华免密演示登录（#12），测试账号改走真实口令登录。
-    monkeypatch.delenv('HAIKNOW_DEMO_LOGIN', raising=False)
-    monkeypatch.delenv('JKQ_DEMO_MODE', raising=False)
-    people = json.loads((config / 'users.yaml').read_text())['users']
-    roles = yaml.safe_load((ROOT / 'config/roles.yaml').read_text(encoding='utf-8'))
-    for role, spec in json.loads((config / 'roles.yaml').read_text())['roles'].items():
-        roles['roles'].setdefault(role, {'name': role, **spec})
-    (config / 'roles.yaml').write_text(json.dumps(roles, ensure_ascii=False), encoding='utf-8')
+    users = config / 'users.yaml'
+    users.write_text(users.read_text().replace('sample-project', 'jkq'))
     monkeypatch.setenv('HAIKNOW_SECRET', 'test-session-signing')
     if router not in routers.ROUTERS:
         monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, router))
-    app = create_app()
-    store = app.state.platform.store
-    with store._lock, store._db as db:
-        store.begin_write()
-        for person in people:
-            projects = ['jkq' if p == 'sample-project' else p for p in person['projects']]
-            db.execute(
-                "insert into users (id,username,name,password_hash,status,last_login,failed_logins,"
-                "locked_until,demo,all_projects,session_gen) values (?,?,?,?,'active',null,0,0,0,?,0)",
-                (person['id'], person['id'], person['name'], hash_password(PASSWORD), int('*' in projects)),
-            )
-            for role in person['roles']:
-                db.execute('insert or ignore into roles values (?,?,1)', (role, role))
-                db.execute('insert into user_roles values (?,?)', (person['id'], role))
-            for project in projects:
-                if project != '*':
-                    db.execute('insert or ignore into project_members values (?,?)', (project, person['id']))
-    with TestClient(app) as client:
+    with TestClient(create()) as client:
+        client.sign_in = sign_in
         yield client
 
 
 def login(client, user):
-    response = client.post('/api/v1/auth/login', json={'username': user, 'password': PASSWORD})
-    assert response.status_code == 200, response.text
+    client.sign_in(client, user)
 
 
 def test_inbox_transitions_and_ownership(client):
