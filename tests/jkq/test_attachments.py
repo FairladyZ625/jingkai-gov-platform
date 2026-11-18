@@ -1,11 +1,13 @@
-import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from urllib.parse import unquote
 
 import pytest
 
 from jkq.attachments.service import MAX_BYTES, InputError, fallback_apps, prepare
 
-BASE = "/api/v1/conversations/demo/attachments"
+
 MANIFESTS = fallback_apps(None)["items"]
 
 
@@ -34,57 +36,50 @@ def test_uses_visible_manifest_and_size_boundary():
     assert (err.value.status, err.value.code) == (413, "FILE_TOO_LARGE")
 
 
-class Conversations:
-    """可重开的消息文件模拟 #21 的两个公共方法。"""
-    def __init__(self, path):
-        self.path = path
-
-    def detail(self, owner, cid):
-        if (owner, cid) != ("sampleadmin", "demo"):
-            raise KeyError(cid)
-        return {"messages": json.loads(self.path.read_text()) if self.path.exists() else []}
-
-    def append_message(self, owner, cid, **message):
-        history = self.detail(owner, cid)["messages"]
-        self.path.write_text(json.dumps(history + [message]))
-
-
 @pytest.fixture
-def clients(tmp_path, request):
+def clients(request):
     pytest.importorskip("fastapi")
     from haiknow_core.main import current_user
     from jkq.attachments.routes import install
+    from jkq.conversations.store import ConversationNotFound, ConversationStore
+
     make_client = request.getfixturevalue("make_client")
-    store = Conversations(tmp_path / "history.json")
+    store = ConversationStore(make_client().app.state.platform.store)
+    cid = store.create("sampleadmin")["id"]
 
     def reopen(user="sampleadmin"):
         client = make_client()
-        install(client.app, client.app.state.platform, current_user, store,
-                app_id="sample-app", project="sample-project", not_found=KeyError)
+        plat = client.app.state.platform
+        install(client.app, plat, current_user, ConversationStore(plat.store),
+                app_id="sample-app", project="sample-project", not_found=ConversationNotFound)
         assert client.post("/api/auth/login", json={"user_id": user}).is_success
         return client
-    return reopen, store
+    return reopen, store, cid
 
 
 def test_persisted_message_and_download(clients):
-    reopen, store = clients
+    reopen, store, cid = clients
+    base = f"/api/v1/conversations/{cid}/attachments"
     name = "经开〔2026〕8号 政策.pdf"
     data = b"%PDF-1.4\n" + bytes(range(256))
-    result = reopen().post(BASE, files={"files[]": (name, data)})
+    result = reopen().post(base, files={"files[]": (name, data)})
     assert result.is_success, result.text
     item, = result.json()["items"]
     route, = result.json()["routes"]
     assert route["app"] == "policy" and route["alsoImport"]["lib"] == "policy"
-    message, = Conversations(store.path).detail("sampleadmin", "demo")["messages"]
+    message, = store.detail("sampleadmin", cid)["messages"]
     assert (message["attachments"], message["routes"]) == ([item], [route])
     after = reopen()
-    assert after.get(BASE).json()["items"] == [item]
+    assert after.get(base).json()["items"] == [item]
     download = after.get(item["url"])
     assert download.content == data
     assert unquote(download.headers["Content-Disposition"].split("''")[1]) == name
-    outsider = reopen("sampleoperator")
-    for response in (outsider.get(BASE), outsider.get(item["url"]),
-                     outsider.post(BASE, data={"text": "样本"})):
+    outsider = reopen("sampleextra")
+    generic = "/api/v1/files/" + item["id"]
+    for path in (generic, generic + "/content"):
+        assert outsider.get(path).status_code == 404
+    for response in (outsider.get(base), outsider.get(item["url"]),
+                     outsider.post(base, data={"text": "样本"})):
         assert response.status_code == 404 and response.json()["error"]["code"] == "NOT_FOUND"
 
 
@@ -94,7 +89,8 @@ def test_persisted_message_and_download(clients):
     ("url", "https://example.org/sample", "unknown"),
 ])
 def test_paste(clients, field, value, kind):
-    response = clients[0]().post(BASE, data={field: value})
+    base = f"/api/v1/conversations/{clients[2]}/attachments"
+    response = clients[0]().post(base, data={field: value})
     assert response.is_success, response.text
     item, = response.json()["items"]
     route, = response.json()["routes"]
@@ -108,27 +104,131 @@ def test_paste(clients, field, value, kind):
     ("样本.exe", 1, 415, "UNSUPPORTED_TYPE"),
 ])
 def test_rejected_batch_leaves_no_message(clients, name, size, status, code):
+    base = f"/api/v1/conversations/{clients[2]}/attachments"
     client = clients[0]()
-    result = client.post(BASE, files=[("files[]", ("a.txt", b"x")), ("files[]", (name, bytes(size)))])
+    result = client.post(base, files=[("files[]", ("a.txt", b"x")), ("files[]", (name, bytes(size)))])
     assert result.status_code == status
     assert result.json()["error"]["code"] == code
     assert any("\u4e00" <= c <= "\u9fff" for c in result.json()["error"]["message"])
-    assert client.get(BASE).json() == {"items": []}
+    assert client.get(base).json() == {"items": []}
 
 
-def test_multi_attachment_suggestions_share_one_message(tmp_path):
-    from types import SimpleNamespace
-    from jkq.attachments.service import attachments, publish
-
-    parts = [("url", "链接", "https://beijing.gov.cn/example"),
-             ("text", "粘贴文本", "普通样本")]
-    store = Conversations(tmp_path / "history.json")
-    result = publish(SimpleNamespace(id="sampleadmin"), "demo", parts, store, None,
-                     fallback_apps, "sample-app", "sample-project")
-    history = Conversations(store.path).detail("sampleadmin", "demo")
-    assert len(history["messages"]) == 1
-    assert attachments(history) == result["items"]
-    assert history["messages"][0]["routes"] == result["routes"]
+def test_multi_attachment_suggestions_share_one_message(clients):
+    reopen, store, cid = clients
+    result = reopen().post(f"/api/v1/conversations/{cid}/attachments",
+                           data={"url": "https://beijing.gov.cn/example", "text": "普通样本"}).json()
+    message, = store.detail("sampleadmin", cid)["messages"]
+    assert message["attachments"] == result["items"]
+    assert message["routes"] == result["routes"]
     policy, unknown = result["routes"]
     assert policy["alsoImport"] == {"lib": "policy"}
     assert unknown["action"] == "ask" and "alsoImport" not in unknown
+
+
+def test_visible_custom_manifest():
+    rule = {"ext": ["csv"], "match": "巡检"}
+    apps = [{"id": "hidden", "available": False, "accepts": [rule]},
+            {"id": "inspection", "available": True, "accepts": [rule]}]
+    assert prepare("file", "巡检.csv", b"x", apps)[1]["app"] == "inspection"
+    assert prepare("file", "普通.csv", b"x", apps)[1]["action"] == "ask"
+
+
+def sample_pdf(text):
+    """用 ToUnicode 把 # 映射为「号」，构造包含可提取文号的单页 PDF。"""
+    def stream(data):
+        return b"<< /Length %d >>\nstream\n" % len(data) + data + b"\nendstream"
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 6 0 R >>",
+        stream(b"BT /F1 12 Tf 20 100 Td (" + text + b") Tj ET"),
+        stream(b"begincmap 1 begincodespacerange <00> <FF> endcodespacerange "
+               b"1 beginbfrange <20> <7E> <0020> endbfrange "
+               b"1 beginbfchar <23> <53F7> endbfchar endcmap"),
+    ]
+    data = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for index, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data.extend(b"%d 0 obj\n" % index + obj + b"\nendobj\n")
+    xref = len(data)
+    data.extend(b"xref\n0 7\n0000000000 65535 f \n")
+    for offset in offsets:
+        data.extend(b"%010d 00000 n \n" % offset)
+    data.extend(b"trailer << /Size 7 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF" % xref)
+    return bytes(data)
+
+
+@pytest.mark.parametrize(("text", "app"), [(b"[2026]8#", "policy"), (b"sample", None)])
+def test_pdf_body(text, app):
+    item, route = prepare("file", "材料.pdf", sample_pdf(text), MANIFESTS)
+    assert route["app"] == app
+    if app:
+        assert item["kind"] == "policy" and route["alsoImport"] == {"lib": "policy"}
+    else:
+        assert item["kind"] == "unknown" and route["action"] == "ask"
+
+
+@pytest.mark.parametrize("multipart", [True, False])
+@pytest.mark.parametrize("over", [0, 1])
+def test_chinese_form_limit(clients, multipart, over):
+    reopen, _, cid = clients
+    size = MAX_BYTES + over
+    text = "中" * (size // 3) + "a" * (size % 3)
+    fields = {"files": {"text": (None, text)}} if multipart else {"data": {"text": text}}
+    response = reopen().post(f"/api/v1/conversations/{cid}/attachments", **fields)
+    if over:
+        assert response.status_code == 413 and response.json()["error"]["code"] == "FILE_TOO_LARGE"
+    else:
+        assert response.status_code == 200 and response.json()["items"][0]["text"] == text
+
+
+@pytest.mark.parametrize("failure", ["second_file", "message"])
+def test_rollback_and_retry(clients, failure):
+    reopen, store, cid = clients
+    client = reopen()
+    base = f"/api/v1/conversations/{cid}/attachments"
+    table = "jkq_attachment_content" if failure == "second_file" else "jkq_messages"
+    condition = "when (select count(*) from jkq_attachment_content)=1" if failure == "second_file" else ""
+    with store.transaction(write=True):
+        store.db.execute(f"create trigger fail_write before insert on {table} {condition} "
+                         "begin select raise(abort, '模拟写入失败'); end")
+    files = [("files[]", ("一.txt", b"one")), ("files[]", ("二.txt", b"two"))]
+    with pytest.raises(sqlite3.IntegrityError, match="模拟写入失败"):
+        client.post(base, files=files)
+    assert store.db.execute("select count(*) from jkq_attachment_content").fetchone() == (0,)
+    assert store.detail("sampleadmin", cid)["messages"] == []
+    with store.transaction(write=True):
+        store.db.execute("drop trigger fail_write")
+    assert client.post(base, files=files).status_code == 200
+    assert store.db.execute("select count(*) from jkq_attachment_content").fetchone() == (2,)
+    assert len(store.detail("sampleadmin", cid)["messages"]) == 1
+
+
+def test_deleted_while_uploading(clients, monkeypatch):
+    from jkq.attachments import service
+
+    reopen, store, cid = clients
+    client = reopen()
+    base = f"/api/v1/conversations/{cid}/attachments"
+    ready, deleted = Event(), Event()
+    original = service.prepare
+
+    def prepare(*args):
+        ready.set()
+        assert deleted.wait(5)
+        return original(*args)
+
+    monkeypatch.setattr(service, "prepare", prepare)
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(client.post, base, files={"files[]": ("文件.txt", b"test")})
+        assert ready.wait(5)
+        store.set_deleted("sampleadmin", cid, deleted=True)
+        deleted.set()
+        assert future.result().status_code == 404
+    assert store.db.execute("select count(*) from jkq_attachment_content").fetchone() == (0,)
+    store.set_deleted("sampleadmin", cid, deleted=False)
+    assert store.detail("sampleadmin", cid)["messages"] == []

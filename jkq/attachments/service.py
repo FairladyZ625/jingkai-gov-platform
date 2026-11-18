@@ -1,5 +1,7 @@
-"""对话消息持有附件索引；文件内容沿用平台 DataService 的存储与权限。"""
+"""附件原件只进入对话专用表，与 #21 消息共享一个写事务。"""
 import re
+import subprocess
+from tempfile import TemporaryFile
 from pathlib import PurePath
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -41,7 +43,7 @@ def classify(ext, sample, host, manifests):
     candidates = []
     for manifest in manifests:
         app = manifest["id"]
-        if app not in kinds:
+        if not manifest.get("available", True):
             continue
         for rule in manifest.get("accepts", []):
             if ext and ext not in rule.get("ext", []):
@@ -54,6 +56,8 @@ def classify(ext, sample, host, manifests):
                 score = 3
             elif rule.get("match") and re.search(rule["match"], sample):
                 score = 2
+            elif ext and not rule.get("match"):
+                score = 1
             if score:
                 candidates.append((score, app))
     if not candidates:
@@ -64,7 +68,25 @@ def classify(ext, sample, host, manifests):
              "params": {"tab": "visit"} if app == "enterprise" else {}}
     if app == "policy":
         route["alsoImport"] = {"lib": "policy"}
-    return kinds[app], route
+    return kinds.get(app, "document"), route
+
+
+def pdf_sample(data):
+    """Poppler 仅读首页。临时输出避免把整页解压文本载入 Python。"""
+    if not data.startswith(b"%PDF-"):
+        return ""
+    with TemporaryFile() as output:
+        try:
+            result = subprocess.run(
+                ["pdftotext", "-f", "1", "-l", "1", "-enc", "UTF-8", "-", "-"],
+                input=data, stdout=output, stderr=subprocess.DEVNULL, timeout=4,
+            )
+        except subprocess.TimeoutExpired:
+            return ""
+        except FileNotFoundError as exc:
+            raise InputError(500, "internal_error", "PDF 文本提取服务尚未安装") from exc
+        output.seek(0)
+        return output.read(4096).decode("utf-8", errors="ignore") if result.returncode == 0 else ""
 
 
 def prepare(source, name, value, manifests):
@@ -90,6 +112,8 @@ def prepare(source, name, value, manifests):
     sample = name
     if source != "file" or ext in TEXT:
         sample += " " + data[:4096].decode("utf-8", errors="ignore")
+    elif ext == "pdf":
+        sample += " " + pdf_sample(data)
     kind, route = classify(ext, sample, host, manifests)
     item = {"name": name, "kind": kind, "size": len(data)}
     if source != "file":
@@ -101,25 +125,54 @@ def attachments(detail):
     return [item for message in detail["messages"] for item in message.get("attachments", [])]
 
 
-def publish(user, cid, parts, conversations, files, apps, app_id, project, library=None):
+class AttachmentStore:
+    def __init__(self, conversations):
+        self.conversations = conversations
+        self.db = conversations.db
+        with conversations.transaction(write=True):
+            self.db.execute("""create table if not exists jkq_attachment_content (
+                id text primary key, conversation_id text not null references jkq_conversations(id),
+                content blob not null
+            )""")
+
+    def append(self, owner, cid, blobs, items, routes):
+        # #21 的 begin_write 复用现有事务。append_message 在最后核对所有者，
+        # 将文件、消息和审计一起提交；中途异常会回滚整批。
+        with self.conversations.transaction(write=True):
+            self.db.executemany(
+                "insert into jkq_attachment_content(id, conversation_id, content) values(?,?,?)",
+                ((ident, cid, data) for ident, data in blobs),
+            )
+            self.conversations.append_message(owner, cid, role="user", content="添加了对话附件",
+                                              attachments=items, routes=routes)
+
+    def content(self, owner, cid, ident):
+        with self.conversations.transaction():
+            row = self.db.execute(
+                """select a.content from jkq_attachment_content a
+                   join jkq_conversations c on c.id=a.conversation_id
+                   where c.owner=? and c.deleted=0 and c.id=? and a.id=?""",
+                (owner, cid, ident),
+            ).fetchone()
+        return row[0] if row else None
+
+
+def publish(user, cid, parts, store, apps, library=None):
     if library is not None and (not isinstance(library, str) or not library.strip()):
         raise InputError(422, "CHECK_FAILED", "资料库名称无效")
     manifests = apps(user)["items"]
-    prepared = [prepare(source, name, value, manifests) for source, name, value in parts]
-    items, routes = [], []
-    for (source, _, value), (item, route) in zip(parts, prepared):
+    items, routes, blobs = [], [], []
+    for source, name, value in parts:
+        item, route = prepare(source, name, value, manifests)
+        ident = uuid4().hex
         if source == "file":
-            doc = files.save_file(user, app_id, project, "conversation-attachment", item["name"], value)
-            ident = doc["fileId"]
+            blobs.append((ident, value))
             item["url"] = f"/api/v1/conversations/{quote(cid, safe='')}/attachments/{ident}/content"
-        else:
-            ident = uuid4().hex
         item["id"] = ident
         route["attachmentId"] = ident
         if library and item["kind"] != "unknown":
             route["alsoImport"] = {"lib": library}
         items.append(item)
         routes.append(route)
-    conversations.append_message(user.id, cid, role="user", content="添加了对话附件",
-                                 attachments=items, routes=routes)
+    store.append(user.id, cid, blobs, items, routes)
     return {"items": items, "routes": routes}

@@ -1,18 +1,47 @@
 """由实例装配已认证的用户、会话存储、工具桥及文件存储的应用/项目。"""
-from urllib.parse import quote
+from urllib.parse import quote, unquote_to_bytes
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import UploadFile
-from starlette.formparsers import FormParser, MultiPartException, MultiPartParser
+from starlette.datastructures import FormData, UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
-from .service import MAX_BYTES, InputError, attachments, check_size, fallback_apps, publish
+from .service import AttachmentStore, MAX_BYTES, InputError, attachments, check_size, fallback_apps, publish
 
 
 def error(status, code, message):
     return JSONResponse({"error": {"code": code, "message": message, "details": {}}},
                         status_code=status)
+
+
+def decode_field(raw):
+    # unquote_to_bytes 对每个 % 分段；分块可避免大段中文产生数百万个临时对象。
+    decoded = bytearray()
+    start = 0
+    while start < len(raw):
+        end = min(start + 64 * 1024, len(raw))
+        if end < len(raw):
+            partial = raw.rfind(b"%", end - 2, end)
+            if partial >= 0:
+                end = partial
+        decoded.extend(unquote_to_bytes(raw[start:end].replace(b"+", b" ")))
+        start = end
+    return decoded.decode("utf-8")
+
+
+def urlencoded_form(body):
+    fields = body.split(b"&", 3)
+    if len(fields) > 3:
+        raise InputError(422, "CHECK_FAILED", "表单最多支持三个字段")
+    pairs = []
+    try:
+        for field in fields:
+            key, _, value = field.partition(b"=")
+            pairs.append((decode_field(key), decode_field(value)))
+    except UnicodeDecodeError as exc:
+        raise InputError(422, "CHECK_FAILED", "表单文本需要使用 UTF-8 编码") from exc
+    return FormData(pairs)
 
 
 async def read_form(request):
@@ -31,14 +60,18 @@ async def read_form(request):
             yield chunk
 
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if content_type == "multipart/form-data":
-        parser = MultiPartParser(request.headers, bounded_stream(), max_files=16, max_fields=3,
-                                 max_part_size=wire_limit)
-    elif content_type == "application/x-www-form-urlencoded":
-        parser = FormParser(request.headers, bounded_stream())
-    else:
-        raise InputError(415, "UNSUPPORTED_TYPE", "请使用表单上传附件")
     try:
+        if content_type == "application/x-www-form-urlencoded":
+            wire_limit = 3 * MAX_BYTES + 64 * 1024
+            body = bytearray()
+            async for chunk in bounded_stream():
+                body.extend(chunk)
+            return await run_in_threadpool(urlencoded_form, bytes(body))
+        if content_type != "multipart/form-data":
+            raise InputError(415, "UNSUPPORTED_TYPE", "请使用表单上传附件")
+        parser = MultiPartParser(request.headers, bounded_stream(), max_files=16, max_fields=3)
+        # 旧版只限制字段数；新版的字段大小限制与传输上限对齐。
+        parser.max_part_size = wire_limit
         return await parser.parse()
     except RequestTooLarge as exc:
         raise InputError(413, "FILE_TOO_LARGE", "单次附件内容合计最多 10 MiB") from exc
@@ -48,6 +81,7 @@ async def read_form(request):
 
 def install(app, plat, current_user, conversations, *, app_id, project, apps=fallback_apps,
             not_found):
+    store = AttachmentStore(conversations)
     router = APIRouter(prefix="/api/v1/conversations/{cid}/attachments")
 
     def owned(cid: str, user=Depends(current_user)):
@@ -79,8 +113,10 @@ def install(app, plat, current_user, conversations, *, app_id, project, apps=fal
                         parts.append((source, "链接" if source == "url" else "粘贴文本", value))
                 if not parts:
                     raise InputError(422, "CHECK_FAILED", "请选择文件或填写链接、文本")
-                return await run_in_threadpool(publish, user, cid, parts, conversations, plat.data,
-                                               apps, app_id, project, form.get("lib"))
+                if any(source == "file" for source, _, _ in parts):
+                    plat.data.projects.require(user, project)
+                    plat.data.app(user, app_id, "operate")
+                return await run_in_threadpool(publish, user, cid, parts, store, apps, form.get("lib"))
             finally:
                 await form.close()
         except InputError as exc:
@@ -93,10 +129,14 @@ def install(app, plat, current_user, conversations, *, app_id, project, apps=fal
         return missing() if detail is None else {"items": attachments(detail)}
 
     @router.get("/{ident}/content")
-    def download(ident: str, detail=Depends(owned), user=Depends(current_user)):
+    def download(cid: str, ident: str, detail=Depends(owned), user=Depends(current_user)):
         for item in attachments(detail) if detail is not None else ():
             if item["id"] == ident and item.get("url", "").startswith("/api/v1/conversations/"):
-                data = plat.data.read_file(user, ident)
+                data = store.content(user.id, cid, ident)
+                if data is None:
+                    return missing()
+                plat.data.projects.require(user, project)
+                plat.data.app(user, app_id)
                 return Response(data, media_type="application/octet-stream", headers={
                     "Content-Disposition": "attachment; filename*=UTF-8''" + quote(item["name"], safe="")})
         return missing()
