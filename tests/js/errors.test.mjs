@@ -18,6 +18,7 @@ assert.equal(errorMessage(err('原口令不正确', { status: 401, code: 'invali
 assert.equal(errorMessage(err('Forbidden', { status: 403, code: 'forbidden' })), '没有执行此操作的权限');
 assert.equal(errorMessage(err('', { status: 401, code: 'unauthenticated' })), '登录已失效，请重新登录');
 assert.equal(errorMessage(err('Bad gateway', { status: 502, code: 'provider_error' })), '服务商暂时不可用，请检查服务商配置或稍后重试');
+assert.equal(errorMessage(err('', { status: 403, code: 'OUTBOUND_DENIED' })), PLATFORM_ERROR_MESSAGES.outbound_denied);
 // 说明里夹带原始码时不直出，改走映射
 assert.equal(errorMessage(err('操作失败（forbidden）', { code: 'forbidden' })), PLATFORM_ERROR_MESSAGES.forbidden);
 // 未知码：不露码，按状态兜底；控制台留码

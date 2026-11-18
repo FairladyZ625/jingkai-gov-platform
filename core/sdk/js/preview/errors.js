@@ -124,7 +124,7 @@ export function errorMessage(error, extra = null) {
   const code = error && error.code;
   const raw = error && typeof error.message === 'string' ? error.message.trim() : '';
   if (raw && HAN.test(raw) && !(typeof code === 'string' && code && raw.includes(code))) return raw;
-  const mapped = ownKey(extra, code) || ownKey(PLATFORM_ERROR_MESSAGES, code);
+  const mapped = ownKey(extra, code) || ownKey(PLATFORM_ERROR_MESSAGES, typeof code === 'string' ? code.toLowerCase() : code);
   if (mapped) return mapped;
   if (code && typeof console !== 'undefined') console.debug('[haiknow] 未登记的错误码：', code);
   if (error && !error.status && !code && /fetch|network|failed to load/i.test(raw)) return PLATFORM_ERROR_MESSAGES.network_error;
