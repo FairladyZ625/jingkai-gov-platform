@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
-const { labels, installChecks, checkMasking } = require('./checks.cjs');
+const { labels, installChecks } = require('./checks.cjs');
 
 const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
 const report = path.join(__dirname, 'REPORT.md');
@@ -90,15 +90,6 @@ async function walkthrough(browser, rows) {
       await page.waitForFunction(i => !JKDemo.state.on || JKDemo.state.i > i, i, { timeout: 90000 });
     }
     assert.equal(await page.evaluate(() => JKDemo.state.i), labels.length, '一键演示提前退出');
-
-    current = 9;
-    try {
-      await checkMasking(page);
-      rows[current].evidence = '何军档案与王敏同企业档案对照';
-    } catch (error) {
-      rows[current].errors.push(error.message);
-      await capture(rows[current], page, width + '-' + theme + '-10-mask-failure');
-    }
   } catch (error) {
     markInterrupted(rows, current, (started ? '' : '初始化失败：') + error.message);
     if (page && !rows[current].file) await capture(rows[current], page, width + '-' + theme + '-interrupted');

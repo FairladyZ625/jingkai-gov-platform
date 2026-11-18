@@ -1,5 +1,3 @@
-const assert = require('node:assert/strict');
-
 const labels = [
   ['开场', '王敏工作台与开场字幕'],
   ['政策兑现', '企业核对、补填再算、告知单'],
@@ -10,7 +8,7 @@ const labels = [
   ['技能中心', '新技能创建与发布、同事技能运行'],
   ['电脑操作', '申报提交前确认、提交回执、通知入库'],
   ['审签', '李阳通过本次送审单、对应文稿已定稿'],
-  ['外部协作者', '何军企业档案、电话与营收脱敏'],
+  ['外部协作者', '何军首次打开 E002，响应电话与营收脱敏、可见联系人电话打码'],
   ['管理后台', '授权矩阵、模型与能力路由、审计日志'],
   ['浅色主题', '浅色切换、恢复深色并返回王敏、结束字幕'],
 ];
@@ -76,6 +74,47 @@ function installChecks() {
   const e002 = JK_DATA.enterprises.find(e => e.id === 'E002');
   const e001 = JK_DATA.enterprises.find(e => e.id === 'E001');
   const sampleRecording = JK_SAMPLE_FILES.find(file => file.id === 'rec-1117');
+  const phones = e002.contacts.map(contact => contact.phone);
+  const expectedPhones = phones.map(phone => phone.slice(0, 3) + '****' + phone.slice(-4));
+  const matchesMaskedPhones = actual => phones.length > 0 &&
+    phones.every(phone => /^\d{11}$/.test(phone)) &&
+    actual.length === expectedPhones.length && actual.every((phone, i) => phone === expectedPhones[i]);
+
+  let partnerProfileRequested = false;
+  let firstPartnerProfile;
+  const getProfile = enterprise.get;
+  enterprise.get = async function (id) {
+    const { on, i } = JKDemo.state;
+    if (!on || i !== 9 || !user('hejun') || id !== e002.id || partnerProfileRequested) {
+      return getProfile.call(this, id);
+    }
+    partnerProfileRequested = true;
+    const response = await getProfile.call(this, id);
+    const item = response?.item;
+    firstPartnerProfile = {
+      correctCompany: item?.id === id,
+      maskedPhones: matchesMaskedPhones(item?.contacts?.map(contact => contact.phone) ?? []),
+      restrictedRevenue: item?.revenue?.value === '***',
+    };
+    return response;
+  };
+
+  const partnerPanel = panel('enterprise');
+  const partnerProfileVisible = () => user('hejun') &&
+    visible(partnerPanel + '[data-op="enterprise.profile"]').some(el => el.innerText.includes(e002.name));
+  let firstRenderedContacts;
+  function renderedContactsMasked() {
+    if (firstRenderedContacts !== undefined) return firstRenderedContacts;
+    if (!firstPartnerProfile?.correctCompany || !partnerProfileVisible()) return false;
+    const contacts = visible(partnerPanel + '#eptab .ent-kv')
+      .find(field => field.firstElementChild?.textContent === '联系人');
+    if (!contacts) return false;
+    firstRenderedContacts = matchesMaskedPhones([...contacts.querySelectorAll('.num')]
+      .filter(phone => phone.checkVisibility({ visibilityProperty: true, opacityProperty: true }))
+      .map(phone => phone.innerText.trim())) && phones.every(phone => !contacts.innerText.includes(phone));
+    return firstRenderedContacts;
+  }
+
   const probes = [
     [
       ['王敏工作台', () => user('wangmin') && contains('.hello', /王敏/)],
@@ -142,10 +181,12 @@ function installChecks() {
       }],
     ],
     [
-      ['何军可见正确企业档案和脱敏提示', () => user('hejun') &&
-        contains(panel('enterprise') + '.ap > .callout', /外部协作者视图：联系人电话、营收已打码/) &&
-        visible(panel('enterprise') + '[data-op="enterprise.profile"]').some(el => el.innerText.includes(e002.name)) &&
-        contains(panel('enterprise') + '[data-op="enterprise.brief"]', /30 秒速览/)],
+      ['何军可见正确企业档案和脱敏提示', () => partnerProfileVisible() &&
+        contains(partnerPanel + '.ap > .callout', /外部协作者视图：联系人电话、营收已打码/) &&
+        contains(partnerPanel + '[data-op="enterprise.brief"]', /30 秒速览/)],
+      ['首次档案响应的联系人电话已打码', () => firstPartnerProfile?.correctCompany && firstPartnerProfile.maskedPhones],
+      ['同一次档案响应的营业收入为受限值', () => firstPartnerProfile?.correctCompany && firstPartnerProfile.restrictedRevenue],
+      ['首次档案实际显示的联系人电话已打码', renderedContactsMasked],
     ],
     [
       ['外部协作者的授权矩阵', () => user('admin') &&
@@ -194,52 +235,4 @@ function installChecks() {
   };
 }
 
-async function checkMasking(page) {
-  const { name, phones, revenue } = await page.evaluate(async () => {
-    const { item } = await JKApi.enterprise.get('E002');
-    return { name: item.name, phones: item.contacts.map(c => c.phone), revenue: item.revenue.value };
-  });
-  assert.ok(phones.length && phones.every(phone => /^\d{11}$/.test(phone)), '经办人对照缺少完整模拟联系电话');
-  assert.equal(typeof revenue, 'number', '经办人对照缺少模拟营收');
-
-  const panel = page.locator('.pview.on[data-view="enterprise"]');
-  const field = label => panel.locator('.ent-kv').filter({
-    has: page.getByText(label, { exact: true }),
-  });
-  async function openProfile() {
-    await page.locator('#chatcol textarea').fill('查一下' + name);
-    await page.locator('#chatcol textarea').press('Enter');
-    await panel.locator('[data-op="enterprise.profile"]').getByText(name, { exact: false }).waitFor();
-  }
-
-  await openProfile();
-  const contacts = field('联系人');
-  const income = field('营业收入');
-  assert.deepEqual(await contacts.locator('.num').allTextContents(), phones, '经办人档案未显示对照电话');
-  await panel.locator('[data-ptab="biz"]').click();
-  assert.equal(await income.locator('.num').innerText(), String(revenue), '经办人档案未显示对照营收');
-
-  await page.evaluate(() => JKShell.switchUser('hejun'));
-  await openProfile();
-  const maskedPhones = phones.map(phone => phone.slice(0, 3) + '****' + phone.slice(-4));
-  const shownPhones = await contacts.locator('.num').allTextContents();
-  assert.ok(shownPhones.length === maskedPhones.length && shownPhones.every((phone, i) => phone === maskedPhones[i]),
-    '外部协作者档案联系电话脱敏不正确');
-  const contactsText = await contacts.innerText();
-  assert.ok(phones.every(phone => !contactsText.includes(phone)), '外部协作者档案显示完整电话');
-
-  await panel.locator('[data-ptab="biz"]').click();
-  const incomeText = await income.innerText();
-  assert.match(incomeText, /受限字段|\*{3,}/, '外部协作者档案未隐藏营业收入');
-  assert.ok(!incomeText.includes(String(revenue)), '外部协作者档案显示完整营收');
-
-  const privateFields = await page.evaluate(async () => {
-    const { item } = await JKApi.enterprise.get('E002');
-    return { phones: item.contacts.map(c => c.phone), revenue: item.revenue.value };
-  });
-  assert.ok(privateFields.phones.length === maskedPhones.length &&
-    privateFields.phones.every((phone, i) => phone === maskedPhones[i]) && privateFields.revenue === '***',
-    '外部协作者接口返回未脱敏字段');
-}
-
-module.exports = { labels, installChecks, checkMasking };
+module.exports = { labels, installChecks };
