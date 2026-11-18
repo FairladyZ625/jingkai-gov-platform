@@ -11,6 +11,7 @@ from fastapi.routing import APIRoute
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..conversations.store import ConversationStore
 from .seed import documents
 from .spaces import NAMES, spaces, visible_spaces
 
@@ -62,6 +63,7 @@ class Documents:
     def __init__(self, platform):
         self.store = platform.store
         self.rbac = platform.rbac
+        ConversationStore(self.store)
         with self.store._lock, self.store._db as db:
             self.store.begin_write()
             db.execute("""create table if not exists jkq_kb_docs
@@ -89,6 +91,14 @@ class Documents:
         if action not in self.rbac.actions(user, "kb"):
             self.store.audit("kb", user.id, "denied", {"need": action})
             raise KbError(403, "FORBIDDEN", "没有知识库操作权限", app="kb", need=action)
+
+    def own_message(self, db, user, message_id):
+        """消息须存在、归当前用户且所在会话未删除。"""
+        row = db.execute("""select 1 from jkq_messages m join jkq_conversations c on c.id=m.conversation_id
+                         where c.owner=? and c.deleted=0 and json_extract(m.document,'$.id')=?""",
+                         (user.id, message_id)).fetchone()
+        if not row:
+            raise missing()
 
     def candidates(self, user):
         """#26 检索候选集，集中处理空间权限和软删除。"""
@@ -223,6 +233,7 @@ def install(app, platform, current_user):
         service.require(user, "view")
         with service.store._lock, service.store._db as db:
             service.store.begin_write()
+            service.own_message(db, user, message_id)
             refs = []
             for ref in body.citations:
                 doc = service.detail(user, ref.fileId)
@@ -236,6 +247,7 @@ def install(app, platform, current_user):
     def reopen_citations(message_id: str, user=session):
         service.require(user, "view")
         with service.store._lock:
+            service.own_message(service.store._db, user, message_id)
             row = service.store._db.execute("select refs from jkq_kb_citations where owner=? and message=?",
                                             (user.id, message_id)).fetchone()
             cards = []

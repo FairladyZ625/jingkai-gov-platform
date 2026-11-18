@@ -8,6 +8,7 @@ pytest.importorskip("fastapi")  # 轻量 CI 只安装 pytest，core job 安装�
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from haiknow_core.store import Store
+from jkq.conversations.store import ConversationStore
 from jkq.kb import install
 from jkq.kb.docs import RETENTION
 from jkq.kb.seed import ROOT
@@ -139,12 +140,18 @@ def test_seed_counts_across_two_restarts(api):
     assert client.get("docs?limit=1").json()["total"] == expected
 
 
+def message(service, owner="sample"):
+    conversations = ConversationStore(service.store)
+    cid = conversations.create(owner)["id"]
+    return conversations, cid, conversations.append_message(owner, cid, role="assistant", content="答复")["id"]
+
+
 def test_saved_cards_reopen_after_restart(api):
     client, service, user, _, boot = api
     doc = client.get("docs?space=template&limit=1").json()["hits"][0]
     version_path = "docs/" + doc["citationId"]
     original = client.get(version_path).json()["item"]
-    path = "messages/M-123/citations"
+    path = f"messages/{message(service)[2]}/citations"
     refs = {"citations": [dict(fileId=doc["id"], snippet=original["text"][:20])]}
     assert client.put(path, json=refs).json() == {"ok": True}
     service.replace_text(user, doc["id"], "第二版")
@@ -156,11 +163,56 @@ def test_saved_cards_reopen_after_restart(api):
     assert [client.get("docs/" + v["id"]).json()["item"]["text"] for v in versions] == [expected["text"], "第二版"]
     assert client.put(path, json={"citations": [dict(fileId="missing", snippet="")]}).status_code == 404
     assert client.get(path).json()["citations"] == [expected]
-    user.id = "another"
-    assert client.get(path).json() == {"citations": []}
-    user.id = "sample"
     user.roles = ["partner"]
     assert client.get(path).json() == {"citations": []}
+
+
+def test_citations_follow_message_lifecycle(api):
+    client, service, user, *_ = api
+    doc = client.get("docs?space=policy&limit=1").json()["hits"][0]
+    refs = {"citations": [dict(fileId=doc["id"], snippet="摘录")]}
+    conversations, cid, mid = message(service)
+    _, _, foreign = message(service, owner="another")
+    path = f"messages/{mid}/citations"
+
+    def not_found(method, target):
+        response = client.request(method, target, json=refs if method == "put" else None)
+        return (response.status_code, response.json()["error"]["code"]) == (404, "NOT_FOUND")
+
+    for target in ("messages/M-missing/citations", f"messages/{foreign}/citations"):
+        assert not_found("put", target) and not_found("get", target)
+    assert client.put(path, json=refs).json() == {"ok": True}
+    user.id = "another"
+    assert not_found("get", path) and not_found("put", path)
+    user.id = "sample"
+    assert [c["fileId"] for c in client.get(path).json()["citations"]] == [doc["citationId"]]
+    conversations.set_deleted("sample", cid, deleted=True)
+    assert not_found("get", path) and not_found("put", path)
+    conversations.set_deleted("sample", cid, deleted=False)
+    assert [c["fileId"] for c in client.get(path).json()["citations"]] == [doc["citationId"]]
+
+
+def test_instance_registers_kb_routes(monkeypatch, tmp_path, cheap_password_hash):
+    import os
+    from jkq.app import create_app
+
+    for name in tuple(os.environ):
+        if name.startswith(("HAIKNOW_", "JKQ_WEB_DIR")):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(tmp_path / "database"))
+    with TestClient(create_app()) as client:
+        response = client.get(BASE + "/spaces")
+        assert (response.status_code, response.json()["error"]["code"]) == (401, "UNAUTHENTICATED")
+        body = {"username": "test-admin", "password": "demo-password", "name": "测试管理员"}
+        assert client.post("/api/auth/bootstrap", json=body).status_code == 200
+        assert [s["id"] for s in client.get(BASE + "/spaces").json()["items"]] == INTERNAL
+        assert [s["id"] for s in client.get(BASE + "/libraries").json()["items"]] == INTERNAL
+        doc = client.get(BASE + "/docs?space=policy&limit=1").json()["hits"][0]
+        assert client.get(BASE + "/files/" + doc["id"]).json()["item"]["name"] == doc["title"]
+        response = client.get(BASE + "/files/missing")
+        assert (response.status_code, response.json()["error"]["code"]) == (404, "NOT_FOUND")
 
 
 @pytest.mark.parametrize("method,path,body", [
