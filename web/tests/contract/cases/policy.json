@@ -16,6 +16,10 @@
       "body": {"entId": "{{fixture.enterpriseId}}", "itemIds": ["PI-03"]} }
   ],
   "errors": [
+    { "method": "POST", "path": "/api/apps/policy/match",
+      "body": {"entId": "E-contract-missing"},
+      "status": 404,
+      "error": "NOT_FOUND" },
     { "method": "GET", "path": "/api/apps/policy/items/{id}",
       "params": {"id": "PI-contract-missing"},
       "status": 404,
