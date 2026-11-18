@@ -120,11 +120,16 @@ class ConversationStore:
         """供 #22 编排写入已生成的消息；消息 ID 和时间由服务端分配。"""
         if role not in ("user", "assistant") or not isinstance(content, str):
             raise ValueError("消息角色或正文无效")
+        arrays = {}
+        for field, value in (("cards", cards), ("citations", citations), ("toolCalls", toolCalls)):
+            if value is not None and not isinstance(value, list):
+                raise ValueError(f"消息字段 {field} 必须是数组")
+            arrays[field] = [] if value is None else value
         with self.transaction(write=True):
             self._owned(owner, cid)
             at = now()
             msg = dict(metadata, id=f"M-{uuid4().hex}", at=at, role=role, content=content,
-                       cards=cards or [], citations=citations or [], model=model, toolCalls=toolCalls or [])
+                       model=model, **arrays)
             self.db.execute("insert into jkq_messages(conversation_id, document) values(?,?)",
                             (cid, encode(msg)))
             self.db.execute("update jkq_conversations set updated=? where id=?", (at, cid))
