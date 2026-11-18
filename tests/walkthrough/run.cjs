@@ -38,8 +38,9 @@ async function walkthrough(browser, width, theme) {
     }
 
     async function checkInFrame(locator) {
-      await locator.scrollIntoViewIfNeeded();
       assert.ok(await locator.evaluate(el => {
+        // 收件箱会异步替换整行，在同一次 DOM 调用中完成定位与命中检查。
+        el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
         const { left, right, top, bottom } = el.getBoundingClientRect();
         const x = (left + right) / 2;
         const y = (top + bottom) / 2;
