@@ -14,7 +14,6 @@ def health_check():
     return {"ok": True}
 
 
-@stubs.get("/auth/session")
 @stubs.api_route("/admin/departments", methods=["GET", "POST"])
 @stubs.api_route("/admin/departments/{department_id}", methods=["PATCH", "DELETE"])
 @stubs.get("/kb/libraries")
