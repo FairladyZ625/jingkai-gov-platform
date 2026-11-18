@@ -50,18 +50,18 @@ test('历史对话恢复自己的应用和企业，新对话清空旧面板', as
   const policy = activePanel(page, 'policy');
   const enterprise = activePanel(page, 'enterprise');
   await login(page);
-  await say(page, '帮我查一下星河智驾能申报哪些政策');
-  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await say(page, '帮我查一下纸鹿二号智驾能申报哪些政策');
+  await expect(policy.locator('#ps .q')).toContainText('纸鹿二号智驾');
   await op(page, 'nav.chat').click();
   await say(page, '查一下书香里文化');
   await expect(op(enterprise, 'enterprise.profile')).toContainText('书香里文化');
 
   const history = page.locator('[data-conv]');
-  const chatA = history.filter({ hasText: '帮我查一下星河智驾' });
+  const chatA = history.filter({ hasText: '帮我查一下纸鹿二号智驾' });
   const chatB = history.filter({ hasText: '查一下书香里文化' });
   const showA = async () => {
     await chatA.click();
-    await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+    await expect(policy.locator('#ps .q')).toContainText('纸鹿二号智驾');
     await expectRoute(page, 'policy', 'match', { entId: 'E002' });
   };
   const showB = async () => {
@@ -236,7 +236,7 @@ test('切换对话时取消等待中的政策任务，企业对话保持原样',
   await op(page, 'nav.chat').click();
 
   await page.evaluate((id) => {
-    window.firstPolicyRun = JKShell.send('帮我查一下星河智驾能申报哪些政策');
+    window.firstPolicyRun = JKShell.send('帮我查一下纸鹿二号智驾能申报哪些政策');
     window.switchWhenQueued = () => {
       const run = JKOp.running;
       const stop = run.stop;
@@ -258,7 +258,7 @@ test('切换对话时取消等待中的政策任务，企业对话保持原样',
   await expect(op(activePanel(page, 'enterprise'), 'enterprise.profile')).toContainText('书香里文化');
   await expectRoute(page, 'enterprise', 'profile', { entId: 'E001' });
   expect(await snapshot()).toEqual(before);
-  await page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' }).click();
+  await page.locator('[data-conv]').filter({ hasText: '帮我查一下纸鹿二号智驾' }).click();
   await expect(page.locator('#chatcol .pstate')).toHaveText(['已停下']);
 });
 
@@ -268,25 +268,25 @@ test('手动选标签、关闭活动标签和关闭面板后恢复对应状态',
   await say(page, '查一下书香里文化');
   const chatB = page.locator('[data-conv]').filter({ hasText: '查一下书香里文化' });
   await op(page, 'nav.chat').click();
-  await say(page, '帮我查一下星河智驾能申报哪些政策');
-  const chatA = page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' });
+  await say(page, '帮我查一下纸鹿二号智驾能申报哪些政策');
+  const chatA = page.locator('[data-conv]').filter({ hasText: '帮我查一下纸鹿二号智驾' });
   const policyTab = page.locator('#ptabs [data-id="policy"]');
   const enterpriseTab = page.locator('#ptabs [data-id="enterprise"]');
   const policy = activePanel(page, 'policy');
 
-  await say(page, '查一下星河智驾');
+  await say(page, '查一下纸鹿二号智驾');
   await expect(enterpriseTab).toHaveClass(/\bon\b/);
   await policyTab.click();
-  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await expect(policy.locator('#ps .q')).toContainText('纸鹿二号智驾');
   await chatB.click();
   await chatA.click();
-  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await expect(policy.locator('#ps .q')).toContainText('纸鹿二号智驾');
   await expectRoute(page, 'policy', 'match', { entId: 'E002' });
 
-  await say(page, '查一下星河智驾');
+  await say(page, '查一下纸鹿二号智驾');
   await expect(enterpriseTab).toHaveClass(/\bon\b/);
   await enterpriseTab.locator('.x').click();
-  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await expect(policy.locator('#ps .q')).toContainText('纸鹿二号智驾');
   await chatB.click();
   await chatA.click();
   await expectRoute(page, 'policy', 'match', { entId: 'E002' });
@@ -337,13 +337,13 @@ test('告知单转公文后手填要素按对话保留', async ({ page }) => {
   await openDraft('给书香里生成政策告知单', '书香里补充的诉求说明');
   const chatA = page.locator('[data-conv]').filter({ hasText: '给书香里生成政策告知单' });
   await op(page, 'nav.chat').click();
-  await openDraft('给星河智驾生成政策告知单', '星河智驾补充的诉求说明');
-  const chatB = page.locator('[data-conv]').filter({ hasText: '给星河智驾生成政策告知单' });
+  await openDraft('给纸鹿二号智驾生成政策告知单', '纸鹿二号智驾补充的诉求说明');
+  const chatB = page.locator('[data-conv]').filter({ hasText: '给纸鹿二号智驾生成政策告知单' });
 
   await chatA.click();
   await expect(issue).toHaveValue('书香里补充的诉求说明');
   await chatB.click();
-  await expect(issue).toHaveValue('星河智驾补充的诉求说明');
+  await expect(issue).toHaveValue('纸鹿二号智驾补充的诉求说明');
   await expect(op(activePanel(page, 'document'), 'document.in-ent')).toHaveValue('E002');
   await login(page);
   await chatA.click();
@@ -381,8 +381,8 @@ test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
 test('告知单往返后按原勾选和正文首次转公文', async ({ page }) => {
   test.setTimeout(50000);
   await login(page);
-  await say(page, '查一下星河智驾');
-  const other = page.locator('[data-conv]').filter({ hasText: '查一下星河智驾' });
+  await say(page, '查一下纸鹿二号智驾');
+  const other = page.locator('[data-conv]').filter({ hasText: '查一下纸鹿二号智驾' });
   await op(page, 'nav.chat').click();
   await say(page, '帮我查一下书香里文化能申报哪些政策');
   const savedChat = page.locator('[data-conv]').filter({ hasText: '帮我查一下书香里文化' });
@@ -407,8 +407,8 @@ test('告知单往返后按原勾选和正文首次转公文', async ({ page }) 
 test('公文初稿的未保存标题和段落在往返后可以保存', async ({ page }) => {
   test.setTimeout(55000);
   await login(page);
-  await say(page, '查一下星河智驾');
-  const other = page.locator('[data-conv]').filter({ hasText: '查一下星河智驾' });
+  await say(page, '查一下纸鹿二号智驾');
+  const other = page.locator('[data-conv]').filter({ hasText: '查一下纸鹿二号智驾' });
   await op(page, 'nav.chat').click();
   await say(page, '写一份企业诉求答复意见');
   const draftChat = page.locator('[data-conv]').filter({ hasText: '写一份企业诉求答复意见' });
@@ -445,13 +445,13 @@ test('往返恢复实际政策步骤、企业筛选和公文页签', async ({ pa
   await op(page, 'nav.chat').click();
 
   await test.step('政策核对已手动退回选对象', async () => {
-    await say(page, '帮我查一下星河智驾能申报哪些政策');
-    const target = page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' });
+    await say(page, '帮我查一下纸鹿二号智驾能申报哪些政策');
+    const target = page.locator('[data-conv]').filter({ hasText: '帮我查一下纸鹿二号智驾' });
     await op(page, 'policy.step-0').click();
     await other.click();
     await target.click();
     await expect(op(page, 'policy.step-0')).toHaveClass(/\bon\b/);
-    await expect(op(page, 'policy.ent')).toHaveValue('星河智驾');
+    await expect(op(page, 'policy.ent')).toHaveValue('纸鹿二号智驾');
     await expectRoute(page, 'policy', 'home', { entId: 'E002' });
   });
 
@@ -460,17 +460,17 @@ test('往返恢复实际政策步骤、企业筛选和公文页签', async ({ pa
     await say(page, '打开企业台账筛选高新企业');
     const target = page.locator('[data-conv]').filter({ hasText: '打开企业台账筛选高新企业' });
     await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
-    await op(page, 'enterprise.list-q').fill('星河');
+    await op(page, 'enterprise.list-q').fill('纸鹿二号');
     await op(page, 'enterprise.list-alert').check();
     await page.locator('#lsort').selectOption('name');
     await expect(op(page, 'enterprise.list-count')).toBeVisible();
     await other.click();
     await target.click();
     await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
-    await expect(op(page, 'enterprise.list-q')).toHaveValue('星河');
+    await expect(op(page, 'enterprise.list-q')).toHaveValue('纸鹿二号');
     await expect(op(page, 'enterprise.list-alert')).toBeChecked();
     await expect(page.locator('#lsort')).toHaveValue('name');
-    await expectRoute(page, 'enterprise', 'list', { tag: '高新技术', q: '星河', alert: 1, sort: 'name' });
+    await expectRoute(page, 'enterprise', 'list', { tag: '高新技术', q: '纸鹿二号', alert: 1, sort: 'name' });
   });
 
   await test.step('公文从起草改看我的文稿', async () => {

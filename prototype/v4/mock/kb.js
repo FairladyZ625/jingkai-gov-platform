@@ -13,9 +13,9 @@
   /* ---------- 【可改】空间：名称、颜色由 tags.js kbSpace 决定；roles = 哪些角色能看 ---------- */
   const SPACES = [
     { id: 'policy', name: '政策库', icon: 'policy', desc: '经开区现行政策原文与官方解读', roles: ['admin', 'leader', 'member', 'partner'] },
-    { id: 'template', name: '公文范文', icon: 'doc', desc: '官网通知、信息简报、工作报告', roles: ['admin', 'leader', 'member'] },
+    { id: 'template', name: '申报通知', icon: 'doc', desc: '官网申报通知、工作动态与报告', roles: ['admin', 'leader', 'member'] },
     { id: 'minutes', name: '会议纪要', icon: 'meeting', desc: '局务会、座谈会、推进会纪要', roles: ['admin', 'leader', 'member'] },
-    { id: 'rules', name: '部门制度', icon: 'shield', desc: '机构职责与内部工作规程', roles: ['admin', 'leader', 'member'] },
+    { id: 'rules', name: '机构职责', icon: 'shield', desc: '官网机构职责与示例工作规程', roles: ['admin', 'leader', 'member'] },
     { id: 'enterprise', name: '企业档案', icon: 'building', desc: '一企一档、走访记录、企业诉求（含企业信息，外部协作者不可见）', roles: ['admin', 'leader', 'member'], sensitive: true },
   ];
   /* ---------- 【可改】同义词：任一词出现，检索时自动带上同组其它词 ---------- */
@@ -113,7 +113,7 @@
     const D = window.JK_DATA || {};
     (D.meetings || []).forEach((m) => {
       const r = (D.meetingResults || {})[m.id]; if (!r) return;
-      const lines = [`会议：${m.title}`, `时间：${m.date}`, `参会：${(m.attendees || []).join('、') || '见签到表'}`, '一、议题与结论'];
+      const lines = [`会议：${m.title}`, `时间：${m.date}`, `参会：${(m.participants || []).join('、') || '见签到表'}`, '一、议题与结论'];
       (r.topics || []).forEach((t, i) => lines.push(`${i + 1}.${t.t}。背景：${t.bg}。意见：${(t.views || []).join('；')}。结论：${t.decision}。`));
       lines.push('二、待办事项'); (r.todos || []).forEach((t, i) => lines.push(`${i + 1}.${t.task}（责任人：${t.owner}，完成时限：${t.due}，交付：${t.deliverable}）`));
       docs.push({ id: 'KB-M' + m.id, space: 'minutes', kind: '会议纪要', title: m.title + ' 纪要', org: '产业促进局', docNo: '', date: m.date.slice(0, 10), expire: '', status: '现行有效', url: '', example: true, source: '会议记录', version: 1, uploadedBy: '会议记录应用', addedAt: m.date.slice(0, 10), text: lines.join('\n') });
@@ -129,7 +129,7 @@
         (e.qualifications || []).length ? '资质有效期：' + e.qualifications.map((q) => `${q.name}至${q.validTo}`).join('；') : '',
         vs.length ? '一、走访记录' : '', ...vs.map((v, i) => `${i + 1}.${v.date} ${v.type}（${v.staff}）：${mask(v.notes)}`),
         is.length ? '二、企业诉求' : '', ...is.map((x, i) => `${i + 1}.${x.title}（${x.status}，责任人${x.owner}，时限${x.due}）。下一步：${x.next || '—'}`)].filter(Boolean);
-      docs.push({ id: 'KB-E' + e.id, space: 'enterprise', kind: '企业档案', title: `${e.short || e.name} · 一企一档`, org: e.servicer ? '企业服务处' : '', docNo: '', date: e.lastVisit || '2026-11-18', expire: '', status: '', url: '', example: true, source: '企业管理', version: 1, uploadedBy: '企业管理应用', addedAt: '2026-11-18', entId: e.id, text: L.join('\n') });
+      docs.push({ id: 'KB-E' + e.id, space: 'enterprise', kind: '企业档案', title: `${e.short || e.name} · 示例企业档案`, org: e.servicer ? '企业服务处' : '', docNo: '', date: e.lastVisit || '2026-11-18', expire: '', status: '', url: '', example: true, source: '企业管理', version: 1, uploadedBy: '企业管理应用', addedAt: '2026-11-18', entId: e.id, text: L.join('\n') });
     });
     (window.JK_KB_EXAMPLES || []).forEach((d) => docs.push(Object.assign({ example: true, source: '示例', version: 1, uploadedBy: '示例', status: '现行有效' }, d)));
     return docs;
@@ -331,7 +331,7 @@
       if (!it.ok || it.skip) return;
       if (it.dup && it.dup.type === 'duplicate' && it.decision !== 'new') return;
       const m = it.meta || {}; const id = X.nid('KB-U');
-      const d = { id, space: m.space || 'policy', kind: m.kind || '上传资料', title: m.title || it.name, org: m.org || (me.dept || ''), docNo: m.docNo || '', date: m.date || TODAY, expire: m.expire || '', status: '现行有效', url: it.url || '', real: !!it.real, source: it.from || '上传', parse: it.parse, version: 1, uploadedBy: me.name, addedAt: X.now(), text: it.text, tags: (it.tags && it.tags.length ? it.tags : null) };
+      const d = { id, space: m.space || 'policy', kind: m.kind || '上传资料', title: m.title || it.name, org: m.org || (me.dept || ''), docNo: m.docNo || '', date: m.date || TODAY, expire: m.expire || '', status: '现行有效', url: it.url || '', real: !!it.real, example: !!it.example, source: it.from || '上传', parse: it.parse, version: 1, uploadedBy: me.name, addedAt: X.now(), text: it.text, tags: (it.tags && it.tags.length ? it.tags : null) };
       if (it.dup && it.dup.type === 'version' && it.decision !== 'new') {
         const old = DOCS.find((x) => x.id === it.dup.id);
         if (old) { d.version = (old.version || 1) + 1; d.prev = old.id; d.space = old.space; d.kind = old.kind; d.docNo = d.docNo || old.docNo; d.org = d.org || old.org; d.url = d.url || old.url;
@@ -349,7 +349,7 @@
     url = String(url || '').trim(); const K = window.JK_REAL_KB || {};
     if (!/^https?:\/\//i.test(url)) X.err(400, 'BAD_URL', '请粘贴以 http 开头的完整网址');
     const inKb = DOCS.find((d) => d.url && d.url === url);
-    if (inKb) return { item: Object.assign(previewItem({ name: inKb.title, text: inKb.text, from: '网址', url, real: true, meta: { title: inKb.title, docNo: inKb.docNo, org: inKb.org, date: inKb.date, space: inKb.space, kind: inKb.kind, expire: inKb.expire } }), { real: true }), snapshot: true };
+    if (inKb) return { item: Object.assign(previewItem({ name: inKb.title, text: inKb.text, from: '网址', url, meta: { title: inKb.title, docNo: inKb.docNo, org: inKb.org, date: inKb.date, space: inKb.space, kind: inKb.kind, expire: inKb.expire } }), { real: !!inKb.real, example: !!inKb.example }), snapshot: true };
     const s = (K.snapshots || {})[url];
     if (s) return { item: Object.assign(previewItem({ name: s.title, text: s.text, from: '网址', url, meta: { title: s.title, docNo: s.docNo, org: s.org, date: s.date } }), { real: true }), snapshot: true, fetched: K.fetched };
     const host = (url.match(/^https?:\/\/([^/]+)/) || [])[1] || '';
@@ -358,7 +358,17 @@
 
   /* ===================== 路由（与 api/kb.js 同名同构） ===================== */
   const on = X.first;   // 覆盖 mock-api.js 中同名旧路由
-  on('GET', '/api/v1/kb/spaces', () => { const K = state(); const vis = visSpaces(); return { items: SPACES.map((s) => ({ id: s.id, name: s.name, icon: s.icon, desc: s.desc, roles: (K.spaceRoles || {})[s.id] || s.roles, visible: vis.includes(s.id), count: DOCS.filter((d) => d.space === s.id).length, expiring: DOCS.filter((d) => d.space === s.id && statusOf(d) === '即将到期').length })) }; });
+  on('GET', '/api/v1/kb/spaces', () => {
+    const roles = state().spaceRoles || {};
+    const vis = visSpaces();
+    const spaces = X.can('kb', 'admin') ? SPACES : SPACES.filter(s => vis.includes(s.id));
+    return { items: spaces.map(s => {
+      const visible = vis.includes(s.id);
+      const docs = visible ? DOCS.filter(d => d.space === s.id) : [];
+      return { ...s, roles: roles[s.id] || s.roles, visible, count: docs.length,
+        expiring: docs.filter(d => statusOf(d) === '即将到期').length };
+    }) };
+  });
   on('PATCH', '/api/v1/kb/spaces/:id', (b, p) => { if (!X.can('kb', 'admin')) X.err(403, 'FORBIDDEN', '只有管理员可以修改空间可见范围'); const K = state(); K.spaceRoles = K.spaceRoles || {}; K.spaceRoles[p.id] = b.roles; X.audit('知识库', `修改空间可见范围 · ${spaceName(p.id)}`); return { ok: true }; });
   on('POST', '/api/v1/kb/search', (b) => search(b.q, b));
   on('POST', '/api/v1/kb/ask', (b) => { const r = ask(b.q, b); X.audit('知识库', `问答 · ${String(b.q).slice(0, 16)}`, 'DeepSeek（模拟·只摘原文）'); return r; });
@@ -377,11 +387,30 @@
   on('POST', '/api/v1/kb/import/commit', (b) => { if (!X.can('kb', 'operate')) X.err(403, 'FORBIDDEN', '你只有查看权限，不能导入资料'); return commit(b.items || [], b); });
   on('POST', '/api/v1/kb/import', (b) => { // 一步导入（供其它应用/对话直接调用）：预览后直接入库，重复跳过、同名按新版本
     if (!X.can('kb', 'operate')) X.err(403, 'FORBIDDEN', '你只有查看权限，不能导入资料');
-    let items = (b.items || []).map(previewItem); if (b.url) items.push(fetchUrl(b.url).item); if (b.text) items.push(previewItem({ name: b.title || '粘贴的文字', text: b.text, from: '粘贴' }));
+    let items = (b.items || []).map(previewItem); if (b.url) items.push(fetchUrl(b.url).item); if (b.text) items.push(previewItem({ name: b.title || '粘贴的文字', text: b.text, from: b.from || '粘贴' }));
     if (b.space) items.forEach((it) => { if (it.meta) it.meta.space = b.space; });
     const r = commit(items, b); return Object.assign(r, { skipped: items.filter((it) => !it.ok || (it.dup && it.dup.type === 'duplicate')).map((it) => ({ name: it.name, reason: it.ok ? '已在库中' : it.error })) });
   });
-  on('GET', '/api/v1/kb/stats', () => { const vis = DOCS.filter(canSee); const st = {}; vis.forEach((d) => { const s = statusOf(d); st[s] = (st[s] || 0) + 1; }); return { docs: vis.length, chunks: vis.reduce((n, d) => n + d.chunks.length, 0), status: st, real: vis.filter((d) => d.real).length, fetched: (window.JK_REAL_KB || {}).fetched, recent: vis.slice().sort((a, b) => String(b.addedAt || b.date).localeCompare(String(a.addedAt || a.date))).slice(0, 5).map((d) => pub(d)), log: state().log.slice(0, 5), facets: facets(vis) }; });
+  on('GET', '/api/v1/kb/stats', () => {
+    const vis = DOCS.filter(canSee);
+    const status = {};
+    const otherSources = Object.create(null);
+    let real = 0, example = 0;
+    for (const d of vis) {
+      const key = statusOf(d);
+      status[key] = (status[key] || 0) + 1;
+      if (d.real) real++;
+      else if (d.example) example++;
+      else {
+        const from = d.source || '来源未注明';
+        otherSources[from] = (otherSources[from] || 0) + 1;
+      }
+    }
+    return { docs: vis.length, real, example, otherSources, status,
+      chunks: vis.reduce((n, d) => n + d.chunks.length, 0), fetched: (window.JK_REAL_KB || {}).fetched,
+      recent: vis.slice().sort((a, b) => String(b.addedAt || b.date).localeCompare(String(a.addedAt || a.date))).slice(0, 5).map((d) => pub(d)),
+      log: state().log.slice(0, 5), facets: facets(vis) };
+  });
   on('GET', '/api/v1/kb/suggest', () => ({ items: SUGGEST }));
   /* 旧接口兼容（mock-api.js 的 libraries/files/search） */
   on('GET', '/api/v1/kb/libraries', () => ({ items: SPACES.filter((s) => visSpaces().includes(s.id)).map((s) => ({ id: s.id, name: s.name, icon: s.name[0], files: DOCS.filter((d) => d.space === s.id).length })) }));

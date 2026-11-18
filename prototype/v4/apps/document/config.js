@@ -8,7 +8,7 @@ window.JK_APPCFG.document = {
   steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'],
   tabs: [['flow', '起草'], ['list', '我的文稿']],
   /* 红头（版头）文字与发文机关 */
-  redHead: '北京经济技术开发区管理委员会产业促进局',
+  redHead: '【待补：发文机关】',
   approvers: ['李阳'],
   /* 要素类型：按要素 key 决定输入控件 */
   inputTypes: { policy: 'policy', ent: 'ent', start: 'date', end: 'date', effect: 'date', oldEnd: 'date', newEnd: 'date', issue: 'long', list: 'long', reason: 'long' },

@@ -5,9 +5,11 @@ import os
 from fastapi import APIRouter, FastAPI, HTTPException
 
 from .kb import install as install_kb
+from .models import install as install_models
+from .transcribe import router as transcribe_router
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
-ROUTERS: tuple[APIRouter, ...] = ()
+ROUTERS: tuple[APIRouter, ...] = (transcribe_router,)
 
 health = APIRouter()
 stubs = APIRouter(prefix="/api/v1", include_in_schema=False)
@@ -18,7 +20,6 @@ def health_check():
     return {"ok": True}
 
 
-@stubs.get("/auth/session")
 @stubs.api_route("/admin/departments", methods=["GET", "POST"])
 @stubs.api_route("/admin/departments/{department_id}", methods=["PATCH", "DELETE"])
 def unavailable_contract_route():
@@ -34,6 +35,7 @@ def register_routes(app: FastAPI) -> None:
     core_route_count = len(routes)
     app.include_router(health)
     install_kb(app, app.state.platform, current_user)
+    install_models(app)
     for router in ROUTERS:
         app.include_router(router)
     routes[:] = routes[core_route_count:] + routes[:core_route_count]
