@@ -1,3 +1,4 @@
+import secrets
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,8 @@ def test_reset_is_hidden_in_production(instance, monkeypatch):
 def test_reset_requires_admin_and_host_receipt(instance, monkeypatch):
     app, events = instance
     monkeypatch.setenv("JKQ_DEMO_RESET_SOCKET", "/example/demo.sock")
+    proof = secrets.token_urlsafe(32)
+    monkeypatch.setenv("JKQ_DEMO_RESET_KEY", proof)
     demo.install(app)
     client = TestClient(app)
     def anonymous():
@@ -55,15 +58,17 @@ def test_reset_requires_admin_and_host_receipt(instance, monkeypatch):
     user.roles.append("admin")
     user.id = "member"
     assert client.post(url).status_code == 403
+    assert events[-1][2] == "demo.reset.denied"
     user.id = "sample"
+    assert client.post(url, headers={"X-JKQ-Reset-Key": "incorrect"}).status_code == 403
     requests = []
     def accept(path):
         requests.append(path)
         return {"ok": True}
 
     monkeypatch.setattr(demo, "request_reset", accept)
-    response = client.post(url)
-    assert response.status_code == 202 and response.json() == {"ok": True}
+    response = client.post(url, headers={"X-JKQ-Reset-Key": proof})
+    assert response.status_code == 202 and response.json() == {"ok": True, "status": "accepted"}
     assert requests == ["/example/demo.sock"] and events[-1][2] == "demo.reset.accepted"
 
 
@@ -127,3 +132,13 @@ def test_module_config_changes_only_one_http_module(tmp_path):
         code += "\nconsole.log(JSON.stringify(window.JK_CONFIG.api));"
         result = subprocess.run(["node", "-"], input=code, text=True, capture_output=True, check=True)
         assert json.loads(result.stdout) == {"mode": mode, "modules": expected}
+
+
+def test_unconfigured_operator_key_denies_even_admin(instance, monkeypatch):
+    app, events = instance
+    monkeypatch.delenv("JKQ_DEMO_RESET_KEY", raising=False)
+    monkeypatch.setattr(demo, "request_reset", lambda _: pytest.fail("无授权不得调用宿主"))
+    app.dependency_overrides[current_user] = lambda: SimpleNamespace(id="admin", roles=["admin"])
+    demo.install(app)
+    response = TestClient(app).post("/api/v1/demo/reset")
+    assert response.status_code == 403 and events[-1][2] == "demo.reset.denied"

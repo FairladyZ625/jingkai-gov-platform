@@ -1,6 +1,8 @@
 """只在回环地址运行，模型与账号配置全部来自临时测试环境。"""
 
+import json
 import os
+import shutil
 import secrets
 import socket
 import threading
@@ -19,15 +21,17 @@ ROOT = Path(__file__).resolve().parents[2]
 class DemoServer:
     url: str
     password: str = field(repr=False)
+    reset_key: str = field(repr=False)
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server(tmp_path_factory, request):
     import uvicorn
     from jkq.app import create_app
 
     tmp = tmp_path_factory.mktemp("demo-http")
     password = secrets.token_urlsafe(16)
+    reset_key = secrets.token_urlsafe(32)
     handler = partial(SimpleHTTPRequestHandler, directory=ROOT / "deploy/mock-gov/site")
     with ThreadingHTTPServer(("127.0.0.1", 0), handler) as site, pytest.MonkeyPatch.context() as env:
         for name in tuple(os.environ):
@@ -36,12 +40,32 @@ def server(tmp_path_factory):
         for key, value in {
             "HAIKNOW_SECRET": secrets.token_urlsafe(32), "HAIKNOW_DATA_DIR": str(tmp / "data"),
             "HAIKNOW_NO_AUTOAPP": "1", "HAIKNOW_KB_SEED": "1", "JKQ_DEMO_MODE": "1",
+            "JKQ_DEMO_RESET_KEY": reset_key,
             "JKQ_ENTERPRISE_PRIVATE_DB": str(tmp / "enterprise.db"),
             "JKQ_MOCK_GOV_URL": f"http://127.0.0.1:{site.server_port}",
         }.items():
             env.setenv(key, value)
         for role in ("ADMIN", "MEMBER", "PARTNER", "LEADER"):
             env.setenv(f"JKQ_DEMO_{role}_PASSWORD", password)
+        if hasattr(request, "param"):
+            from deploy.entrypoint import use_same_origin_http
+            from jkq.settings import web_directory
+            import yaml
+
+            source = Path(os.environ.get("T49_TEST_WEB") or web_directory(ROOT))
+            site_dir = shutil.copytree(source, tmp / "web")
+            config_dir = shutil.copytree(ROOT / "config", tmp / "config")
+            demo_path = config_dir / "demo.yaml"
+            options = yaml.safe_load(demo_path.read_text())
+            options["mock_modules"] = list(request.param)
+            demo_path.write_text(yaml.safe_dump(options, allow_unicode=True))
+            env.setenv("HAIKNOW_CONFIG_DIR", str(config_dir))
+            env.setenv("JKQ_WEB_DIR", str(site_dir))
+            env.setenv("JKQ_DEPLOY_RUNTIME", "1")
+            use_same_origin_http(tmp)
+            with (site_dir / "config/app.config.js").open("a") as script:
+                script.write("\nwindow.JK_CONFIG.demoAccounts.forEach(a => a.password = " +
+                             json.dumps(password) + ");\n")
         from jkq.kb.importer.public_url import PublicPage, PublicURLReader
 
         async def read_fixture(reader, url):
@@ -62,7 +86,7 @@ def server(tmp_path_factory):
                 while not instance.started:
                     assert thread.is_alive() and time.monotonic() < deadline, "实例启动失败"
                     time.sleep(0.02)
-                yield DemoServer(f"http://127.0.0.1:{listener.getsockname()[1]}", password)
+                yield DemoServer(f"http://127.0.0.1:{listener.getsockname()[1]}", password, reset_key)
             finally:
                 instance.should_exit = True
                 thread.join(10)
