@@ -6,9 +6,28 @@
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const exampleLabel = '示例（无对应原文）';
   const defaultBookPolicy = 'RP-024';
-  const legacyDocumentNumber = /^京技产促〔2026〕(?:【待补】|51|58)号$/;
-  const DEMO_SEED_VERSION = 2;
+  const legacyDocumentPlaceholder = '京技产促〔2026〕【待补】号';
+  const legacySeedDocumentNumber = '京技产促〔2026〕51号';
+  const legacyFixedDocumentNumber = '京技产促〔2026〕58号';
+  // 只映射政策复核表中明确合并的旧条目。下线且无依据的条目没有替代 ID。
+  const legacyPolicyIds = new Map([['PI-01', 'RP-003'], ['PI-08', 'RP-006'], ['PI-10', 'RP-007'], ['PI-16', 'PI-17']]);
+  const DEMO_SEED_VERSION = 3;
   let S;
+
+  function upgradeSeedDocumentNumbers() {
+    const seeded = new Set([...SEED.documents.map((draft) => draft.id), 'DOC-1112']);
+    for (const draft of Object.values(S.drafts || {})) {
+      const { versions } = draft;
+      const numbers = versions.map(({ content }) => content.docNo);
+      versions.forEach(({ by, content }, index) => {
+        const generated = index === 0 && (seeded.has(draft.id) || by.endsWith('（AI 初稿）'));
+        const seededFinal = index === 0 && seeded.has(draft.id) && numbers[index] === legacySeedDocumentNumber;
+        const autoFixed = by.endsWith('（一键修正）') && numbers[index - 1] === legacyDocumentPlaceholder &&
+          numbers[index] === legacyFixedDocumentNumber;
+        if ((generated && numbers[index] === legacyDocumentPlaceholder) || seededFinal || autoFixed) content.docNo = '';
+      });
+    }
+  }
 
   function upgradeDemoCache() {
     const companies = new Map(SEED.enterprises.map((e) => [e.id, e]));
@@ -16,23 +35,44 @@
     for (const old of S.enterprises) {
       const current = companies.get(old.id);
       if (!current?.example) continue;
-      for (const field of ['name', 'short']) {
-        if (old[field] && old[field] !== current[field]) names.set(old[field], current[field]);
+      const edited = new Set((old.history || []).filter((h) => h.source === '手动修改').map((h) => h.field));
+      for (const field of ['name', 'short', 'creditCode']) {
+        if (edited.has(field)) continue;
+        if (field !== 'creditCode' && old[field] && old[field] !== current[field]) names.set(old[field], current[field]);
+        old[field] = current[field];
       }
-      Object.assign(old, { example: true, creditCode: current.creditCode });
+      old.example = true;
     }
     if (names.size) {
       const alternatives = [...names.keys()].sort((a, b) => b.length - a.length)
         .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       const pattern = new RegExp(alternatives.join('|'), 'g');
-      const rename = (_, value) => typeof value === 'string'
+      const rename = (value) => typeof value === 'string'
         ? value.replace(pattern, (name) => names.get(name)) : value;
-      S = JSON.parse(JSON.stringify(S), rename);
+      for (const conv of S.conversations) {
+        conv.title = rename(conv.title);
+        for (const msg of S.messages?.[conv.id] || []) {
+          if (msg.role === 'assistant' && !msg.citations?.length) msg.content = rename(msg.content);
+        }
+      }
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (!key?.startsWith('jk4-convs:')) continue;
         try {
-          localStorage.setItem(key, JSON.stringify(JSON.parse(localStorage.getItem(key), rename)));
+          const conversations = JSON.parse(localStorage.getItem(key));
+          for (const conv of conversations) {
+            conv.title = rename(conv.title);
+            for (const msg of conv.msgs || []) {
+              if (msg.role === 'plan') msg.title = rename(msg.title);
+              if (msg.role !== 'ai' || msg.cites?.length) continue;
+              msg.text = rename(msg.text);
+              for (const action of msg.next || []) {
+                if (action.label) action.label = rename(action.label);
+                if (action.say) action.say = rename(action.say);
+              }
+            }
+          }
+          localStorage.setItem(key, JSON.stringify(conversations));
         } catch (e) { /* 无法解析的记录仍由外壳的读取逻辑处理。 */ }
       }
     }
@@ -44,7 +84,6 @@
         meeting.title = '【示例】' + meeting.title;
       }
     }
-    S.demoSeedVersion = DEMO_SEED_VERSION;
   }
 
   function load() {
@@ -56,12 +95,15 @@
         S.policies = clone(SEED.policies);
         S.policyDocs = clone(SEED.policyDocs);
         S.realNotices = clone(SEED.realNotices);
-        for (const draft of Object.values(S.drafts || {})) {
-          for (const { content } of draft.versions) {
-            if (legacyDocumentNumber.test(content.docNo)) content.docNo = '';
+        const version = S.demoSeedVersion || 0;
+        if (version < DEMO_SEED_VERSION) {
+          if (version < 2) {
+            upgradeDemoCache();
+            upgradeSeedDocumentNumbers();
           }
+          S.demoSeedVersion = DEMO_SEED_VERSION;
+          save();
         }
-        if ((S.demoSeedVersion || 0) < DEMO_SEED_VERSION) upgradeDemoCache();
         return;
       }
     } catch (e) {}
@@ -220,8 +262,26 @@
       if (/的的|申报申报|载止|截至日期/.test(p)) issues.push({ id: 'c-t' + i, level: 'warn', kind: '错别字', text: `第 ${i + 1} 段疑似错别字：${p.match(/的的|申报申报|载止|截至日期/)[0]}`, para: i, fix: 'typo' });
       if (/咱们|赶紧|搞|弄好|大家/.test(p)) issues.push({ id: 'c-s' + i, level: 'info', kind: '语体', text: `第 ${i + 1} 段有口语化表达：“${p.match(/咱们|赶紧|搞|弄好|大家/)[0]}”`, para: i, fix: 'polish' });
     });
-    const nums = all.match(/最高\s*(?:不超过)?\s*(\d+)\s*万元/g) || [];
-    if (d.policyId) { const p = pol(d.policyId); const cap = p && p.rule.cap ? p.rule.cap / 10000 : null; nums.forEach((n) => { const x = +n.match(/(\d+)/)[1]; if (cap && x !== cap && x * 10000 !== p.rule.fixed) issues.push({ id: 'c-n' + x, level: 'error', kind: '数字一致', text: `“${n}”与政策原文（最高 ${cap} 万元）不一致` }); }); }
+    if (d.policyId) {
+      const replacement = legacyPolicyIds.get(d.policyId);
+      const p = pol(replacement || d.policyId);
+      if (!p) {
+        issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `旧事项 ${d.policyId} 已下线，请在新建文稿时重新选择有效的政策事项，并核对原文。` });
+      } else {
+        if (replacement) {
+          const current = policyItem(p);
+          const ruleText = d.templateId === 'T10' ? current.original : current.rule.text;
+          if (!all.includes(documentBasis(current)) || !all.includes(ruleText)) {
+            issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `旧事项 ${d.policyId} 已并入 ${p.id}，请在事项库核对并更新文稿中的政策依据和支持标准后再送审。` });
+          }
+        }
+        const cap = p.rule.cap ? p.rule.cap / 10000 : null;
+        for (const [mention, amount] of all.matchAll(/最高\s*(?:不超过)?\s*(\d+(?:\.\d+)?)\s*万元/g)) {
+          const x = Number(amount);
+          if (cap && x !== cap && x * 10000 !== p.rule.fixed) issues.push({ id: 'c-n' + x, level: 'error', kind: '数字一致', text: `“${mention}”与政策原文（最高 ${cap} 万元）不一致` });
+        }
+      }
+    }
     if (d.templateId === 'T08' && !/拟/.test(d.title)) issues.push({ id: 'c-ni', level: 'error', kind: '公示规范', text: '公示标题须保留“拟”字' });
     if (d.templateId === 'T06' && !/不变/.test(all)) issues.push({ id: 'c-bb', level: 'warn', kind: '口径', text: '期限调整通知应写明“其他事项不变”' });
     if (!issues.length) issues.push({ id: 'c-ok', level: 'ok', kind: '通过', text: '未发现问题：文号、日期、数字、语体均已核对' });
@@ -417,7 +477,7 @@
         const { result } = callSync('POST', '/api/apps/policy/calc', { itemId: p.id, amount: b.amounts[p.id] });
         if (result) lines.push(`   试算参考：${result.text}`);
       }
-      lines.push(`   申报时间：${p.times.window || '以正式通知为准'}`,
+      lines.push(`   申报时间：${p.times.open === false ? '本批已结束。' : ''}${p.times.deadlineText || p.times.window || '以正式通知为准'}`,
         `   需准备材料：${p.materials.join('、') || '以正式申报通知为准'}`);
       if (p.pending.length) lines.push(`   尚需确认：${p.pending.join('、')}`);
       if (p.source?.url) lines.push(`   原文：${p.source.url}`);

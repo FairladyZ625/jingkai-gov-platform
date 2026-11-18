@@ -228,6 +228,8 @@ test('告知单共用工具路由，按实际选择去重落款并留空电话',
   assert.doesNotMatch(missing.text, /商务金融局　/);
   const noDocNo = await policy.notice({ itemIds: ['PI-06'] });
   assert.doesNotMatch(noDocNo.text, /undefined|（无文号）/);
+  const ended = await policy.notice({ entId: 'E002', itemIds: ['RP-003'] });
+  assert.match(ended.text, /^   申报时间：本批已结束。最近一批已于 2026\.11\.06 截止/m);
   await assert.rejects(policy.notice({ entId: 'E002', itemIds: ['PI-08'] }), { code: 'NOT_FOUND' });
 });
 
@@ -257,18 +259,66 @@ test('公文新建、核查、修正、审签和导出不会生成发文字号',
   assert.doesNotMatch(exp.html, /京技产促/);
 });
 
-test('旧 localStorage 使用当前目录，保留用户状态与手工文号', async () => {
+test('旧公文经一次性升级，只清理有生成记录的演示文号', async () => {
   const fresh = boot();
   const old = fresh.api.state();
   delete old.demoSeedVersion;
   old.myTodos = [{ id: '测试待办' }];
   old.policies.push({ id: 'PI-08' });
   const versions = old.drafts['DOC-1112'].versions;
-  versions[0].content.docNo = '京技产促〔2026〕58号';
-  versions[1].content.docNo = '手填示例字〔2026〕1号';
-  const { api, policy } = boot({ stored: JSON.stringify(old) });
+  const manualNumber = '京技产促〔2026〕58号';
+  versions[0].content.docNo = '京技产促〔2026〕【待补】号';
+  versions[1] = { ...versions[1], by: '王敏（一键修正）', content: { ...versions[1].content, docNo: manualNumber } };
+  versions.push({ ...versions[1], v: 3, by: '王敏', content: { ...versions[1].content, docNo: manualNumber } });
+  const { api, policy, stored } = boot({ stored: JSON.stringify(old) });
   assert.ok(!(await policy.items()).items.some((p) => p.id === 'PI-08'));
   assert.equal(api.state().myTodos[0].id, '测试待办');
   assert.equal(api.state().drafts['DOC-1112'].versions[0].content.docNo, '');
-  assert.equal(api.state().drafts['DOC-1112'].versions[1].content.docNo, '手填示例字〔2026〕1号');
+  assert.equal(api.state().drafts['DOC-1112'].versions[1].content.docNo, '');
+  const migrated = JSON.parse(stored());
+  assert.equal(migrated.demoSeedVersion, 3);
+  assert.equal(latest(migrated.drafts['DOC-1112']).docNo, manualNumber);
+
+  // 已使用 v2 的缓存里，即便文号碰巧与旧自动值相同，也已属于用户内容。
+  migrated.demoSeedVersion = 2;
+  migrated.drafts['DOC-1112'].versions[0].content.docNo = '京技产促〔2026〕51号';
+  const reopened = boot({ stored: JSON.stringify(migrated) });
+  assert.equal(reopened.api.state().drafts['DOC-1112'].versions[0].content.docNo, '京技产促〔2026〕51号');
+  const resource = documentRoute + '/drafts/DOC-1112';
+  const content = { ...latest(reopened.api.state().drafts['DOC-1112']), docNo: manualNumber };
+  await reopened.api.put(resource, { content });
+  let snapshot = reopened.stored();
+  for (let refresh = 0; refresh < 2; refresh++) {
+    const page = boot({ stored: snapshot });
+    assert.equal(latest((await page.api.get(resource)).item).docNo, manualNumber);
+    snapshot = page.stored();
+  }
+});
+
+test('历史政策草稿仍须按可信映射核对金额和依据，无替代时阻止送审', async () => {
+  const baseline = boot();
+  const inputs = { policy: 'RP-006', start: '2026-11-18', end: '2026-12-01', contact: '请填写' };
+  const { item: current } = await baseline.api.post(documentRoute + '/drafts', { templateId: 'T03', inputs });
+  const stale = plain(latest(current));
+  stale.paragraphs[0] = '根据旧发文，现就算力券申报有关事项说明如下。';
+  stale.paragraphs[2] = '二、支持标准。按照投入的30%，最高123万元。';
+  const state = baseline.api.state();
+  state.drafts[current.id].policyId = 'PI-08';
+  state.drafts[current.id].versions[0].content = stale;
+  state.drafts['DOC-REMOVED'] = { ...state.drafts[current.id], id: 'DOC-REMOVED', policyId: 'PI-18' };
+
+  const { api } = boot({ stored: JSON.stringify(state) });
+  const resource = documentRoute + '/drafts/' + current.id;
+  const { issues } = await api.post(resource + '/check', {});
+  assert.ok(issues.some((i) => i.kind === '数字一致' && i.text.includes('2000 万元')));
+  assert.ok(issues.some((i) => i.kind === '政策依据' && i.text.includes('RP-006')));
+  await assert.rejects(api.post(resource + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
+  assert.equal((await api.get(resource)).item.status, '草稿');
+  const removed = documentRoute + '/drafts/DOC-REMOVED';
+  assert.ok((await api.post(removed + '/check', {})).issues.some((i) => i.text.includes('重新选择')));
+  await assert.rejects(api.post(removed + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
+
+  await api.put(resource, { content: latest(current) });
+  assert.equal((await api.post(resource + '/submit', {})).item.status, '审签中');
+  assert.deepEqual(plain((await api.get(resource)).item.versions[0].content), stale);
 });

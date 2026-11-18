@@ -163,7 +163,7 @@
       function detailFold(x, p) {
         const t = p.times || {};
         return `<div class="fold stack">${x.checks.map((c) => `<div class="ck-row"><span class="ck h-${c.state === 'ok' ? 'green' : c.state === 'no' ? 'red' : 'amber'}">${c.state === 'ok' ? '✓' : c.state === 'no' ? '✕' : '?'}</span>${esc(c.label)}</div>`).join('')}
-          <div class="times"><div><b>政策有效期</b>${esc(t.valid || '—')}</div><div><b>事项发生期</b>${esc(t.occur || '—')}</div><div><b>申报窗口</b>${esc(t.window || '—')}</div></div>
+          <div class="times"><div><b>政策有效期</b>${esc(t.valid || '—')}</div><div><b>事项发生期</b>${esc(t.occur || '—')}</div><div><b>申报窗口</b>${esc(t.deadlineText || t.window || '—')}</div></div>
           <div class="meta">支持标准：${esc(x.rule || (p.rule && p.rule.text) || '—')}</div>
           ${(x.pending || []).length ? `<div class="meta">尚需确认：${x.pending.map(esc).join('、')}</div>` : ''}${p.versionNote ? `<div class="callout h-amber">${icon('alert')}<div>${esc(p.versionNote)}</div></div>` : ''}</div>`;
       }
@@ -171,24 +171,51 @@
       /* ---------- 第 3 步：试算 ---------- */
       const chosen = () => (S.match ? S.match.results.filter((x) => x.level !== 'no' && S.picked.has(x.id)) : []);
       const profile = () => (S.match && S.match.profile) || {};
+      const baseAmount = (x) => {
+        const base = byId(x.id)?.rule?.base;
+        return x.calc?.base ?? (base ? profile()[base] : null);
+      };
       function step2() {
         const list = chosen();
-        list.forEach((x) => { const p = byId(x.id); if (!S.calc[x.id]) { const base = p.rule && p.rule.base; const v = base ? (S.overrides[base] != null ? S.overrides[base] : profile()[base]) : null; S.calc[x.id] = { amount: v, result: x.calc }; } });
-        const ratios = list.map((x) => S.calc[x.id]?.result).filter((r) => r?.kind === 'ratio');
-        const summary = ratios.length === 1 ? fmt(ratios[0].amount) : `${ratios.length} 项`;
-        $('#ps').innerHTML = `<div class="q">${ratios.length === 1 ? '按比例试算金额' : '已按比例试算'}</div><div class="big pol-total num" data-op="policy.total">${summary}</div><div class="q-sub" style="margin-top:4px">各项金额单独列示，叠加规则和实际支持额度以正式审核为准。</div>
+        list.forEach((x) => { S.calc[x.id] ??= { amount: baseAmount(x), result: x.calc, edited: false }; });
+        $('#ps').innerHTML = `<div class="pol-calc-summary">${calcSummary(list)}</div><div class="q-sub" style="margin-top:4px">各项金额单独列示，叠加规则和实际支持额度以正式审核为准。</div>
           <div class="stack rows">${list.map((x) => calcRow(x)).join('')}</div>`;
         foot(back(), `<button class="btn primary" data-act="toNotice" data-op="policy.to-notice">生成告知单</button>`);
       }
-      function calcRow(x) {
-        const p = byId(x.id); const base = p.rule && p.rule.base; const c = S.calc[x.id] || {}; const r = c.result;
-        return `<div class="card tight pol-calc"><div class="grow pol-cl"><div class="pol-t">${esc(x.title)} ${exampleTag(p)}</div><div class="meta clip" title="${esc(p.rule ? p.rule.text : '')}">${esc(p.rule ? p.rule.text : '')}</div>${r && r.kind !== 'fixed' ? `<div class="t-sm t-2 num" style="margin-top:4px">${esc(r.text)} ${r.capped ? tag('已按封顶', 'status', { cls: 'plain' }) : ''}</div>` : ''}</div>
-          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}"></div>` : ''}
-          <div class="pol-amt pol-ca num">${r ? (r.upTo ? '<span class="meta">最高</span> ' : '') + fmt(r.amount) : p.rule?.manual ? '<span class="meta">需人工核对</span>' : '<span class="meta">经评审确定</span>'}</div></div>`;
+      function calcSummary(list) {
+        const ratios = list.map((x) => S.calc[x.id]?.result).filter((r) => r?.kind === 'ratio');
+        const summary = ratios.length === 1 ? fmt(ratios[0].amount) : `${ratios.length} 项`;
+        return `<div class="q">${ratios.length === 1 ? '按比例试算金额' : '已按比例试算'}</div><div class="big pol-total num" data-op="policy.total">${summary}</div>`;
       }
-      async function recalc(id, unitVal) {
-        const p = byId(id); const base = p.rule.base; const amount = unitVal === '' ? null : +unitVal * F(base)[2];
-        S.calc[id] = { amount, result: amount ? (await P.calc({ itemId: id, amount })).result : null };
+      function calcRow(x) {
+        const p = byId(x.id) || {}; const base = p.rule && p.rule.base; const c = S.calc[x.id] || {}; const r = c.result;
+        return `<div class="card tight pol-calc"><div class="grow pol-cl"><div class="pol-t">${esc(x.title)} ${exampleTag(p)}</div><div class="meta clip" title="${esc(p.rule ? p.rule.text : '')}">${esc(p.rule ? p.rule.text : '')}</div><div class="pol-calc-text">${calcResultText(r)}</div></div>
+          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}"></div>` : ''}
+          <div class="pol-amt pol-ca num">${calcResultAmount(p, r)}</div></div>`;
+      }
+      const calcResultText = (r) => r && r.kind !== 'fixed' ? `<div class="t-sm t-2 num" style="margin-top:4px">${esc(r.text)} ${r.capped ? tag('已按封顶', 'status', { cls: 'plain' }) : ''}</div>` : '';
+      const calcResultAmount = (p, r) => r ? (r.upTo ? '<span class="meta">最高</span> ' : '') + fmt(r.amount) : p.rule?.manual ? '<span class="meta">需人工核对</span>' : '<span class="meta">经评审确定</span>';
+      function setCalcAmount(input) {
+        const id = input.dataset.camt;
+        const base = byId(id).rule.base;
+        const amount = input.valueAsNumber > 0 ? input.valueAsNumber * F(base)[2] : null;
+        S.calc[id] = { amount, result: null, edited: true };
+      }
+      async function recalc(id) {
+        const calc = S.calc[id];
+        try {
+          const result = calc.amount == null ? null : (await P.calc({ itemId: id, amount: calc.amount })).result;
+          if (S.calc[id] !== calc) return;
+          calc.result = result;
+          if (S.tab !== 'flow' || S.step !== 2) return;
+          const row = $(`[data-camt="${id}"]`)?.closest('.pol-calc');
+          if (!row) return;
+          row.querySelector('.pol-calc-text').innerHTML = calcResultText(result);
+          row.querySelector('.pol-ca').innerHTML = calcResultAmount(byId(id), result);
+          $('.pol-calc-summary').innerHTML = calcSummary(chosen());
+        } catch (e) {
+          if (S.calc[id] === calc) ui.toast(e.message || '试算失败', { type: 'err' });
+        }
       }
 
       /* ---------- 第 4 步：告知单 ---------- */
@@ -196,13 +223,15 @@
         if (!chosen().length || S.busy) return;
         const match = S.match, step = S.step;
         const list = chosen();
-        const amounts = Object.fromEntries(list.map((x) => {
-          return [x.id, S.calc[x.id] ? S.calc[x.id].amount : x.calc?.base ?? null];
-        }));
+        const inputs = list.map((x) => [x, S.calc[x.id]]);
+        const amounts = Object.fromEntries(inputs.map(([x, calc]) => [
+          x.id, calc ? calc.amount : x.calc?.base ?? null,
+        ]));
         S.busy = true;
         try {
           const { text } = await P.notice({ entId: S.mode === 'ent' ? S.entId : undefined, itemIds: list.map((x) => x.id), amounts });
           if (S.match !== match || S.step !== step) return;
+          if (inputs.some(([x, calc]) => S.calc[x.id] !== calc)) return;
           S.notice = text;
           S.step = 3;
           if (S.tab === 'flow') body();
@@ -286,13 +315,29 @@
       }
 
       /* ---------- 业务动作 ---------- */
+      function normalizeMatch(response) {
+        const results = response.results.map((result) => ({
+          ...result,
+          ended: result.ended ?? ((result.open ?? byId(result.id)?.times?.open) === false),
+        }));
+        const applicable = results.filter((x) => x.level !== 'no');
+        const eligible = applicable.filter((x) => !x.ended);
+        const ok = eligible.filter((x) => x.level === 'ok');
+        return {
+          ...response,
+          results,
+          total: response.total ?? ITEMS.length,
+          summary: { ...response.summary, ended: response.summary.ended ?? applicable.length - eligible.length },
+          defaultItemIds: response.defaultItemIds ?? (ok.length ? ok : eligible.slice(0, 2)).map((x) => x.id),
+        };
+      }
       async function runMatch() {
         S.busy = true; S.match = null; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
         try {
           let b;
           if (S.mode === 'ent') b = { entId: S.entId, overrides: S.overrides };
           else { const m = S.manual; b = { profile: Object.assign({ subjectType: m.object === '其他组织' ? '其他组织' : m.object, tags: [...m.tags], license: [...m.license], regInZone: true }, m.yearsInZone !== '' ? { yearsInZone: +m.yearsInZone } : {}, m.amounts, S.overrides) }; }
-          S.match = await P.match(b);
+          S.match = normalizeMatch(await P.match(b));
           S.picked = new Set(S.match.defaultItemIds);
         } catch (e) { ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0; }
         S.busy = false; if (S.tab === 'flow') body(); return S.match;
@@ -365,10 +410,11 @@
         const t = ev.target; const d = t.dataset;
         if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); S.calc = {}; body(); return; }
         if (d.lic) { if (t.checked) applyFill('license', d.lic); return; }
-        if (d.camt) { await recalc(d.camt, t.value); body(); return; }
+        if (d.camt) { if (S.calc[d.camt]?.edited) await recalc(d.camt); return; }
         if (d.mnum) { S.manual[d.mnum] = t.value; return; }
         if (d.mamt) { if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
       });
+      el.addEventListener('input', (ev) => { if (ev.target.dataset.camt) setCalcAmount(ev.target); });
       el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.dataset.fill) { const b = ev.target.parentElement.querySelector('[data-act=refill]'); b && b.click(); } });
 
       load();

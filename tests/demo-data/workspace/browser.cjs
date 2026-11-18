@@ -97,7 +97,7 @@ async function checkKb(page) {
   assert.equal(await countOf(summary), counts.total + 1);
 }
 
-async function checkPolicy(page) {
+async function checkPolicy(page, legacy) {
   await page.evaluate(() => JKShell.openApp('policy'));
   const tab = op(page, 'policy.tab-items');
   await tab.click();
@@ -117,6 +117,22 @@ async function checkPolicy(page) {
   assert.equal(filtered, expected);
   console.log('政策库全部 ' + all + ' 行，个人筛选 ' + filtered + ' 行');
 
+  await page.evaluate((legacy) => {
+    const request = JKAPI.request.bind(JKAPI);
+    window.pendingPolicyCalculations = {};
+    JKAPI.request = async (method, route, body) => {
+      const result = await request(method, route, body);
+      if (route === '/api/apps/policy/match' && legacy) {
+        const { profile, results, summary: { ok, check, no } } = result;
+        // 模拟规范 4.1 的精简响应，同时验证目录可补上未返回的窗口状态。
+        return { profile, results: results.map(({ ended, open, ...item }) => item), summary: { ok, check, no } };
+      }
+      if (route === '/api/apps/policy/calc' && body.itemId === 'RP-006') {
+        await new Promise((resolve) => { window.pendingPolicyCalculations[body.amount] = resolve; });
+      }
+      return result;
+    };
+  }, legacy);
   await page.evaluate(() => JKShell.newChat());
   await page.evaluate(() => JKShell.send(JK_CONFIG.homeSuggestions[0].text));
   const selection = op(page, 'policy.selection');
@@ -124,13 +140,63 @@ async function checkPolicy(page) {
   await op(page, 'policy.show-all').click();
   assert.equal(await panel.locator('input[data-pick]').count(), 12);
   assert.equal(await panel.locator('input[data-pick]:checked').count(), 9);
-  console.log('政策匹配 12 行，勾选 9 行，本批已结束 3 项');
+  console.log((legacy ? '旧匹配响应' : '当前匹配响应') + '：12 行，勾选 9 行，本批已结束 3 项');
+
+  await op(page, 'policy.next').click();
+  const amount = op(page, 'policy.calc-RP-006');
+  const row = panel.locator('.pol-calc').filter({ has: amount });
+  await amount.fill('222');
+  await amount.press('Tab');
+  await page.waitForFunction(() => pendingPolicyCalculations[2220000]);
+  await amount.fill('123');
+  await amount.press('Tab');
+  await page.waitForFunction(() => pendingPolicyCalculations[1230000]);
+  await page.evaluate(() => pendingPolicyCalculations[1230000]());
+  await row.getByText(/123 万元 × 30% = 36\.9 万元/).waitFor();
+  await page.evaluate(() => pendingPolicyCalculations[2220000]());
+  assert.equal(await amount.inputValue(), '123');
+  assert.match(await row.innerText(), /123 万元 × 30% = 36\.9 万元/);
+
+  await amount.fill('130');
+  await op(page, 'policy.to-notice').click();
+  const preview = op(page, 'policy.notice-text');
+  await preview.waitFor();
+  const content = await preview.inputValue();
+  assert.match(content, /试算参考：130 万元 × 30% = 39 万元/);
+  assert.doesNotMatch(content, /试算参考：123 万元 × 30%/);
+  await page.waitForFunction(() => pendingPolicyCalculations[1300000]);
+  await page.evaluate(() => pendingPolicyCalculations[1300000]());
+  const downloadEvent = page.waitForEvent('download');
+  await op(page, 'policy.download').click();
+  const download = await downloadEvent;
+  assert.equal(fs.readFileSync(await download.path(), 'utf8'), content);
+  console.log('告知单在试算回包前生成，预览和下载都用当前 130 万元');
+
+  const dataCompany = await page.evaluate(() => JKAPI.state().enterprises.find(({ id }) => id === 'E003').short);
+  await page.evaluate((name) => {
+    JKShell.newChat();
+    return JKShell.send(`帮我查一下${name}能申报哪些政策`);
+  }, dataCompany);
+  await panel.locator('#ps > .q').filter({ hasText: dataCompany }).waitFor();
+  if (await op(page, 'policy.show-all').count()) await op(page, 'policy.show-all').click();
+  const closed = panel.locator('[data-res="RP-003"]');
+  assert.match(await closed.innerText(), /本批已结束/);
+  await op(page, 'policy.more-RP-003').click();
+  assert.match(await closed.innerText(), /2026\.11\.06 截止/);
+  await op(page, 'policy.pick-RP-003').check();
+  await op(page, 'policy.next').click();
+  await op(page, 'policy.to-notice').click();
+  await preview.waitFor();
+  assert.match(await preview.inputValue(), /申报时间：本批已结束。最近一批已于 2026\.11\.06 截止/);
+  console.log('RP-003 匹配详情和告知单均显示 2026.11.06 截止与本批已结束');
 }
 
 async function checkUpgrade(page) {
   const oldShort = '星河智驾';
   const newShort = '纸鹿二号智驾';
-  await page.evaluate(({ oldShort, newShort }) => {
+  const imported = '用户原文中保留' + oldShort + '的历史称谓。';
+  const fileId = await page.evaluate(async ({ oldShort, newShort, imported }) => {
+    const { docs } = await JKAPI.post('/api/v1/kb/import', { text: imported, title: '历史原文核验' });
     const state = JSON.parse(JSON.stringify(JKAPI.state()), (_, value) =>
       typeof value === 'string' ? value.replaceAll(newShort, oldShort) : value,
     );
@@ -138,28 +204,39 @@ async function checkUpgrade(page) {
     const company = state.enterprises.find((item) => item.id === 'E002');
     delete company.example;
     company.creditCode = '旧演示格式';
+    state.drafts['DOC-1112'].versions[0].content.paragraphs[0] = imported;
     localStorage.setItem(JK_STATE_KEY, JSON.stringify(state));
     localStorage.setItem('jk4-convs:' + state.me, JSON.stringify([
-      { id: 'legacy', title: oldShort + '走访', msgs: [] },
+      { id: 'legacy', title: oldShort + '走访', msgs: [
+        { role: 'user', text: imported, file: { text: imported } },
+        { role: 'ai', text: oldShort + '的示例台账' },
+        { role: 'ai', text: imported, cites: [{ snippet: imported }] },
+      ] },
       { id: 'other', title: '保留的草稿', msgs: [] },
     ]));
-  }, { oldShort, newShort });
+    return docs[0].id;
+  }, { oldShort, newShort, imported });
   await page.reload();
   await op(page, 'nav.inbox').waitFor();
   await page.locator('[data-conv="legacy"]').getByText(newShort + '走访').waitFor();
   await page.getByText('保留的草稿', { exact: true }).waitFor();
+  await page.locator('[data-conv="legacy"]').click();
+  await page.locator('#chatcol').getByText(newShort + '的示例台账').waitFor();
   await page.reload();
   await op(page, 'nav.inbox').waitFor();
   await page.locator('[data-conv="legacy"]').getByText(newShort + '走访').waitFor();
-  const result = await page.evaluate((oldShort) => {
-    const stored = Object.keys(localStorage).filter((key) =>
-      key === JK_STATE_KEY || key.startsWith('jk4-convs:'),
-    ).map((key) => localStorage.getItem(key));
+  const result = await page.evaluate(async (fileId) => {
     const { name, creditCode, example } = JKAPI.state().enterprises.find((item) => item.id === 'E002');
-    return { name, creditCode, example, oldName: stored.some((value) => value.includes(oldShort)) };
-  }, oldShort);
-  assert.deepEqual(result, { name: '北京纸鹿二号智驾科技有限公司', creditCode: 'DEMO-E002', example: true, oldName: false });
-  console.log('旧 localStorage 升级并重载两次，企业及对话使用新名，其他历史保留');
+    const state = JSON.parse(localStorage.getItem(JK_STATE_KEY));
+    const { msgs } = JSON.parse(localStorage.getItem('jk4-convs:' + state.me)).find(({ id }) => id === 'legacy');
+    const { item } = await JKAPI.get('/api/v1/kb/docs/' + fileId);
+    return { name, creditCode, example, version: state.demoSeedVersion,
+      imported: item.text, draft: state.drafts['DOC-1112'].versions[0].content.paragraphs[0],
+      user: msgs[0].text, file: msgs[0].file.text, citation: msgs[2].cites[0].snippet };
+  }, fileId);
+  assert.deepEqual(result, { name: '北京纸鹿二号智驾科技有限公司', creditCode: 'DEMO-E002', example: true,
+    version: 3, imported, draft: imported, user: imported, file: imported, citation: imported });
+  console.log('旧缓存重载两次，示例企业和对话派生字段已更新，用户原文、附件、引用和公文历史逐字保留');
 }
 
 async function main() {
@@ -179,7 +256,7 @@ async function main() {
         await checkHome(page);
         await checkEnterprise(page, width);
         await checkKb(page);
-        await checkPolicy(page);
+        await checkPolicy(page, width === 1280);
         await checkUpgrade(page);
         assert.deepEqual(errors, []);
       } finally {
