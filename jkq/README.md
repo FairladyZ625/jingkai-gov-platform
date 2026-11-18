@@ -11,6 +11,8 @@ make seed
 make dev
 ```
 
+Windows 原生环境可用 `python` 替换 `python3`，并通过 `$env:HAIKNOW_SECRET` 设置密钥后直接运行 `python -m jkq.seed` 与 `PYTHONPATH=core/server;core/sdk` 下的 `python -m uvicorn jkq.app:create_app --factory --host 127.0.0.1 --port 8000`（`Makefile` 目标适用于 Linux/macOS 或 Git Bash/WSL）。
+
 打开 <http://localhost:8000/> 可看同源托管的原型，访问
 `/api/health` 得到 `{"ok":true}`。`make test` 运行 Python 回归测试。
 `make seed` 通过实例工厂初始化数据库，新库只有 `jkq` 一个项目，

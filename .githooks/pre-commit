@@ -1,2 +1,11 @@
 #!/bin/sh
-exec python3 scripts/guard.py
+for py in python3 python; do
+    if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)" >/dev/null 2>&1; then
+        exec "$py" scripts/guard.py
+    fi
+done
+if command -v py >/dev/null 2>&1 && py -3 -c "import sys" >/dev/null 2>&1; then
+    exec py -3 scripts/guard.py
+fi
+echo "未找到可用的 Python 3 解释器，无法运行 scripts/guard.py" >&2
+exit 1

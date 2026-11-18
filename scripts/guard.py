@@ -24,7 +24,10 @@ def forbidden(path):
 
 
 def scan():
-    os.chdir(Path(os.fsdecode(git("rev-parse", "--show-toplevel").rstrip(b"\n"))))
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    os.chdir(Path(os.fsdecode(git("rev-parse", "--show-toplevel").rstrip(b"\r\n"))))
     rules = json.loads(git("show", ":" + RULES))
     checked = issues = 0
     for record in git("ls-files", "--stage", "-z").split(b"\0"):
