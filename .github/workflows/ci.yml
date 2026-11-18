@@ -46,13 +46,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: 前端冒烟
+      - name: Web 冒烟和 12 段演示
         run: |
-          if test -d tests/demo; then
-            cd tests/demo
-            npm ci
-            npx --no-install playwright install --with-deps chromium
-            npm test
-          else
-            echo "::notice::tests/demo 尚未交付，本次跳过"
-          fi
+          npm --prefix web ci
+          (cd web && npx --no-install playwright install --with-deps chromium)
+          npm --prefix web run test:smoke
+          npm --prefix web run test:e2e
+          node --test tests/data/real-supplement.test.cjs
+      - name: 离线演示回归
+        if: ${{ hashFiles('tests/demo/package-lock.json') != '' }}
+        run: |
+          cd tests/demo
+          npm ci
+          npx --no-install playwright install --with-deps chromium
+          npm test
