@@ -7,7 +7,7 @@ def test_enterprise_health(client_for):
     client.cookies.clear()
     response = client.get(url)
     assert response.status_code == 401
-    assert response.json()["error"] == {"code": "UNAUTHENTICATED", "message": "未登录", "details": {}}
+    assert response.json()["error"] == {"code": "unauthenticated", "message": "未登录", "details": {}}
 
 
 def test_enterprise_requires_view(client_for):
@@ -15,5 +15,5 @@ def test_enterprise_requires_view(client_for):
     response = client.get("/api/apps/enterprise/health")
     assert response.status_code == 403
     assert response.json()["error"] == {
-        "code": "FORBIDDEN", "message": "无权查看此应用", "details": {"app": "enterprise", "need": "view"},
+        "code": "forbidden", "message": "无权查看此应用", "details": {"app": "enterprise", "need": "view"},
     }

@@ -31,10 +31,12 @@ def install_platform(app: FastAPI) -> None:
 
     from . import jobs_api, reviews_api
     from .conversations import routes as conversations
+    from .kb import ask as kb_ask
 
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    kb_ask.install(app, app.state.platform, current_user)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。
         from apps.document.instance import install as install_document
@@ -50,11 +52,13 @@ def create_app() -> FastAPI:
         seed = load_project_seed(Path(os.environ["HAIKNOW_CONFIG_DIR"]))
         from haiknow_core.main import create_app as create_core_app
 
+        from .auth import install as install_auth
         from .routers import register_routes
 
         app = create_core_app(root)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
+        install_auth(app)
         install_platform(app)
 
     app.title = "北京经开区共享智能体工作站"

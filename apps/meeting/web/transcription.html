@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会议记录 · 录音转写</title>
+<style>
+  :root {
+    color-scheme: light;
+    --hk-text: oklch(24% .025 252);
+    --hk-text-muted: oklch(47% .038 252);
+    --hk-surface: white;
+    --hk-canvas: oklch(97% .009 244);
+    --hk-border: oklch(89% .019 246);
+    --hk-primary: oklch(46% .13 251);
+    --hk-primary-soft: oklch(95% .026 249);
+    --hk-danger: oklch(43% .16 27);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--hk-canvas); color: var(--hk-text); font: 15px/1.6 system-ui, sans-serif; }
+  header { background: var(--hk-surface); border-bottom: 1px solid var(--hk-border); }
+  header div, main { width: min(1120px, calc(100% - 48px)); margin-inline: auto; }
+  header div { padding-block: 18px; font-weight: 700; }
+  main { padding-block: 36px 64px; }
+  h1 { font-size: clamp(1.7rem, 3vw, 2.4rem); line-height: 1.15; margin: 0 0 26px; }
+  h2 { margin: 0 0 16px; font-size: 1.13rem; }
+  p { margin: 0 0 14px; }
+  .columns { display: grid; grid-template-columns: minmax(0, 335px) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .panel { border: 1px solid var(--hk-border); border-radius: 12px; padding: 24px; background: var(--hk-surface); }
+  label { display: block; margin-block: 12px; font-weight: 600; }
+  input, select, button { font: inherit; }
+  input, select { display: block; width: 100%; margin-top: 4px; padding: 8px; border: 1px solid var(--hk-border); border-radius: 6px; background: var(--hk-surface); }
+  .file-input { position: relative; }
+  .file-input input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+  .file-picker { display: flex; gap: 8px; padding: 8px; margin-top: 4px; border: 1px solid var(--hk-border); border-radius: 6px; cursor: pointer; }
+  .file-input:focus-within .file-picker { outline: 2px solid var(--hk-primary); outline-offset: 2px; }
+  .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+  button { cursor: pointer; border: 1px solid var(--hk-border); border-radius: 6px; padding: 7px 12px; color: var(--hk-text); background: var(--hk-surface); }
+  button:disabled { opacity: .55; cursor: default; }
+  .primary { background: var(--hk-primary); border-color: var(--hk-primary); color: white; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
+  .library { margin-top: 22px; }
+  .library select { margin-top: 8px; }
+  .muted { color: var(--hk-text-muted); }
+  .error { color: var(--hk-danger); margin-top: 12px; }
+  .progress { margin-block: 18px; display: grid; grid-template-columns: 1fr 4ch; gap: 12px; align-items: center; }
+  .progress[hidden] { display: none; }
+  progress { width: 100%; height: 12px; accent-color: var(--hk-primary); }
+  audio { max-width: 100%; margin-bottom: 8px; }
+  .sample { border-radius: 8px; padding: 12px 16px; background: var(--hk-primary-soft); margin: 18px 0 24px; }
+  ol { list-style: none; padding: 0; margin: 0; }
+  li { display: grid; grid-template-columns: 5.7rem 1fr; padding: 16px 0; gap: 8px; border-top: 1px solid var(--hk-border); }
+  li p { margin: 3px 0 0; }
+  time, output { font-variant-numeric: tabular-nums; }
+  #minutes { margin-bottom: 24px; }
+  .minute-section { margin-bottom: 16px; }
+  .minute-section h3 { margin: 0 0 4px; font-size: 1rem; }
+  .minute-section p { margin-bottom: 6px; }
+  .source-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .source-links button { color: var(--hk-primary); padding: 2px 8px; font-variant-numeric: tabular-nums; }
+  #lines li:focus { background: var(--hk-primary-soft); outline: 2px solid var(--hk-primary); outline-offset: -2px; border-radius: 6px; }
+  @media (max-width: 740px) {
+    .columns { grid-template-columns: 1fr; }
+    header div, main { width: calc(100% - 32px); }
+    .panel { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+<header><div>会议记录</div></header>
+<main>
+  <h1>录音转写</h1>
+  <div class="columns">
+    <div>
+      <form id="upload" class="panel">
+        <h2>新建会议</h2>
+        <label>会议名称<input name="title" required maxlength="160" autocomplete="off"></label>
+        <label>会议类型<select name="type"><option>企业座谈会</option><option>局务会</option><option>专题推进会</option></select></label>
+        <label class="file-input">录音文件
+          <input id="recording" name="file" type="file" aria-label="录音文件" accept=".mp3,.m4a,.wav,.aac,.amr,.mp4,.flac,.webm,.ogg">
+          <span class="file-picker" aria-hidden="true">选择文件 <span class="muted file-name" id="file-name">尚未选择</span></span>
+        </label>
+        <div class="actions">
+          <button class="primary" type="submit" value="upload">上传并转写</button>
+          <button type="submit" value="demo" formnovalidate>使用演示录音</button>
+        </div>
+        <p id="form-error" class="error" role="alert" hidden></p>
+      </form>
+      <label class="panel library">会议档案
+        <select id="library"><option value="">选择会议</option></select>
+      </label>
+    </div>
+    <section class="panel" aria-labelledby="detail-title">
+      <h2 id="detail-title">会议详情</h2>
+      <p id="status" class="muted" role="status">上传录音或从会议档案中选择一场会议。</p>
+      <div id="progress" class="progress" hidden>
+        <progress id="meter" max="100" value="0" aria-label="转写进度"></progress>
+        <output id="percent">0%</output>
+      </div>
+      <p id="detail-error" class="error" role="alert" hidden></p>
+      <div class="actions"><button id="resume" class="primary" type="button" hidden>开始转写</button></div>
+      <div id="sample" class="sample" hidden>
+        <p>演示结果 · 逐字稿对应下方的公开合成录音。</p>
+        <audio id="sample-audio" controls preload="metadata" aria-label="演示录音"></audio>
+      </div>
+      <section id="minutes" aria-labelledby="minutes-title" hidden>
+        <h2 id="minutes-title">会议纪要</h2>
+        <div id="minute-sections"></div>
+      </section>
+      <section id="transcript" aria-labelledby="transcript-title" hidden>
+        <h2 id="transcript-title">逐字稿</h2>
+        <ol id="lines"></ol>
+      </section>
+    </section>
+  </div>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const base = '/api/apps/meeting/meetings';
+  const jobs = '/api/v1/jobs';
+  const upload = $('upload');
+  let selected = '';
+  let currentJob;
+  let timer;
+  let selection = 0;
+
+  async function api(path, options) {
+    const response = await fetch(path, { credentials: 'same-origin', ...options }).catch(() => {
+      throw new Error('暂时无法连接服务，请重试。');
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || '操作失败，请重试。');
+    }
+    if (!payload) throw new Error('服务响应异常，请重试。');
+    return payload;
+  }
+
+  function showError(id, message) {
+    $(id).textContent = message;
+    $(id).hidden = !message;
+  }
+
+  async function loadList() {
+    const items = [];
+    let offset = 0;
+    let total = Infinity;
+    while (offset < total) {
+      const page = await api(`${base}?limit=100&offset=${offset}`);
+      total = Number(page.total);
+      items.push(...page.items);
+      if (!page.items.length) break;
+      offset += page.items.length;
+    }
+    $('library').replaceChildren(new Option('选择会议', ''),
+      ...items.map((item) => new Option(item.title, item.id)));
+    $('library').value = selected;
+  }
+
+  function displayMinutes(minutes) {
+    const sections = (minutes?.body ?? []).map(({ h, p, sources, needsReview }) => {
+      const section = document.createElement('div');
+      section.className = 'minute-section';
+      const heading = document.createElement('h3');
+      heading.textContent = h;
+      const paragraph = document.createElement('p');
+      paragraph.textContent = p;
+      section.append(heading, paragraph);
+      if (needsReview) {
+        const note = document.createElement('p');
+        note.className = 'muted';
+        note.textContent = '原句已修改，请复核本段纪要。';
+        section.append(note);
+      }
+      const links = document.createElement('div');
+      links.className = 'source-links';
+      for (const source of sources) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = source.ts;
+        button.setAttribute('aria-label', `跳到逐字稿第 ${source.index + 1} 行（${source.ts}）`);
+        button.addEventListener('click', () => {
+          const line = $(`transcript-line-${source.index}`);
+          line.focus({ preventScroll: true });
+          line.scrollIntoView({ block: 'nearest' });
+        });
+        links.append(button);
+      }
+      section.append(links);
+      return section;
+    });
+    $('minute-sections').replaceChildren(...sections);
+    $('minutes').hidden = !sections.length;
+  }
+
+  function display({ item, minutes }) {
+    $('detail-title').textContent = item.title;
+    $('status').textContent = item.status === 'done' ? '转写完成' : '等待转写';
+    $('sample').hidden = !item.transcriptAudio;
+    const audio = $('sample-audio');
+    if (item.transcriptAudio && audio.getAttribute('src') !== item.transcriptAudio) {
+      audio.src = item.transcriptAudio;
+    }
+    if (!item.transcriptAudio && audio.hasAttribute('src')) {
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    $('lines').replaceChildren(...item.transcript.map(([timestamp, speaker, text], index) => {
+      const line = document.createElement('li');
+      line.id = `transcript-line-${index}`;
+      line.tabIndex = -1;
+      const time = document.createElement('time');
+      const speech = document.createElement('div');
+      const name = document.createElement('strong');
+      const words = document.createElement('p');
+      time.textContent = timestamp;
+      name.textContent = speaker;
+      words.textContent = text;
+      speech.append(name, words);
+      line.append(time, speech);
+      return line;
+    }));
+    $('transcript').hidden = !item.transcript.length;
+    displayMinutes(minutes);
+  }
+
+  function jobView(payload) {
+    if (payload.job) return payload.job;
+    const completed = payload.steps.filter((step) => step.status === 'done').length;
+    const status = ({ queued: 'running', cancelling: 'running', cancelled: 'failed' })[payload.status]
+      || payload.status;
+    return {
+      id: payload.id, status,
+      progress: status === 'done' ? 100 : Math.floor(100 * completed / (completed + 1)),
+      stepName: payload.steps.at(-1)?.name,
+    };
+  }
+
+  async function poll(id, token) {
+    try {
+      const job = jobView(await api(`${jobs}/${encodeURIComponent(id)}`));
+      if (token !== selection) return;
+      currentJob = job;
+      $('meter').value = job.progress;
+      $('percent').value = `${job.progress}%`;
+      $('progress').hidden = false;
+      if (job.status === 'done') {
+        const detail = await api(`${base}/${encodeURIComponent(selected)}`);
+        if (token === selection) display(detail);
+      } else if (job.status === 'failed') {
+        $('status').textContent = job.stepName ? `${job.stepName}失败` : '转写失败';
+        $('resume').textContent = '重试';
+        $('resume').hidden = false;
+      } else {
+        $('status').textContent = job.stepName || '正在排队';
+        timer = setTimeout(() => poll(id, token), 300);
+      }
+    } catch (error) {
+      if (token !== selection) return;
+      $('status').textContent = '暂时无法获取转写进度';
+      timer = setTimeout(() => poll(id, token), 1200);
+    }
+  }
+
+  async function openMeeting(id) {
+    const token = ++selection;
+    clearTimeout(timer);
+    selected = id;
+    currentJob = undefined;
+    $('progress').hidden = true;
+    $('resume').hidden = true;
+    showError('detail-error', '');
+    const url = new URL(location.href);
+    url.searchParams.set('id', id);
+    history.replaceState(null, '', url);
+    const detail = await api(`${base}/${encodeURIComponent(id)}`);
+    if (token !== selection) return;
+    display(detail);
+    const { item } = detail;
+    if (item.jobId) await poll(item.jobId, token);
+    else if (item.status === 'new') {
+      $('resume').textContent = '开始转写';
+      $('resume').hidden = false;
+    }
+  }
+
+  async function start(id, key = `meeting:${id}`) {
+    return (await api(`${base}/${encodeURIComponent(id)}/transcribe`, {
+      method: 'POST', headers: { 'Idempotency-Key': key },
+    })).job;
+  }
+
+  $('recording').addEventListener('change', ({ target }) => {
+    $('file-name').textContent = target.files[0]?.name || '尚未选择';
+  });
+
+  upload.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    showError('form-error', '');
+    const data = new FormData(upload);
+    if (event.submitter?.value === 'demo') {
+      data.set('source', 'demo');
+      data.set('title', data.get('title').trim() || '园区服务例会 · 演示');
+      data.delete('file');
+    } else if (!data.get('file').size) {
+      showError('form-error', '请选择录音文件。');
+      return;
+    }
+    const buttons = [...upload.querySelectorAll('button')];
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const { item } = await api(base, { method: 'POST', body: data });
+      try {
+        await start(item.id);
+      } finally {
+        await openMeeting(item.id);
+        await loadList();
+      }
+    } catch (error) {
+      showError('form-error', error.message);
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
+    }
+  });
+
+  $('resume').addEventListener('click', async () => {
+    const token = selection;
+    const id = selected;
+    const job = currentJob;
+    $('resume').hidden = true;
+    showError('detail-error', '');
+    try {
+      const next = job?.status === 'failed' && !job.cancelled
+        ? jobView(await api(`${jobs}/${encodeURIComponent(job.id)}/retry?app=meeting`, { method: 'POST' }))
+        : await start(id, job?.cancelled ? `meeting:${id}:${Date.now()}` : `meeting:${id}`);
+      if (token === selection) await poll(next.id, token);
+    } catch (error) {
+      if (token === selection) {
+        showError('detail-error', error.message);
+        $('resume').hidden = false;
+      }
+    }
+  });
+
+  $('library').addEventListener('change', () => {
+    if ($('library').value) openMeeting($('library').value).catch((error) => showError('detail-error', error.message));
+  });
+  const initial = new URL(location.href).searchParams.get('id');
+  Promise.resolve()
+    .then(() => initial && openMeeting(initial))
+    .then(loadList)
+    .catch((error) => showError('detail-error', error.message));
+</script>
+</body>
+</html>
