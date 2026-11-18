@@ -13,8 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent
 PLATFORM_APP = ROOT / "tests/fixtures/platform-app"
-# importlib 模式不再把测试目录放进 sys.path；保留仓库测试之间显式的 test_platform 导入。
-sys.path[:0] = [str(ROOT / "core" / "server"), str(ROOT / "core" / "sdk"), str(ROOT / "tests")]
+# importlib 模式需要显式加入平台模块、公共测试辅助和仓库脚本的导入路径。
+sys.path[:0] = [str(ROOT / "core/server"), str(ROOT / "core/sdk"), str(ROOT / "tests"), str(ROOT)]
 os.environ["HAIKNOW_NO_AUTOAPP"] = "1"
 # 测试默认不导入 CAP-04 开发种子，需要样本的用例自行打开 HAIKNOW_KB_SEED=1。
 os.environ.setdefault("HAIKNOW_KB_SEED", "0")
