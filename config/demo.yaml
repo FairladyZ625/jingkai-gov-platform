@@ -1,0 +1,4 @@
+# 仅 JKQ_DEMO_MODE=1 生效。模块名是调用 SDK 的应用 id。
+rule_intent_first: true
+preset_on_failure: true
+mock_modules: []
