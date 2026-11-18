@@ -9,6 +9,7 @@ import zipfile
 import httpx
 import pytest
 
+from conftest import set_provider_credential
 from haiknow_core.aihub import adapters, reader
 from haiknow_core.aihub.errors import AIError
 from haiknow_core.aihub.gateway import Gateway, TEST_SAMPLES
@@ -63,9 +64,11 @@ def ssl_failure(monkeypatch):
 def test_transport_errors_become_retryable_provider_error(tmp_path, monkeypatch, capability, payload):
     store = AISettings(tmp_path)
     if capability == 'parse':
-        store.put_provider('parse', 'mineru', 'https://mineru.example.test/api/v4', 'test-placeholder-key', ['vlm'], True)
+        set_provider_credential(monkeypatch, 'parse', 'https://mineru.example.test/api/v4', 'test-placeholder-key')
+        store.put_provider('parse', 'mineru', 'https://mineru.example.test/api/v4', ['vlm'], True)
     else:
-        store.put_provider('chat', 'openai', 'https://chat.example.test/v1', 'test-placeholder-key', ['m'], True)
+        set_provider_credential(monkeypatch, 'chat', 'https://chat.example.test/v1', 'test-placeholder-key')
+        store.put_provider('chat', 'openai', 'https://chat.example.test/v1', ['m'], True)
     store.put_route(capability, capability, 'vlm' if capability == 'parse' else 'm')
     ssl_failure(monkeypatch)
     with pytest.raises(AIError) as error:
@@ -80,14 +83,16 @@ def test_transport_errors_become_retryable_provider_error(tmp_path, monkeypatch,
 
 def test_probe_transport_failure_returns_chinese_detail(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('chat', 'openai', 'https://chat.example.test/v1', 'test-placeholder-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'chat', 'https://chat.example.test/v1', 'test-placeholder-key')
+    store.put_provider('chat', 'openai', 'https://chat.example.test/v1', ['m'], True)
     ssl_failure(monkeypatch)
     assert Gateway(store).probe('chat') == {'ok': False, 'detail': '无法连接服务，请检查接入地址。'}
 
 
 def test_mineru_parse_uploads_polls_and_maps_blocks(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key', ['vlm'], True)
+    set_provider_credential(monkeypatch, 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key')
+    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', ['vlm'], True)
     store.put_route('parse', 'mineru', 'vlm')
     archive = result_zip([
         {'type': 'text', 'text': '第一段', 'page_idx': 0, 'bbox': [10, 20, 30, 40]},
@@ -137,7 +142,8 @@ def test_mineru_parse_uploads_polls_and_maps_blocks(tmp_path, monkeypatch):
 
 def test_mineru_failure_and_kind_guard(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key', ['vlm'], True)
+    set_provider_credential(monkeypatch, 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key')
+    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', ['vlm'], True)
     store.put_route('parse', 'mineru', 'vlm')
     fake_http(monkeypatch, lambda request: httpx.Response(200, json={'code': -60010, 'msg': '解析失败'}))
     with pytest.raises(AIError) as error:
@@ -145,7 +151,8 @@ def test_mineru_failure_and_kind_guard(tmp_path, monkeypatch):
     assert error.value.kind == 'provider_error'
     assert store.usage()[0]['status'] == 'failure'
 
-    store.put_provider('chat', 'openai', 'https://chat.example.test/v1', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'chat', 'https://chat.example.test/v1', 'dummy-key')
+    store.put_provider('chat', 'openai', 'https://chat.example.test/v1', ['m'], True)
     store.put_route('parse', 'chat', 'm')
     with pytest.raises(AIError) as error:
         Gateway(store, files=Files()).call('demo', 'parse', {'file_id': 'f1'}, principal='sampleoperator')
@@ -154,7 +161,8 @@ def test_mineru_failure_and_kind_guard(tmp_path, monkeypatch):
 
 def test_deepseek_search_maps_fields_and_request(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('search', 'deepseek', 'https://api.deepseek.example.test/v1', 'dummy-key', ['deepseek-flash'], True)
+    set_provider_credential(monkeypatch, 'search', 'https://api.deepseek.example.test/v1', 'dummy-key')
+    store.put_provider('search', 'deepseek', 'https://api.deepseek.example.test/v1', ['deepseek-flash'], True)
     store.put_route('search', 'search', 'deepseek-flash')
     requests = []
 
@@ -183,7 +191,8 @@ def test_deepseek_search_maps_fields_and_request(tmp_path, monkeypatch):
 
 def test_search_rejects_bad_count_and_reports_provider_error(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('search', 'deepseek', 'https://api.deepseek.example.test/v1', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'search', 'https://api.deepseek.example.test/v1', 'dummy-key')
+    store.put_provider('search', 'deepseek', 'https://api.deepseek.example.test/v1', ['m'], True)
     store.put_route('search', 'search', 'm')
     gateway = Gateway(store)
     with pytest.raises(AIError) as error:
@@ -198,7 +207,8 @@ def test_search_rejects_bad_count_and_reports_provider_error(tmp_path, monkeypat
 
 def test_vision_builds_openai_multimodal_request_and_parses_candidates(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', 'dummy-key', ['qwen-vl'], True)
+    set_provider_credential(monkeypatch, 'vision', 'https://vision.example.test/v1', 'dummy-key')
+    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', ['qwen-vl'], True)
     store.put_route('vision', 'vision', 'qwen-vl')
     requests = []
 
@@ -225,7 +235,8 @@ def test_vision_builds_openai_multimodal_request_and_parses_candidates(tmp_path,
 
 def test_vision_keeps_raw_text_when_model_is_not_json(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('vision', 'ark', 'https://vision.example.test/v1', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'vision', 'https://vision.example.test/v1', 'dummy-key')
+    store.put_provider('vision', 'ark', 'https://vision.example.test/v1', ['m'], True)
     store.put_route('vision', 'vision', 'm')
     fake_http(monkeypatch, lambda request: httpx.Response(200, json={'choices': [{'message': {'content': '图上有一个标签'}}]}))
     result = Gateway(store, files=Files()).call('demo', 'vision', {'file_id': 'f1', 'instruction': '读图'}, principal='sampleoperator')['result']
@@ -234,13 +245,15 @@ def test_vision_keeps_raw_text_when_model_is_not_json(tmp_path, monkeypatch):
 
 def test_vision_rejects_unsupported_image_and_provider(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'vision', 'https://vision.example.test/v1', 'dummy-key')
+    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', ['m'], True)
     store.put_route('vision', 'vision', 'm')
     with pytest.raises(AIError) as error:
         Gateway(store, files=Files(b'not-an-image')).call(
             'demo', 'vision', {'file_id': 'f1', 'instruction': '读图'}, principal='sampleoperator')
     assert error.value.kind == 'bad_input'
-    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'mineru', 'https://mineru.example.test/api/v4', 'dummy-key')
+    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', ['m'], True)
     store.put_route('vision', 'mineru', 'm')
     with pytest.raises(AIError) as error:
         Gateway(store, files=Files()).call('demo', 'vision', {'file_id': 'f1', 'instruction': '读图'}, principal='sampleoperator')
@@ -249,7 +262,7 @@ def test_vision_rejects_unsupported_image_and_provider(tmp_path, monkeypatch):
 
 def builtin_gateway(tmp_path):
     store = AISettings(tmp_path)
-    store.put_provider('reader', 'builtin', '', '', ['reader-v1'], True)
+    store.put_provider('reader', 'builtin', '', ['reader-v1'], True)
     store.put_route('fetch', 'reader', 'reader-v1')
     return store, Gateway(store)
 
@@ -348,7 +361,8 @@ def test_fetch_rejects_redirect_to_internal_address(tmp_path, monkeypatch):
 ])
 def test_provider_probe(tmp_path, monkeypatch, kind, base, response, ok):
     store = AISettings(tmp_path)
-    store.put_provider('p', kind, base, 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', base, 'dummy-key')
+    store.put_provider('p', kind, base, ['m'], True)
     if response is not None:
         fake_http(monkeypatch, lambda request: response)
     assert Gateway(store).probe('p')['ok'] is ok
@@ -359,17 +373,19 @@ def test_probe_unknown_provider(tmp_path):
         Gateway(AISettings(tmp_path)).probe('missing')
     assert error.value.kind == 'not_found'
 
-def search_store(tmp_path, primary_limit, fallback_limit):
+def search_store(tmp_path, monkeypatch, primary_limit, fallback_limit):
     store = AISettings(tmp_path)
-    store.put_provider('primary', 'deepseek', 'https://primary.test/v1', 'dummy-key', ['m'], True, allow_outbound=primary_limit)
-    store.put_provider('fallback', 'deepseek', 'https://fallback.test/v1', 'dummy-key', ['m'], True, allow_outbound=fallback_limit)
+    set_provider_credential(monkeypatch, 'primary', 'https://primary.test/v1', 'dummy-key')
+    store.put_provider('primary', 'deepseek', 'https://primary.test/v1', ['m'], True, allow_outbound=primary_limit)
+    set_provider_credential(monkeypatch, 'fallback', 'https://fallback.test/v1', 'dummy-key')
+    store.put_provider('fallback', 'deepseek', 'https://fallback.test/v1', ['m'], True, allow_outbound=fallback_limit)
     store.put_route('search', 'primary', 'm', 'fallback', 'm')
     return store
 
 
 def test_fallback_never_receives_data_above_its_outbound_limit(tmp_path, monkeypatch):
     """主服务商允许 confidential、兜底只允许 public：主服务商失败也不能把查询词转给兜底。"""
-    store = search_store(tmp_path, 'confidential', 'public')
+    store = search_store(tmp_path, monkeypatch, 'confidential', 'public')
     hosts = []
 
     def respond(request):
@@ -385,7 +401,7 @@ def test_fallback_never_receives_data_above_its_outbound_limit(tmp_path, monkeyp
 
 def test_fallback_below_primary_is_used_when_it_allows_the_classification(tmp_path, monkeypatch):
     """主服务商上限不足时在尝试前剔除；允许的兜底可以承接。"""
-    store = search_store(tmp_path, 'public', 'internal')
+    store = search_store(tmp_path, monkeypatch, 'public', 'internal')
     hosts = []
 
     def respond(request):
@@ -399,7 +415,7 @@ def test_fallback_below_primary_is_used_when_it_allows_the_classification(tmp_pa
 
 
 def test_outbound_denied_when_no_provider_allows_the_classification(tmp_path, monkeypatch):
-    store = search_store(tmp_path, 'public', 'public')
+    store = search_store(tmp_path, monkeypatch, 'public', 'public')
     hosts = []
     fake_http(monkeypatch, lambda request: hosts.append(request.url.host) or httpx.Response(200, json={'results': []}))
     with pytest.raises(AIError) as error:
@@ -411,7 +427,8 @@ def test_outbound_denied_when_no_provider_allows_the_classification(tmp_path, mo
 def test_chat_blocks_confidential_outbound_to_public_provider(tmp_path, monkeypatch):
     """修前负例：受限对话内容不能送到只允许 public 的服务商。"""
     store = AISettings(tmp_path)
-    store.put_provider('public-chat', 'openai', 'https://chat.example.test/v1', 'dummy-key', ['m'], True,
+    set_provider_credential(monkeypatch, 'public-chat', 'https://chat.example.test/v1', 'dummy-key')
+    store.put_provider('public-chat', 'openai', 'https://chat.example.test/v1', ['m'], True,
                        allow_outbound='public')
     store.put_route('chat', 'public-chat', 'm')
     requests = []
@@ -430,7 +447,8 @@ def test_chat_blocks_confidential_outbound_to_public_provider(tmp_path, monkeypa
 
 def test_chat_classification_is_not_sent_to_provider(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('internal-chat', 'openai', 'https://chat.example.test/v1', 'dummy-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'internal-chat', 'https://chat.example.test/v1', 'dummy-key')
+    store.put_provider('internal-chat', 'openai', 'https://chat.example.test/v1', ['m'], True)
     store.put_route('chat', 'internal-chat', 'm')
     requests = []
     fake_http(monkeypatch, lambda request: requests.append(request) or httpx.Response(200, json={
@@ -448,7 +466,8 @@ def test_chat_classification_is_not_sent_to_provider(tmp_path, monkeypatch):
 
 def test_transcribe_blocks_confidential_outbound_to_public_provider(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('public-transcribe', 'openai', 'https://audio.example.test/v1', 'dummy-key', ['m'], True,
+    set_provider_credential(monkeypatch, 'public-transcribe', 'https://audio.example.test/v1', 'dummy-key')
+    store.put_provider('public-transcribe', 'openai', 'https://audio.example.test/v1', ['m'], True,
                        allow_outbound='public')
     store.put_route('transcribe', 'public-transcribe', 'm')
     requests = []
@@ -471,9 +490,11 @@ def test_transcribe_blocks_confidential_outbound_to_public_provider(tmp_path, mo
 def test_chat_and_transcribe_do_not_fallback_below_outbound_limit(tmp_path, monkeypatch,
                                                                    capability, payload, path, response):
     store = AISettings(tmp_path)
-    store.put_provider('primary', 'openai', 'https://primary.example.test/v1', 'dummy-key', ['m'], True,
+    set_provider_credential(monkeypatch, 'primary', 'https://primary.example.test/v1', 'dummy-key')
+    store.put_provider('primary', 'openai', 'https://primary.example.test/v1', ['m'], True,
                        allow_outbound='confidential')
-    store.put_provider('fallback', 'openai', 'https://fallback.example.test/v1', 'dummy-key', ['m'], True,
+    set_provider_credential(monkeypatch, 'fallback', 'https://fallback.example.test/v1', 'dummy-key')
+    store.put_provider('fallback', 'openai', 'https://fallback.example.test/v1', ['m'], True,
                        allow_outbound='public')
     store.put_route(capability, 'primary', 'm', 'fallback', 'm')
     hosts = []
@@ -493,7 +514,7 @@ def test_chat_and_transcribe_do_not_fallback_below_outbound_limit(tmp_path, monk
 
 def test_transcribe_input_modes_are_mutually_exclusive_and_size_limited(tmp_path):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'mock', '', '', ['m'], True)
+    store.put_provider('p', 'mock', '', ['m'], True)
     store.put_route('transcribe', 'p', 'm')
     gateway = Gateway(store)
 
@@ -509,7 +530,7 @@ def test_transcribe_input_modes_are_mutually_exclusive_and_size_limited(tmp_path
 
 def test_transcribe_base64_rejects_non_wav_content(tmp_path):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'mock', '', '', ['m'], True)
+    store.put_provider('p', 'mock', '', ['m'], True)
     store.put_route('transcribe', 'p', 'm')
     audio = base64.b64encode(b'not a wav container').decode()
 
@@ -528,7 +549,8 @@ def test_transcribe_base64_rejects_non_wav_content(tmp_path):
 ])
 def test_transcribe_file_reference_preserves_actual_media_type(tmp_path, monkeypatch, name, data, mime):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://audio.example.test/v1', 'dummy', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://audio.example.test/v1', 'dummy')
+    store.put_provider('p', 'openai', 'https://audio.example.test/v1', ['m'], True)
     store.put_route('transcribe', 'p', 'm')
     requests = []
 
@@ -553,7 +575,7 @@ def test_transcribe_file_reference_preserves_actual_media_type(tmp_path, monkeyp
 
 def test_transcribe_file_reference_rejects_unknown_format_and_oversize(tmp_path):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'mock', '', '', ['m'], True)
+    store.put_provider('p', 'mock', '', ['m'], True)
     store.put_route('transcribe', 'p', 'm')
 
     class FilesWithData(Files):
@@ -593,7 +615,8 @@ def test_transcribe_file_reference_rejects_unknown_format_and_oversize(tmp_path)
 # ---------------------------------------------------------------- 一键测试
 def test_gateway_test_returns_success_preview_and_elapsed_without_usage(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('ark', 'ark', 'https://ark.example.test/api/v3', 'dummy-key', ['image-model'], True)
+    set_provider_credential(monkeypatch, 'ark', 'https://ark.example.test/api/v3', 'dummy-key')
+    store.put_provider('ark', 'ark', 'https://ark.example.test/api/v3', ['image-model'], True)
     store.put_route('image', 'ark', 'image-model')
     requests = []
 
@@ -615,7 +638,8 @@ def test_gateway_test_returns_success_preview_and_elapsed_without_usage(tmp_path
 
 def test_gateway_test_provider_scope_works_without_route(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('ark', 'ark', 'https://ark.example.test/api/v3', 'dummy-key', ['image-model'], True)
+    set_provider_credential(monkeypatch, 'ark', 'https://ark.example.test/api/v3', 'dummy-key')
+    store.put_provider('ark', 'ark', 'https://ark.example.test/api/v3', ['image-model'], True)
     fake_http(monkeypatch, lambda request: httpx.Response(200, json={'data': [{'url': 'data:image/png;base64,AAAA'}]}))
     outcome = Gateway(store).test('image', provider_id='ark', model='image-model')
     assert outcome['ok'] is True and outcome['provider'] == 'ark'
@@ -631,7 +655,8 @@ def test_gateway_test_provider_scope_works_without_route(tmp_path, monkeypatch):
 ])
 def test_gateway_test_classifies_provider_failures_in_chinese(tmp_path, monkeypatch, response, reason, message):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://example.test/v1', 'test-placeholder-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test/v1', 'test-placeholder-key')
+    store.put_provider('p', 'openai', 'https://example.test/v1', ['m'], True)
     store.put_route('image', 'p', 'm')
     fake_http(monkeypatch, lambda request: response)
     outcome = Gateway(store).test('image')
@@ -643,7 +668,8 @@ def test_gateway_test_classifies_provider_failures_in_chinese(tmp_path, monkeypa
 
 def test_gateway_test_classifies_connection_failure_as_address(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://example.test/v1', 'test-placeholder-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test/v1', 'test-placeholder-key')
+    store.put_provider('p', 'openai', 'https://example.test/v1', ['m'], True)
     store.put_route('chat', 'p', 'm')
 
     def unreachable(request):
@@ -655,9 +681,10 @@ def test_gateway_test_classifies_connection_failure_as_address(tmp_path, monkeyp
     assert '接入地址' in outcome['message']
 
 
-def test_gateway_test_reports_unsupported_capability(tmp_path):
+def test_gateway_test_reports_unsupported_capability(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('ds', 'deepseek', 'https://api.deepseek.example.test/v1', 'test-placeholder-key', ['deepseek-chat'], True)
+    set_provider_credential(monkeypatch, 'ds', 'https://api.deepseek.example.test/v1', 'test-placeholder-key')
+    store.put_provider('ds', 'deepseek', 'https://api.deepseek.example.test/v1', ['deepseek-chat'], True)
     outcome = Gateway(store).test('image', provider_id='ds', model='deepseek-chat')
     assert outcome['ok'] is False and outcome['reason'] == 'unsupported'
     assert '不支持此能力' in outcome['message']
@@ -665,7 +692,8 @@ def test_gateway_test_reports_unsupported_capability(tmp_path):
 
 def test_gateway_test_parse_uses_builtin_valid_pdf_sample(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', 'test-placeholder-key', ['vlm'], True)
+    set_provider_credential(monkeypatch, 'mineru', 'https://mineru.example.test/api/v4', 'test-placeholder-key')
+    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', ['vlm'], True)
     store.put_route('parse', 'mineru', 'vlm')
     archive = result_zip([{'type': 'text', 'text': '测试页', 'page_idx': 0}])
     uploads = []
@@ -693,7 +721,8 @@ def test_gateway_test_parse_uses_builtin_valid_pdf_sample(tmp_path, monkeypatch)
 
 def test_gateway_test_vision_uses_builtin_png_sample(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', 'test-placeholder-key', ['qwen-vl'], True)
+    set_provider_credential(monkeypatch, 'vision', 'https://vision.example.test/v1', 'test-placeholder-key')
+    store.put_provider('vision', 'openai', 'https://vision.example.test/v1', ['qwen-vl'], True)
     store.put_route('vision', 'vision', 'qwen-vl')
     bodies = []
 
