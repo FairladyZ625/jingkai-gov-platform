@@ -9,13 +9,14 @@ from typing import Annotated
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import Field, StrictBool, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
 from haiknow_core.aihub.errors import AIError
 from haiknow_core.aihub.streaming import Channel, ChatRequest
 from haiknow_core.main import current_user
+from haiknow_sdk import PermissionDenied
 
 from . import models
 
@@ -68,7 +69,8 @@ def _registered_tools(platform, user, names):
             raise AIError("tool_not_found", "请求包含未注册的工具。")
         app_id, tool = definition
         if "operate" not in platform.rbac.actions(user, app_id):
-            raise AIError("forbidden", "没有使用所请求工具的权限。")
+            platform.store.audit(app_id, user.id, "ai.tool_forbidden", {"need": "operate"})
+            raise PermissionDenied(app_id, "operate")
         # OpenAI 函数名只接受字母、数字、下划线和连字符。
         base = re.sub(r"[^A-Za-z0-9_-]", "_", name)[:64]
         alias, suffix = base, 0
@@ -81,10 +83,11 @@ def _registered_tools(platform, user, names):
             params = {}
         properties = {key: _parameter_schema(value.rstrip("?")) for key, value in params.items()
                       if isinstance(value, str)}
+        required = [key for key in properties if not params[key].endswith("?")]
         tools.append({"type": "function", "function": {
             "name": alias,
             "description": tool.get("description", tool.get("desc", "")),
-            "parameters": {"type": "object", "properties": properties},
+            "parameters": {"type": "object", "properties": properties, "required": required},
         }})
     return tools, aliases
 
@@ -182,7 +185,7 @@ async def _stream(service, user, body, payload, aliases):
 
 
 def _chat_error(error):
-    status = {"tool_not_found": 404, "forbidden": 403, "internal_error": 500}.get(error.kind)
+    status = {"tool_not_found": 404, "internal_error": 500}.get(error.kind)
     if status is not None:
         return models._response_error(status, error.kind.upper(), str(error))
     return models._gateway_error(error)
@@ -191,12 +194,15 @@ def _chat_error(error):
 @router.post("/ai/chat")
 async def chat(body: ChatBody, request: Request, service=Depends(models._service), user=Depends(current_user)):
     try:
-        tools, aliases = _registered_tools(request.app.state.platform, user, body.tools)
+        tools, aliases = await run_in_threadpool(_registered_tools, request.app.state.platform, user, body.tools)
         payload = body.model_dump(exclude={"model", "stream", "tools"}, exclude_none=True)
         if tools:
             payload["tools"] = tools
         if body.stream:
             return await _stream(service, user, body, payload, aliases)
         return await run_in_threadpool(_chat, service, user, body, payload)
+    except PermissionDenied as error:
+        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "没有使用所请求工具的权限。",
+                                      "details": {"app": error.app_id, "need": error.action}}}, status_code=403)
     except AIError as error:
         return _chat_error(error)
