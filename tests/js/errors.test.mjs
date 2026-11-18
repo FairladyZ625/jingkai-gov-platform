@@ -24,6 +24,7 @@ for (const [code, expected] of [
   ['ACCOUNT_DISABLED', '账号已停用，请联系管理员'],
   ['BAD_PASSWORD', '原密码不正确'],
   ['WEAK_PASSWORD', '新密码至少需要 6 位'],
+  ['WRITE_CONFIRMATION_REQUIRED', '请先确认写入操作，再提交执行结果'],
 ]) {
   for (const message of ['', 'Request failed']) assert.equal(errorMessage(err(message, { code })), expected);
 }

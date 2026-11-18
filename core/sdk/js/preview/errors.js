@@ -45,6 +45,7 @@ export const PLATFORM_ERROR_MESSAGES = {
   conflict: '名称或编号已存在，请换一个',
   in_use: '仍有关联内容，请先调整关联后再操作',
   last_admin: '必须保留至少一个启用的管理员',
+  write_confirmation_required: '请先确认写入操作，再提交执行结果',
   org_cycle: '部门不能属于自身或下级部门',
   builtin_role: '内置角色不可删除',
   already_bootstrapped: '已存在管理员，请直接登录',
