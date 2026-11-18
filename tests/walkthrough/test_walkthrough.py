@@ -11,12 +11,11 @@ EVIDENCE = HERE.parents[1] / "docs/walkthrough/screenshots"
 
 def test_mock_walkthrough(tmp_path):
     env = os.environ.copy()
-    # 沿用演示冒烟的锁文件，本地可复用同版本的独立安装。
+    # 沿用演示冒烟的锁文件；全局 NODE_PATH 非空不代表已安装 Playwright。
     for filename in ("package.json", "package-lock.json"):
         shutil.copyfile(HERE.parent / "demo" / filename, tmp_path / filename)
-    if not env.get("NODE_PATH"):
-        subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd=tmp_path, check=True)
-        env["NODE_PATH"] = str(tmp_path / "node_modules")
+    subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd=tmp_path, check=True)
+    env["NODE_PATH"] = str(tmp_path / "node_modules")
     if shutil.which("google-chrome"):
         env["WALKTHROUGH_CHROME"] = "1"
     subprocess.run(
