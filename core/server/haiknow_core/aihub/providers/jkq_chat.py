@@ -15,8 +15,9 @@ import yaml
 from anyio import fail_after
 from pydantic import BaseModel, ConfigDict, StrictBool, StringConstraints
 
+from .. import streaming
 from ..errors import AIError, TRANSPORT_ERRORS, transport_error
-from ..gateway import Gateway
+from ..gateway import Gateway, allowed_outbound
 
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[5] / "config/models.yaml"
@@ -116,8 +117,8 @@ def provider_from_environment(definition, confidential=False):
     }
 
 
-async def openai_chat(base_url, api_key, model, payload, timeout, *, transport=None):
-    """云端和内网均使用 OpenAI 兼容协议，仅保留文本和上游计量。"""
+async def openai_chat(base_url, api_key, model, payload, timeout, *, transport=None, message=False):
+    """云端和内网均使用 OpenAI 兼容协议。"""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         with fail_after(timeout):
@@ -134,22 +135,21 @@ async def openai_chat(base_url, api_key, model, payload, timeout, *, transport=N
         if not response.is_success:
             raise ProviderRejected("模型服务商拒绝了请求。")
         body = response.json()
-        content = body["choices"][0]["message"]["content"]
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("模型返回空文本。")
-        usage = body.get("usage")
-        usage = usage if isinstance(usage, dict) else {}
-        tokens = {}
-        for key, source in (("input", "prompt_tokens"), ("output", "completion_tokens")):
-            value = usage.get(source)
-            tokens[key] = value if type(value) is int and value >= 0 else None
-        return content, tokens
+        reply = body["choices"][0]["message"]
+        if message:
+            result = streaming.chat_message(reply)
+        else:
+            result = reply["content"]
+            if not isinstance(result, str) or not result.strip():
+                raise ValueError("模型返回空文本。")
+        return result, streaming.chat_usage(body.get("usage"))
     except (TimeoutError, httpx.TimeoutException):
         raise AIError("timeout", "模型调用超时。") from None
     except (httpx.TransportError, *TRANSPORT_ERRORS):
         raise transport_error("模型服务连接中断。") from None
-    except (ValueError, KeyError, IndexError, TypeError):
-        raise ProviderRejected("模型服务商返回的文本格式无效。") from None
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        kind = "对话" if message else "文本"
+        raise ProviderRejected(f"模型服务商返回的{kind}格式无效。") from None
 
 
 class ChatGateway(Gateway):
@@ -171,18 +171,40 @@ class ChatGateway(Gateway):
         attempt_timeout = min(12, timeout / (len(self.candidates) + 1))
         status = "interrupted"
         usage = {"input": None, "output": None}
+        structured = isinstance(payload, streaming.ChatRequest)
+        mock = provider["kind"] == "mock"
         try:
-            if provider["kind"] == "mock":
-                content = super()._mock(provider, capability, payload, file, model)
+            if structured and stream is not None:
+                first_allowed = next(p for p, _ in self.candidates if allowed_outbound(p, payload["classification"]))
+                notes = []
+                if first_allowed != self.candidates[0][0]:
+                    notes.append("按密级切换到白名单模型")
+                if provider != first_allowed:
+                    notes.append("主模型调用失败，已回退")
+                if mock:
+                    notes.append("使用模拟模型")
+                with fail_after(attempt_timeout):
+                    result = await streaming.chat_events(
+                        provider, model, payload, attempt_timeout, stream, route_note="，".join(notes),
+                        transport=self.transport, trust_env=False,
+                    )
+                usage = result["usage"]
+            elif mock:
+                message = streaming.mock_message(provider) if structured else {"content": streaming.MOCK_CONTENT}
+                result = streaming.chat_message(message) if structured else message
                 usage = {"input": 0, "output": 0}
             else:
                 request = {key: value for key, value in payload.items() if key != "classification"}
-                content, usage = await openai_chat(
+                reply, usage = await openai_chat(
                     provider["base_url"], provider["api_key"], model, request,
-                    attempt_timeout, transport=self.transport,
+                    attempt_timeout, transport=self.transport, message=structured,
                 )
+                result = reply if structured else {"content": reply}
             status = "success"
-            return {"content": content, "usage": usage, "mock": provider["kind"] == "mock"}
+            return {**result, "usage": usage, "mock": mock}
+        except TimeoutError:
+            status = "timeout"
+            raise AIError("timeout", "模型调用超时。") from None
         except ProviderRejected:
             status = "provider_error"
             raise
