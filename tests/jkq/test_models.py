@@ -426,6 +426,17 @@ def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatc
             ("ai.chat", {"provider": "deepseek", "model": "deepseek-configured-name", "status": "provider_error",
                          "usage": {"input": None, "output": None}}),
         ]
+        # #19 用量统计直接汇总网关逐次审计，三个维度与上面的记录一致。
+        from jkq.admin.usage import usage_page
+        with platform.store._lock:
+            db = platform.store._db
+            assert usage_page(db, "app")["items"] == [
+                {"app": "sample-app", "calls": 3, "input": 16, "output": 10}]
+            assert usage_page(db, "model")["items"] == [
+                {"model": "cloud-configured-name", "calls": 2, "input": 16, "output": 10},
+                {"model": "deepseek-configured-name", "calls": 1, "input": 0, "output": 0}]
+            assert usage_page(db, "user")["items"] == [
+                {"user": "sampleoperator", "calls": 3, "input": 16, "output": 10}]
 
         login(client)
         assert client.patch("/api/v1/models/cloud", json={"enabled": False}).status_code == 200
