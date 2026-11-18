@@ -1,0 +1,32 @@
+# 顺序为自动选择的优先级。JKQ_MODEL_PROVIDER 可将其中一个可用模型移到队首。
+# 各前缀下的 _BASE_URL、_NAME、_API_KEY 由部署环境注入。
+# 内网地址须指向经开区批准的本地服务；只有该项可接收 confidential。
+models:
+  - id: cloud
+    kind: openai
+    group: 国产云端
+    provider: OpenAI 兼容云服务
+    env: JKQ_CLOUD_MODEL
+  - id: deepseek
+    kind: deepseek
+    group: 国产云端
+    provider: DeepSeek
+    env: JKQ_DEEPSEEK_MODEL
+  - id: local
+    kind: openai
+    group: 本地部署
+    provider: 内网 OpenAI 兼容服务
+    env: JKQ_LOCAL_MODEL
+  - id: mock
+    kind: mock
+    group: 推荐
+    provider: 模拟服务
+    name: 经开区 Mock
+  - id: overseas
+    kind: openai
+    group: 海外模型（默认关闭）
+    provider: 海外 OpenAI 兼容服务
+    env: JKQ_OVERSEAS_MODEL
+    enabled: false
+
+confidential_providers: [local]
