@@ -41,8 +41,13 @@ def write_boot_token(data_dir: Path) -> None:
 
 
 def use_same_origin_http(root: Path) -> None:
-    """只改容器里的前端配置。仓库里的原型保持 mock，file:// 仍可离线打开。"""
+    """只改容器里的前端配置。仓库里的原型保持 mock，file:// 仍可离线打开。
+
+    JKQ_FRONTEND_API_MODE=mock 时保留浏览器内 mock，演示兜底用；默认 http。
+    """
     if os.environ.get("JKQ_DEPLOY_RUNTIME") != "1":
+        return
+    if os.environ.get("JKQ_FRONTEND_API_MODE", "http").strip().lower() == "mock":
         return
     for relative in ("web/config/app.config.js", "prototype/v4/config/app.config.js"):
         path = root / relative

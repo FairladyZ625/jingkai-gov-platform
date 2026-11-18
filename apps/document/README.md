@@ -1,6 +1,6 @@
 # 公文协作
 
-> 负责人：summerchaserwwz ｜ 关联 Issue：#38 ｜ 场景编号：（后续业务 Issue 补 scenes）
+> 负责人：summerchaserwwz ｜ 关联 Issue：#38、#40 ｜ 场景编号：（后续业务 Issue 补 scenes）
 
 按模板起草公文、保存历史版本，定稿后锁定。本轮先提供后端接口；页面入口只做打开与提示，完整界面随后续任务接入。
 
@@ -47,6 +47,14 @@
 4. 模板不存在返回 404，缺必填要素返回 400，无 operate 权限返回 403。
 
 自动化覆盖在 `tests/test_drafting.py` 与 `tests/test_document_health.py`。
+
+## 润色、比对与批注（#40）
+
+- `POST /drafts/{id}/polish`：返回 `{preview, parts, changed}`，只预览不落版本；采用时走 `PUT /drafts/{id}`，定稿后返回 409 `LOCKED`。`para` 省略时润色全文。
+- `POST /compare`：`a`、`b` 可以是 `{id, v}` 或字符串；版本 0 可参与比较。`stats.add/del` 按 UTF-16 代码单元统计，与原型一致。
+- `POST /drafts/{id}/comments`、`PATCH /drafts/{id}/comments/{cid}`：新增、回复、解决批注，记录操作者与北京时间。批注单独存为 `document-comment` 记录，定稿后仍可批注；草稿详情的 `comments` 与文稿列表的未解决数都从这里读取。
+
+自动化覆盖在 `tests/test_collaboration.py`。
 
 ## 开发说明
 
