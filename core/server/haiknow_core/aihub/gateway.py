@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import math
+import shutil
 import struct
 import time
 
@@ -12,7 +13,8 @@ import httpx
 from anyio import fail_after
 from anyio.from_thread import start_blocking_portal
 
-from . import adapters, streaming
+from . import adapters, codex, streaming
+from .config import ENVIRONMENT_PROVIDER, auth_headers, provider_available
 from .errors import AIError, TRANSPORT_ERRORS, mentions_model, transport_error
 
 CAPABILITIES = {'chat', 'image', 'transcribe', 'speech', 'embedding', 'parse', 'search', 'fetch', 'vision'}
@@ -22,6 +24,8 @@ CAPABILITY_SUPPORT = {
     'mock': CAPABILITIES,
     'ark': {'chat', 'image', 'transcribe', 'speech', 'embedding', 'vision'},
     'openai': {'chat', 'image', 'transcribe', 'speech', 'embedding', 'vision'},
+    'local': {'chat', 'image', 'transcribe', 'speech', 'embedding', 'vision'},
+    'codex-cli': {'chat'},
     'deepseek': {'chat', 'search', 'vision'},
     'mineru': {'parse'},
     'builtin': {'fetch'},
@@ -244,6 +248,9 @@ class Gateway:
                 result, provider, model = portal.call(self._attempt, candidates, capability, payload, file,
                                                      min(timeout, 50), legacy, decoded_audio, _stream)
             self.settings.finish(reservation, 'success', provider)
+            if capability == 'chat' and self.audit is not None:
+                self.audit(app_id, getattr(principal, 'id', None) or 'system', 'ai.chat',
+                           {'provider': provider, 'model': model})
             return {
                 'result': result,
                 'task_id': None,
@@ -272,7 +279,11 @@ class Gateway:
         if route['fallback_provider']:
             pairs.append((route['fallback_provider'], model or route['fallback_model']))
         candidates = [(self.settings.provider(p), m) for p, m in pairs]
-        candidates = [(p, m) for p, m in candidates if p and p['enabled'] and m in p['models']]
+        if model and route['provider'] == ENVIRONMENT_PROVIDER and not self.settings.environment.explicit:
+            # 兼容原 HAIKNOW_MODEL_* 调用方传入的模型覆盖值。
+            provider, _ = candidates[0]
+            candidates[0] = ({**provider, 'models': [model]}, model)
+        candidates = [(p, m) for p, m in candidates if provider_available(p, m)]
         if not candidates:
             raise AIError('not_configured', '该能力没有可用的服务商。')
         return candidates
@@ -281,6 +292,11 @@ class Gateway:
         provider = self.settings.provider(ident)
         if provider is None:
             raise AIError('not_found', '服务商不存在。')
+        if provider['kind'] == 'codex-cli':
+            available = bool(shutil.which('codex'))
+            return {'ok': available, 'detail': '已找到 Codex CLI。' if available else '本机未安装 Codex CLI。'}
+        if not any(provider_available(provider, model) for model in provider['models']):
+            return {'ok': False, 'detail': '服务商未启用，或缺少模型配置及环境变量凭据。'}
         with start_blocking_portal() as portal:
             return portal.call(adapters.probe, provider)
 
@@ -307,9 +323,11 @@ class Gateway:
             if capability not in CAPABILITY_SUPPORT[provider['kind']]:
                 return self._test_result(capability, provider, tested_model, started, reason='unsupported',
                                          message='该服务商类型不支持此能力，请更换支持它的服务商。')
+            if not provider_available(provider, tested_model):
+                raise AIError('not_configured', '服务商未启用，或缺少模型配置及环境变量凭据。')
             if capability in OUTBOUND_CAPABILITIES:
                 candidates = [(p, m) for p, m in candidates
-                              if allowed_outbound(p, DEFAULT_CLASSIFICATION)]
+                              if allowed_outbound(p, 'public' if p['kind'] == 'codex-cli' else DEFAULT_CLASSIFICATION)]
                 if not candidates:
                     return self._test_result(capability, provider, tested_model, started, reason='outbound_denied',
                                              message='该服务商不允许外发这类测试样例，请调整出站上限。')
@@ -453,6 +471,8 @@ class Gateway:
             return await streaming.request(provider, model, payload, timeout, stream)
         if provider['kind'] == 'mock':
             return self._mock(provider, capability, payload, file, model)
+        if provider['kind'] == 'codex-cli':
+            return await codex.chat(model, payload)
         if capability == 'parse':
             return await adapters.mineru_parse(provider, model, file, timeout, deadline)
         if capability == 'search':
@@ -462,9 +482,9 @@ class Gateway:
         if capability == 'vision':
             return await adapters.vision_candidates(provider, model, file, payload, timeout)
         paths = {'chat': '/chat/completions', 'image': '/images/generations', 'transcribe': '/audio/transcriptions', 'speech': '/audio/speech', 'embedding': '/embeddings'}
-        headers = {'Authorization': 'Bearer ' + provider['api_key']}
+        headers = auth_headers(provider)
         try:
-            async with httpx.AsyncClient(timeout=50) as client:
+            async with httpx.AsyncClient(timeout=50, trust_env=provider['kind'] != 'local') as client:
                 if capability == 'transcribe':
                     if file is not None:
                         audio, filename, mime_type = file['data'], file['name'], file['mime_type']
@@ -498,7 +518,8 @@ class Gateway:
                     return result['text']
                 return result.get('data', result)
         except httpx.TimeoutException:
-            raise AIError('timeout', '能力调用超时。') from None
+            message = '模型调用超时。' if capability == 'chat' else '能力调用超时。'
+            raise AIError('timeout', message) from None
         except httpx.TransportError:
             raise transport_error('模型服务连接中断，请稍后重试。') from None
         except httpx.HTTPError as exc:

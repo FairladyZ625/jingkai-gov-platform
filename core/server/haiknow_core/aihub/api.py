@@ -4,9 +4,10 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..settings import AISettings
+from .config import ENVIRONMENT_PROVIDER, valid_base_url
 from .errors import AIError
 from .gateway import CAPABILITIES, CAPABILITY_SUPPORT, TEST_ORDER, Gateway
 
@@ -18,15 +19,15 @@ def v1_error(status, code, message, **details):
 
 def transport_warnings(kind, base_url):
     """http 接入地址允许保存（本地/内网网关），但密钥会明文过网，由界面常显警示。"""
-    if kind in ('mock', 'builtin') or not base_url or urlsplit(base_url).scheme != 'http':
+    if kind in ('mock', 'builtin', 'codex-cli') or not base_url or not valid_base_url(base_url) or urlsplit(base_url).scheme != 'http':
         return []
     return [{'code': 'insecure_transport', 'message': '接入地址使用 http，密钥将以明文传输。'}]
 
 
 class ProviderBody(BaseModel):
-    kind: Literal['mock', 'ark', 'deepseek', 'openai', 'mineru', 'builtin']
+    model_config = ConfigDict(extra='forbid')
+    kind: Literal['mock', 'ark', 'deepseek', 'openai', 'local', 'mineru', 'builtin']
     base_url: str = ''
-    api_key: str | None = None
     models: list[str] = Field(min_length=1)
     enabled: bool = True
     allow_outbound: Literal['public', 'internal', 'confidential'] | None = None
@@ -83,7 +84,7 @@ class TestBody(BaseModel):
 
 def install(app, plat):
     from ..main import current_user
-    settings = AISettings(plat.store.data_dir)
+    settings = AISettings(plat.store.data_dir, plat.model.environment)
 
     class Files:
         """文件可见性由 DataService 判定；这里按调用用户取原件。"""
@@ -116,25 +117,19 @@ def install(app, plat):
 
     @router.get('/providers')
     def providers(user=Depends(admin)):
-        # 列表只回掩码；has_key 让配置界面能区分“已配置/未配置”，不额外暴露密钥。
         items = settings.providers()
         for item in items:
-            stored = settings.provider(item['id'])
-            item['has_key'] = bool(stored and stored['api_key'])
             item['warnings'] = transport_warnings(item['kind'], item['base_url'])
         return {'items': items}
 
     @router.put('/providers/{ident}')
     def put_provider(ident: str, body: ProviderBody, user=Depends(admin)):
-        url = urlsplit(body.base_url)
-        if not ident or not all(body.models) or (body.kind not in ('mock', 'builtin') and (url.scheme not in ('https', 'http') or not url.hostname or url.username or url.password or url.query or url.fragment)):
+        if ident == ENVIRONMENT_PROVIDER:
+            return v1_error(409, 'invalid_state', '该服务商由进程环境配置。')
+        if not all(model.strip() for model in body.models) or (body.kind not in ('mock', 'builtin') and not valid_base_url(body.base_url)):
             raise HTTPException(400, '服务商配置无效')
-        old = settings.provider(ident)
-        key = body.api_key if body.api_key is not None else (old['api_key'] if old else '')
-        if body.kind not in ('mock', 'builtin') and not key:
-            raise HTTPException(400, '服务商需要密钥')
         # 改类型与改模型列表都会让已有路由静默失效：先校验引用它的路由仍然成立。
-        routes = [route for route in settings.routes() if ident in (route['provider'], route['fallback_provider'])]
+        routes = [route for route in settings.stored_routes() if ident in (route['provider'], route['fallback_provider'])]
         lost = sorted({route['capability'] for route in routes if route['capability'] not in CAPABILITY_SUPPORT[body.kind]})
         if lost:
             return v1_error(409, 'invalid_state', f'服务商 {ident} 的新类型 {body.kind} 不支持已被路由使用的能力：{"、".join(lost)}，请先调整这些路由', capabilities=lost)
@@ -145,16 +140,18 @@ def install(app, plat):
             return v1_error(409, 'invalid_state',
                             f'服务商 {ident} 的模型列表缺少路由正在使用的模型：{"、".join(f"{capability}·{model}" for capability, model in missing)}',
                             capabilities=sorted({capability for capability, _ in missing}))
-        settings.put_provider(ident, body.kind, body.base_url, body.api_key, body.models, body.enabled, body.allow_outbound)
+        settings.put_provider(ident, body.kind, body.base_url, body.models, body.enabled, body.allow_outbound)
         plat.store.audit('platform', user.id, 'ai.provider.update', {'provider': ident, 'enabled': body.enabled})
         return {'ok': True, 'warnings': transport_warnings(body.kind, body.base_url)}
 
     @router.delete('/providers/{ident}')
     def delete_provider(ident: str, user=Depends(admin)):
+        if ident == ENVIRONMENT_PROVIDER:
+            return v1_error(409, 'invalid_state', '该服务商由进程环境配置。')
         if settings.provider(ident) is None:
             raise HTTPException(404, '服务商不存在')
         # 路由引用时拒绝删除：静默级联会让线上应用突然 not_configured。
-        used = sorted({route['capability'] for route in settings.routes()
+        used = sorted({route['capability'] for route in settings.stored_routes()
                        if ident in (route['provider'], route['fallback_provider'])})
         if used:
             return v1_error(409, 'invalid_state', f'服务商 {ident} 仍被能力路由引用：{"、".join(used)}', capabilities=used)
@@ -181,7 +178,7 @@ def install(app, plat):
                 return route['model']
             if route['fallback_provider'] == provider['id']:
                 return route['fallback_model']
-        return provider['models'][0]
+        return next(iter(provider['models']), None)
 
     @router.post('/providers/{ident}/test')
     def test_provider(ident: str, body: TestBody | None = None, user=Depends(admin)):
@@ -203,10 +200,14 @@ def install(app, plat):
 
     @router.put('/routes/{capability}')
     def put_route(capability: str, body: RouteBody, user=Depends(admin)):
+        if capability == 'chat' and settings.environment.explicit:
+            return v1_error(409, 'invalid_state', '对话路由由进程环境配置。')
         if capability not in CAPABILITIES or bool(body.fallback_provider) != bool(body.fallback_model):
             raise HTTPException(400, '能力或兜底配置无效')
         for ident, model in [(body.provider, body.model), (body.fallback_provider, body.fallback_model)]:
             if ident:
+                if ident == ENVIRONMENT_PROVIDER:
+                    return v1_error(409, 'invalid_state', '环境服务商只能由进程配置为默认对话路由。')
                 provider = settings.provider(ident)
                 if not provider or model not in provider['models']:
                     raise HTTPException(400, '服务商或模型不存在')
@@ -218,6 +219,8 @@ def install(app, plat):
 
     @router.delete('/routes/{capability}')
     def delete_route(capability: str, user=Depends(admin)):
+        if capability == 'chat' and settings.environment.explicit:
+            return v1_error(409, 'invalid_state', '对话路由由进程环境配置。')
         settings.delete_route(capability)
         plat.store.audit('platform', user.id, 'ai.route.delete', {'capability': capability})
         return {'ok': True}

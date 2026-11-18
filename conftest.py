@@ -44,6 +44,12 @@ def ensure_loopback_no_proxy(env: MutableMapping[str, str]) -> MutableMapping[st
 ensure_loopback_no_proxy(os.environ)
 
 
+def set_provider_credential(monkeypatch, ident, base_url, value="test-placeholder-key"):
+    prefix = "HAIKNOW_PROVIDER_" + ident.upper().replace("-", "_")
+    monkeypatch.setenv(prefix + "_BASE_URL", base_url)
+    monkeypatch.setenv(prefix + "_API_KEY", value)
+
+
 _ROUTERS: dict = {}
 
 
@@ -85,8 +91,11 @@ def cheap_password_hash(monkeypatch):
 @pytest.fixture
 def isolated_platform(tmp_path, monkeypatch):
     """测试默认隔离宿主模型配置；需要真实路径的测试自行注入本地桩地址。"""
-    for name in ("BASE_URL", "API_KEY", "NAME"):
+    for name in ("PROVIDER", "BASE_URL", "API_KEY", "NAME"):
         monkeypatch.delenv(f"HAIKNOW_MODEL_{name}", raising=False)
+    for name in list(os.environ):
+        if name.startswith("HAIKNOW_PROVIDER_"):
+            monkeypatch.delenv(name)
     # 旧应用验收显式启用开发账号；生产模式测试自行关闭。
     monkeypatch.setenv('HAIKNOW_DEMO_LOGIN', '1')
 

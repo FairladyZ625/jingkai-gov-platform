@@ -1,16 +1,9 @@
-"""模型网关：OpenAI 兼容接口；未配置时返回固定的模拟结果，保证离线可演示。
-
-配置（.env 或环境变量，平台读取，应用读不到）：
-  HAIKNOW_MODEL_BASE_URL  例如 https://ark.cn-beijing.volces.com/api/v3
-  HAIKNOW_MODEL_API_KEY
-  HAIKNOW_MODEL_NAME
-"""
+"""应用的兼容模型接口。平台运行时将已配置路由交给能力网关。"""
 from __future__ import annotations
 
 import base64
 import binascii
 import math
-import os
 import threading
 from collections import Counter
 from typing import Any
@@ -20,6 +13,10 @@ from anyio import fail_after
 from anyio.from_thread import start_blocking_portal
 
 from haiknow_sdk import Files, ModelError
+
+from .aihub import codex
+from .aihub.config import ModelEnvironment, auth_headers, provider_available
+from .aihub.errors import AIError
 
 TOTAL_TIMEOUT = 50.0
 ATTEMPT_TIMEOUT = 25.0
@@ -63,15 +60,26 @@ def _with_images(messages: list[dict], images: list[str], files: Files | None) -
 
 class ModelGateway:
     def __init__(self) -> None:
-        self.base = os.environ.get("HAIKNOW_MODEL_BASE_URL", "").rstrip("/")
-        self.key = os.environ.get("HAIKNOW_MODEL_API_KEY", "")
-        self.name = os.environ.get("HAIKNOW_MODEL_NAME", "")
+        self.environment = ModelEnvironment.read()
         self._usage: dict[str, Counter] = {}
         self._lock = threading.Lock()
 
     @property
     def configured(self) -> bool:
-        return bool(self.base and self.key and self.name)
+        if hasattr(self, 'aihub') and self.aihub.settings.route('chat'):
+            return self.chat_route() is not None
+        return self.environment.ready()
+
+    def chat_route(self):
+        settings = self.aihub.settings
+        route = settings.route('chat')
+        if route:
+            for provider_id, model in ((route['provider'], route['model']),
+                                       (route['fallback_provider'], route['fallback_model'])):
+                provider = settings.provider(provider_id)
+                if provider_available(provider, model):
+                    return provider, model
+        return None
 
     def for_app(self, app_id: str, files: Files | None = None, principal=None) -> "AppModel":
         gateway = _BoundModelGateway(self, principal) if principal is not None else self
@@ -99,7 +107,6 @@ class ModelGateway:
         _files: Files | None = None, _principal=None, **kw: Any,
     ) -> str:
         if hasattr(self, "aihub") and self.aihub.settings.route("chat"):
-            from .aihub.errors import AIError
             try:
                 if images:
                     messages = _with_images(messages, images, _files)
@@ -113,25 +120,13 @@ class ModelGateway:
             except Exception:
                 self._record(app_id, success=False)
                 raise
-        if hasattr(self, "aihub"):
-            from .aihub.gateway import CLASSIFICATIONS, DEFAULT_CLASSIFICATION, allowed_outbound
-            classification = kw.get('classification', DEFAULT_CLASSIFICATION)
-            if classification not in CLASSIFICATIONS:
-                self._record(app_id, success=False)
-                raise ModelError('bad_input', 'classification 只能是 public、internal 或 confidential。')
-            can_send_to_environment = bool(self.base and self.key and (self.name or model))
-            if can_send_to_environment and not allowed_outbound(
-                {'allow_outbound': DEFAULT_CLASSIFICATION}, classification
-            ):
-                self.aihub._deny(app_id, _principal, 'chat', classification)
-                self._record(app_id, success=False)
-                raise ModelError('outbound_denied', '没有允许向外出站此分类资料的服务商。')
-        mock = not any((self.base, self.key, self.name))
+        config = self.environment
+        mock = config.mode == 'mock'
         try:
             if not math.isfinite(timeout) or timeout <= 0:
                 raise ValueError("timeout 必须是正的有限秒数")
-            name = model or self.name
-            if not mock and not (self.base and self.key and name):
+            name = model if model and not config.explicit else config.model
+            if not mock and not config.ready(name):
                 raise ModelError("not_configured", "模型配置不完整，请联系管理员检查 HAIKNOW_MODEL_*。")
             if images:
                 messages = _with_images(messages, images, _files)
@@ -139,26 +134,40 @@ class ModelGateway:
                 last = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
                 result = f"[模拟模型] 已收到 {len(str(last))} 字输入。配置 HAIKNOW_MODEL_* 后返回真实结果。"
             else:
+                from .aihub.gateway import CLASSIFICATIONS, DEFAULT_CLASSIFICATION, allowed_outbound
+                classification = kw.get('classification', DEFAULT_CLASSIFICATION)
+                if classification not in CLASSIFICATIONS:
+                    raise ModelError('bad_input', 'classification 只能是 public、internal 或 confidential。')
+                provider = config.provider()
+                if not allowed_outbound(provider, classification):
+                    if hasattr(self, "aihub"):
+                        self.aihub._deny(app_id, _principal, 'chat', classification)
+                    raise ModelError('outbound_denied', '没有允许向外出站此分类资料的服务商。')
                 # 独立事件循环可取消慢响应，且兼容同步与异步路由里的同步 chat 调用。
                 with start_blocking_portal() as portal:
                     options = {key: value for key, value in kw.items() if key != 'classification'}
-                    result = portal.call(self._request, messages, name, min(timeout, TOTAL_TIMEOUT), options)
+                    result = portal.call(self._request, provider, messages, name, min(timeout, TOTAL_TIMEOUT), options)
+        except AIError as error:
+            self._record(app_id, success=False)
+            raise ModelError(error.kind, str(error)) from None
         except Exception:
             self._record(app_id, success=False)
             raise
         self._record(app_id, success=True, mock=mock)
         return result
 
-    async def _request(self, messages: list[dict], name: str, timeout: float, kw: dict) -> str:
+    async def _request(self, provider, messages: list[dict], name: str, timeout: float, kw: dict) -> str:
         try:
             with fail_after(timeout):  # 覆盖建连、读写、慢速分块和重试的总预算
-                async with httpx.AsyncClient() as client:
+                if provider['kind'] == 'codex-cli':
+                    return await codex.chat(name, {**kw, 'messages': messages})
+                async with httpx.AsyncClient(trust_env=provider['kind'] != 'local') as client:
                     for attempt in range(2):
                         try:
                             with fail_after(ATTEMPT_TIMEOUT):
                                 r = await client.post(
-                                    f"{self.base}/chat/completions",
-                                    headers={"Authorization": f"Bearer {self.key}"},
+                                    provider['base_url'] + '/chat/completions',
+                                    headers=auth_headers(provider),
                                     json={**kw, "model": name, "messages": messages},
                                     timeout=ATTEMPT_TIMEOUT,
                                 )
@@ -232,13 +241,6 @@ class AppModel:
 
     @property
     def available(self) -> bool:
-        if hasattr(self._gw, "aihub"):
-            settings = self._gw.aihub.settings
-            route = settings.route("chat")
-            if route:
-                return any(p and p["enabled"] and model in p["models"] for p, model in (
-                    (settings.provider(route["provider"]), route["model"]),
-                    (settings.provider(route["fallback_provider"]), route["fallback_model"])))
         return self._gw.configured
 
     def chat(
