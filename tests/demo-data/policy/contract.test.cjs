@@ -311,6 +311,64 @@ function bootWithLegacyPolicy(policyId) {
 
 const currentInputs = { start: '2026-11-18', end: '2026-12-01', contact: '请填写' };
 
+for (const [templateId, policy, protectedParagraphs] of [
+  ['T03', 'RP-006', [0, 2]],
+  ['T10', 'RP-024', [1]],
+]) {
+  test(`${templateId} ${policy} 采用默认润色后可送审及定稿`, async () => {
+    const { api } = boot();
+    const { item: draft } = await api.post(documentRoute + '/drafts', {
+      templateId, inputs: { ...currentInputs, policy, ent: 'E001', issue: '咨询申报时间' },
+    });
+    const resource = documentRoute + '/drafts/' + draft.id;
+    const original = plain(latest(draft));
+    for (const i of protectedParagraphs) {
+      const result = await api.post(resource + '/polish', { para: i, style: 'concise' });
+      assert.equal(result.changed, false);
+      assert.equal(result.preview.paragraphs[i], original.paragraphs[i]);
+    }
+    const { preview, changed } = await api.post(resource + '/polish', {});
+    assert.equal(changed, true);
+    await api.put(resource, { content: preview, note: '润色·更正式' });
+    const { item, review } = await api.post(resource + '/submit', {});
+    assert.equal(item.status, '审签中');
+    for (const i of protectedParagraphs) assert.equal(preview.paragraphs[i], original.paragraphs[i]);
+    assert.deepEqual(plain(item.versions[0].content), original);
+
+    api.state().me = 'u-liyang';
+    const decision = '/api/v1/reviews/' + review.id + '/decisions';
+    assert.equal((await api.post(decision, { decision: 'approve' })).item.status, 'done');
+    assert.equal((await api.get(resource)).item.status, '已定稿');
+    assert.equal((await api.get(resource + '/export')).final, true);
+  });
+
+  test(`${templateId} ${policy} 兼容已保存的旧版固定结语，仍阻拦旧文号或金额`, async () => {
+    const { api } = boot();
+    const { item: draft } = await api.post(documentRoute + '/drafts', {
+      templateId, inputs: { ...currentInputs, policy, ent: 'E001', issue: '咨询申报时间' },
+    });
+    const resource = documentRoute + '/drafts/' + draft.id;
+    const archived = plain(latest(draft));
+    const checked = protectedParagraphs.at(-1);
+    assert.match(archived.paragraphs[checked], /。$/);
+    archived.paragraphs[checked] = archived.paragraphs[checked].replace(/。$/, '，特此告知，特此告知。');
+    const stale = plain(archived);
+    const original = stale.paragraphs[checked];
+    stale.paragraphs[checked] = templateId === 'T03'
+      ? original.replace('2000万元', '3000万元')
+      : original.replace(/〔\d{4}〕/, '〔2020〕');
+    assert.notEqual(stale.paragraphs[checked], original);
+    await api.put(resource, { content: stale });
+    await assert.rejects(api.post(resource + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
+    await api.put(resource, { content: archived });
+    const { item, review } = await api.post(resource + '/submit', {});
+    assert.equal(item.status, '审签中');
+    api.state().me = 'u-liyang';
+    assert.equal((await api.post('/api/v1/reviews/' + review.id + '/decisions', { decision: 'approve' })).item.status, 'done');
+    assert.deepEqual(plain(latest((await api.get(resource)).item)), archived);
+  });
+}
+
 test('基线生成的 PI-08 旧金额和依据阻止送审，按 RP-006 修订后可送审及定稿', async () => {
   const { api, draft, resource } = bootWithLegacyPolicy('PI-08');
   const { issues } = await api.post(resource + '/check', {});

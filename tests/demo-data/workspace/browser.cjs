@@ -279,6 +279,48 @@ async function checkLegacyApproval(page) {
   console.log('旧 PI-18 在公文按钮和对话审签均提示退回修订，保留待审状态及未定稿导出');
 }
 
+async function checkPolishedApproval(page) {
+  await page.evaluate(() => JKShell.openApp('document'));
+  const panel = page.locator('.pview.on[data-view="document"]');
+  const submitted = [];
+  for (const [templateId, policy] of [['T03', 'RP-006'], ['T10', 'RP-024']]) {
+    const currentIds = await page.evaluate(() => Object.keys(JKAPI.state().drafts));
+    await op(panel, 'document.tpl-' + templateId).click();
+    await op(panel, 'document.sample').click();
+    await op(panel, 'document.in-policy').selectOption(policy);
+    await op(panel, 'document.gen').click();
+    await op(panel, 'document.paper').waitFor();
+    await op(panel, 'document.panel-polish').click();
+    assert.match(await op(panel, 'document.pstyle-formal').getAttribute('class'), /\bon\b/);
+    await op(panel, 'document.polish').click();
+    await op(panel, 'document.polish-yes').click();
+    await panel.locator('#ds .q').getByText('第 2 版', { exact: true }).waitFor();
+    const draftId = await page.evaluate((previous) => Object.keys(JKAPI.state().drafts)
+      .find((id) => !previous.includes(id)), currentIds);
+    assert.ok(draftId, templateId + ' ' + policy);
+    await op(panel, 'document.to-review').click();
+    await op(panel, 'document.submit').click();
+    await page.getByRole('button', { name: '确认送审', exact: true }).click();
+    await panel.locator('.dc-status .tag').filter({ hasText: /^审签中$/ }).waitFor();
+    assert.equal(await page.evaluate((id) => JKAPI.state().drafts[id].status, draftId), '审签中');
+    submitted.push([draftId, templateId, policy]);
+    await op(panel, 'document.step-0').click();
+  }
+  await page.evaluate(async () => {
+    await JKShell.switchUser('liyang');
+    await JKShell.openApp('document');
+  });
+  for (const [id, templateId, policy] of submitted) {
+    await op(panel, 'document.tab-list').click();
+    await op(panel, 'document.row-' + id).click();
+    await op(panel, 'document.approve').click();
+    await page.locator('[role="dialog"] [data-ok]').click();
+    await panel.getByText(/内容已锁定，需要改请另存新稿/).waitFor();
+    assert.equal(await page.evaluate(async (id) => (await JKApi.document.exportWord(id)).final, id), true);
+    console.log(templateId + ' ' + policy + ' 采用「更正式」第 2 版，送审、批准、定稿导出通过');
+  }
+}
+
 async function main() {
   const browser = await chromium.launch();
   try {
@@ -298,6 +340,7 @@ async function main() {
         await checkKb(page);
         await checkPolicy(page, width === 1280);
         await checkUpgrade(page);
+        await checkPolishedApproval(page);
         await checkLegacyApproval(page);
         assert.deepEqual(errors, []);
       } finally {

@@ -237,7 +237,10 @@
   const replyPolicyBasis = (p) => p.example
     ? `一、${exampleLabel}。以下为演示说明。${p.original}`
     : `一、政策依据。根据${documentBasis(p)}，${p.original}`;
+  const policyParagraphs = { T03: [0, 2], T10: [1] };
   const normalizePolicyText = (text) => (text || '').replace(/\s+/g, '').replace(/。+$/, '');
+  // 旧版「更正式」可能在政策段尾加过多次固定结语。
+  const stripPolishClosing = (text) => (text || '').trimEnd().replace(/(?:，特此告知)+。$/, '。');
 
   function genDoc(t, inp) {
     const v = (k) => (inp[k] !== undefined && String(inp[k]).trim() !== '' ? String(inp[k]) : `【待补：${(t.inputs.find((x) => x[0] === k) || [k, k])[1]}】`);
@@ -301,7 +304,7 @@
         issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `旧事项 ${policyId} 已下线，请在新建文稿时重新选择有效的政策事项，并核对原文。` });
       } else {
         const current = policyItem(p);
-        const same = (i, expected) => normalizePolicyText(d.paragraphs[i]) === normalizePolicyText(expected);
+        const same = (i, expected) => normalizePolicyText(stripPolishClosing(d.paragraphs[i])) === normalizePolicyText(expected);
         const valid = d.templateId === 'T10' ? same(1, replyPolicyBasis(current))
           : d.templateId !== 'T03' || (
             normalizePolicyText(d.paragraphs[0]).includes(normalizePolicyText(p.example ? exampleLabel : documentBasis(current))) &&
@@ -591,7 +594,17 @@
   on('POST', '/api/apps/document/drafts/:id/fix', (b, p) => { const d = S.drafts[p.id]; const c = clone(d.versions[d.versions.length - 1].content);
     (b.ids || []).forEach((id) => { const m = /^c-([dts])(\d+)$/.exec(id); if (m) { const i = +m[2]; if (m[1] === 'd') c.paragraphs[i] = c.paragraphs[i].replace(/(\d{4})-(\d{2})-(\d{2})/g, (s, y, mo, da) => `${+y}年${+mo}月${+da}日`); if (m[1] === 't') c.paragraphs[i] = c.paragraphs[i].replace('的的', '的').replace('申报申报', '申报').replace('载止', '截止').replace('截至日期', '截止日期'); if (m[1] === 's') c.paragraphs[i] = polishText(c.paragraphs[i], 'formal'); } if (id === 'c-ni') c.title = c.title.replace('关于', '关于拟'); if (id === 'c-bb') c.paragraphs.push('除上述调整外，原通知其他事项不变。'); });
     d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + '（一键修正）', content: c }); return { item: d, issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
-  on('POST', '/api/apps/document/drafts/:id/polish', (b, p) => { const d = S.drafts[p.id]; const c = clone(d.versions[d.versions.length - 1].content); const before = c.paragraphs.join('\n'); const idx = b.para == null ? c.paragraphs.map((_, i) => i) : [b.para]; idx.forEach((i) => { c.paragraphs[i] = polishText(c.paragraphs[i], b.style || 'formal'); }); const after = c.paragraphs.join('\n'); return { preview: c, parts: diff(before, after), changed: before !== after }; });
+  on('POST', '/api/apps/document/drafts/:id/polish', (b, p) => {
+    const d = S.drafts[p.id];
+    const c = clone(d.versions.at(-1).content);
+    const before = c.paragraphs.join('\n');
+    const protectedParagraphs = policyParagraphs[d.templateId] || [];
+    c.paragraphs = c.paragraphs.map((text, i) =>
+      protectedParagraphs.includes(i) || (b.para != null && Number(b.para) !== i)
+        ? text : polishText(text, b.style || 'formal'));
+    const after = c.paragraphs.join('\n');
+    return { preview: c, parts: diff(before, after), changed: before !== after };
+  });
   on('POST', '/api/apps/document/compare', (b) => { const get = (x) => { if (typeof x === 'string') return x; const d = S.drafts[x.id]; const v = d.versions.find((y) => y.v === x.v) || d.versions[d.versions.length - 1]; return docText(v.content); }; const a = get(b.a), c = get(b.b); const parts = diff(a, c); return { parts, stats: { add: parts.filter((x) => x.op === 'add').reduce((s, x) => s + x.t.length, 0), del: parts.filter((x) => x.op === 'del').reduce((s, x) => s + x.t.length, 0) } }; });
   on('POST', '/api/apps/document/drafts/:id/comments', (b, p) => { const d = S.drafts[p.id]; const c = { id: nid('cm'), para: b.para, by: me().name, at: now(), text: b.text, replies: [], resolved: false }; d.comments.push(c); return { item: c }; });
   on('PATCH', '/api/apps/document/drafts/:id/comments/:cid', (b, p) => { const d = S.drafts[p.id]; const c = d.comments.find((x) => x.id === p.cid); if (b.reply) c.replies.push({ by: me().name, text: b.reply }); if (b.resolved !== undefined) c.resolved = b.resolved; return { item: c }; });
