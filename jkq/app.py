@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, get_route_path
 
+from .app_catalogs import install as install_app_catalogs
 from .compat import Compatibility, install_error_handlers
 from .projects import load_project_seed, restore_empty_projects
 from .settings import REPO_ROOT, core_environment, required_environment, web_directory
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
         from .routers import register_routes
 
         app = create_core_app(root)
+        install_app_catalogs(app)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
         install_auth(app)
