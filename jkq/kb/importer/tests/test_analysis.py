@@ -4,9 +4,11 @@ import pytest
 
 from jkq.kb.importer.analysis import analyze_document
 
+SAMPLES = Path(__file__).resolve().parents[4] / 'tests/fixtures/kb_import'
+
 
 def test_policy_fields_and_article_ranges():
-    text = Path(__file__).with_name('policy.txt').read_text()
+    text = (SAMPLES / 'policy.txt').read_text()
     result = analyze_document('policy.txt', text)
     assert result['meta'] == dict(title='星汀试验区绿色阅读办法', docNo='星阅发〔2026〕7号',
                                   org='星汀虚构阅读中心', date='2026-03-08', status='现行有效',

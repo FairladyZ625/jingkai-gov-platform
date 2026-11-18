@@ -9,7 +9,7 @@ import pytest
 
 from jkq.kb.importer.parsing import MAX_FILE, ParseError, parse_document
 
-SAMPLES = Path(__file__).parent
+SAMPLES = Path(__file__).resolve().parents[4] / 'tests/fixtures/kb_import'
 
 
 @pytest.mark.parametrize('ext', ['pdf', 'docx', 'txt', 'html'])
