@@ -354,7 +354,7 @@
       }
       async function logIssue() {
         const e = ent(); if (!e) return;
-        try { await E.createIssue({ entId: e.id, title: `政策咨询：${chosen().map((x) => x.title).slice(0, 2).join('、') || '兑现事项'}`, from: '政策咨询', next: '跟进申报批次通知' }); ctx.bus.emit('inbox:changed'); ui.toast('已记入企业诉求', { action: { label: '查看', fn: () => ctx.nav.open('enterprise', 'issues', { entId: e.id }) } }); }
+        try { const { item } = await E.createIssue({ entId: e.id, title: `政策咨询：${chosen().map((x) => x.title).slice(0, 2).join('、') || '兑现事项'}`, from: '政策咨询', next: '跟进申报批次通知' }); ctx.bus.emit('inbox:changed'); ui.toast('已记入企业诉求', { action: { label: '查看', fn: () => ctx.nav.open('enterprise', 'issues', { entId: e.id, issueId: item.id }) } }); }
         catch (err) { ui.toast(err.message || '没有权限', { type: 'err' }); }
       }
       function resolveEnt(slot, text) {

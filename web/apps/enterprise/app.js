@@ -158,10 +158,10 @@
 
       /* ---------- 第 4 步：跟诉求 ---------- */
       function step3() {
-        const list = ISSUES.filter((i) => !S.entId || i.entId === S.entId); const all = list.length ? list : ISSUES;
+        const all = S.entId ? ISSUES.filter((i) => i.entId === S.entId) : ISSUES;
         if (!S.issueId || !all.some((i) => i.id === S.issueId)) S.issueId = (all.find((i) => i.status !== '已办结') || all[0] || {}).id;
         const it = all.find((i) => i.id === S.issueId);
-        $('#es').innerHTML = `<div class="q">${list.length ? `${esc(entOf(S.entId).short || '')} 的诉求` : '全部诉求'}</div><div class="q-sub">选一件，改状态、写一句进展</div>
+        $('#es').innerHTML = `<div class="q">${S.entId ? `${esc(entOf(S.entId).short || entOf(S.entId).name || S.entId)} 的诉求` : '全部诉求'}</div><div class="q-sub">选一件，改状态、写一句进展</div>
           <div class="ent-iss"><div class="list ent-iss-l">${all.map((i) => `<div class="li ${i.id === S.issueId ? 'on' : ''}" data-issue="${i.id}" data-op="enterprise.issue-${i.id}"><div class="grow"><div class="ttl clamp2">${esc(i.title)}</div><div class="meta">${esc(i.entName || entOf(i.entId).short || '')} · ${esc(i.due)}</div></div>${tag(i.status, 'issueStatus')}</div>`).join('') || '<div class="meta">暂无诉求</div>'}</div>
           <div class="card">${it ? issueForm(it) : ui.empty({ icon: 'flag', title: '暂无诉求' })}</div></div>`;
         foot(back(), it && canOp ? `<button class="btn primary" data-act="saveIssue" data-op="enterprise.save-issue">保存进展</button>` : '');
@@ -338,10 +338,27 @@
       };
       return {
         go(route, params = {}) {
-          ready().then(() => {
+          return ready().then(async () => {
             if (route === 'list' || route === 'board') { S.tab = route; if (params.tag) S.ltag = params.tag; render(); return; }
             S.tab = 'flow'; render();
-            if (route === 'issues') { if (params.entId) S.entId = params.entId; S.step = 3; body(); return; }
+            if (route === 'issues') {
+              S.entId = params.entId || null;
+              S.issueId = params.issueId || null;
+              S.step = 3;
+              if (params.entId && !loadErr) {
+                $('#eb').textContent = '正在读取企业诉求…';
+                try {
+                  const { items } = await E.issues({ entId: params.entId });
+                  if (S.entId !== params.entId || S.step !== 3 || S.tab !== 'flow') return;
+                  ISSUES = ISSUES.filter((i) => i.entId !== params.entId).concat(items);
+                } catch (e) {
+                  if (S.entId === params.entId && S.step === 3 && S.tab === 'flow') $('#eb').textContent = e.message || '读取企业诉求失败';
+                  return;
+                }
+              }
+              body();
+              return;
+            }
             if (params.entId) openProfile(params.entId).then(() => { if (route === 'visit' && canOp) { S.step = 2; S.visit = null; if (params.notes) S.notes = params.notes; body(); } });
           });
         },

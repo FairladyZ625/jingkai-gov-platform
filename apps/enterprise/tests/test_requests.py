@@ -69,6 +69,21 @@ def test_issue_lifecycle(site):
     assert c.patch(url, json={"status": "已办结"}).status_code == 403
 
 
+def test_policy_issue_source_round_trip(site):
+    client, _ = site
+    company = create_company(client)
+    body = {"entId": company, "title": "咨询公开政策", "from": "政策咨询"}
+    created = client.post(ISSUES, json=body)
+    assert created.status_code == 200
+    item = created.json()["item"]
+    assert item["from"] == body["from"]
+    invalid = client.post(ISSUES, json={**body, "from": "未知来源"})
+    assert (invalid.status_code, invalid.json()["error"]["code"]) == (400, "INVALID_REQUEST")
+    listing = client.get(ISSUES, params={"entId": company})
+    assert listing.status_code == 200
+    assert listing.json()["items"] == [{**item, "entName": "演示企业"}]
+
+
 def test_invalid_requests(site):
     c, _ = site
     for body, status, code in [
