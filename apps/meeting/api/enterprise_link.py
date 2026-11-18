@@ -46,8 +46,9 @@ async def create_issue(request, payload):
 
     if not isinstance(response, dict):
         response = {}
-    if 200 <= status < 300 and isinstance(response.get('item'), dict):
-        return response['item']
+    item = response.get('item')
+    if 200 <= status < 300 and isinstance(item, dict) and isinstance(item.get('id'), str):
+        return item
     error = response.get('error')
     if not isinstance(error, dict):
         error = {}
