@@ -1,0 +1,11 @@
+{
+  "name": "jingkai-demo-data",
+  "private": true,
+  "scripts": {
+    "test": "node --test policy/contract.test.cjs && node workspace/check.cjs",
+    "test:browser": "node workspace/browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.58.2"
+  }
+}
