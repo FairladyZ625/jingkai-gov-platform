@@ -1,6 +1,9 @@
 /* =====================================================================
  * 【可改】平台外观与文案（改完刷新页面即可）
  * ===================================================================== */
+const jkUseMock = new URLSearchParams(window.location?.search).get('api') === 'mock';
+const jkModuleMode = !jkUseMock && /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock';
+
 window.JK_CONFIG = {
   platformName: '经开智能体工作站',
   orgName: '北京经开区 · AI 工作组',
@@ -53,14 +56,20 @@ window.JK_CONFIG = {
       { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
     ],
   },
-  /* 接口默认使用浏览器内模拟后端。modules 可单独覆盖任一模块，未配置的模块沿用 mode。 */
+  /* HTTP 页面连接业务后端。以 ?api=mock 打开演示，file:// 继续离线。 */
   api: {
     mode: 'mock',
     baseUrl: 'http://127.0.0.1:8080',
     timeoutMs: 20000,
     modules: {
-      platform: /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock',
-      kb: /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock',
+      platform: jkModuleMode,
+      kb: jkModuleMode,
+      policy: jkModuleMode,
+      enterprise: jkModuleMode,
+      meeting: jkModuleMode,
+      document: jkModuleMode,
     },
   },
 };
+
+if (jkUseMock) window.JK_CONFIG.api.mode = 'mock';

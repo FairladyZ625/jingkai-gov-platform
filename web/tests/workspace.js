@@ -25,7 +25,9 @@ const test = base.extend({
 });
 
 async function openLogin(page, url) {
-  await page.goto(url);
+  const demo = new URL(url);
+  demo.searchParams.set('api', 'mock');
+  await page.goto(demo.href);
   await expect(page.getByRole('heading', { name: '登录', exact: true })).toBeVisible();
   expect(await page.evaluate(() => JK_CONFIG.api.mode)).toBe('mock');
 }

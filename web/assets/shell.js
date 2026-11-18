@@ -749,12 +749,22 @@
         view.appendChild(link);
       } else view.appendChild(h(`<div class="pstep">${esc(label)}</div>`));
     }
-    const target = app || (card.type === 'app-suggest' ? card.app || card.id : null);
+    const link = card.deepLink;
+    const target = app || (card.type === 'app-suggest' ? link?.app || card.app || card.id : null);
     if (target && JK.registry[target] && can(target, 'view')) {
       const open = h('<button class="btn sm" type="button">打开应用</button>');
-      open.onclick = () => openApp(target, 'home', {
+      const params = {
         entId: card.entId, templateId: card.templateId, meetingId: card.meetingId,
-      });
+        ...(link?.app === target ? link.params : {}),
+      };
+      let route = 'home';
+      if (card.type === 'policy-match') route = 'match';
+      if (card.type === 'policy-items') {
+        params.itemId ||= card.ids?.[0];
+        route = params.itemId ? 'detail' : 'items';
+      }
+      if (target === 'enterprise' && ['visit', 'issues'].includes(params.tab)) route = params.tab;
+      open.onclick = () => openApp(target, route, params);
       view.appendChild(open);
     }
     return view;
