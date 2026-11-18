@@ -1,8 +1,8 @@
 [
-  {"text":"书香里文化能申请哪些支持？","intent":"policy","tool":"policy.match","args":{"entId":"E001"}},
+  {"text":"帮我查一下纸鹿二号智驾能申报哪些政策","intent":"policy","tool":"policy.match","args":{"entId":"E002"}},
   {"text":"补填数据采购额 30 万","intent":"policy","tool":"policy.match","args":{"overrides":{"dataPurchase":300000}}},
-  {"text":"给书香里生成政策告知单","intent":"policy","tool":"policy.notice","args":{"entId":"E001"}},
-  {"text":"查一下星河智驾","intent":"enterprise","tool":"enterprise.get","args":{"id":"E002"}},
+  {"text":"给纸鹿二号智驾生成政策告知单","intent":"policy","tool":"policy.notice","args":{"entId":"E002"}},
+  {"text":"查一下纸鹿二号智驾","intent":"enterprise","tool":"enterprise.get","args":{"id":"E002"}},
   {"text":"给书香里加一条走访记录","intent":"enterprise","tool":"enterprise.propose_update","args":{"entId":"E001"}},
   {"text":"打开企业台账筛选高新企业","intent":"enterprise","tool":"enterprise.search","args":{"tag":"高新技术"}},
   {"text":"把座谈会的待办派发下去","intent":"meeting","tool":"meeting.commit_todos","args":{"meetingId":"MT-1112"}},
