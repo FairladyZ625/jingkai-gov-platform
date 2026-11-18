@@ -1,15 +1,8 @@
-/* 模拟后端 · 政策兑现（覆盖 mock-api.js 里的匹配路由，其余路由沿用）。
- * 为什么覆盖：接入 83 条经开区真实政策（data/real-policies.js）后，真实条目的第一个条件是“在区注册”，
- * 旧引擎把它当“对象识别条件”，导致几乎所有企业都匹配到几十条。这里改为：
- *   1) 对象识别 = 身份类条件（tags / license / subjectType）至少一条满足；没有身份条件的通用条目不进匹配结果（仍可在事项库查看）
- *   2) “触发行为”条件（如有数据采购、改造投入）未知时不推荐，避免无关事项堆成“待确认”
- *   3) 定额 / “最高”类奖励单独标出，不计入按比例试算的合计
- * 真实后端对应：policy-service 的 match 接口（同入参同出参）。 */
+/* 政策匹配和试算由面板、对话和工具共同调用。 */
 (function () {
   const X = window.JKAPI.ext;
   const S = () => X.state();
   const ent = (id) => S().enterprises.find((e) => e.id === id);
-  const pdoc = (id) => S().policyDocs.find((d) => d.id === id) || {};
   const ID_FIELDS = ['tags', 'license', 'subjectType'];
   function profileOf(e) { return { subjectType: e.subjectType, tags: e.tags, license: e.license, yearsInZone: e.yearsInZone, regInZone: e.regInZone, employees: e.employees, established: e.established, ...(e.amounts || {}) }; }
   function evalCond(c, pf) {
@@ -25,14 +18,14 @@
   const money = (n) => (n >= 10000 ? (n / 10000).toFixed(n % 10000 ? 1 : 0).replace(/\.0$/, '') + ' 万元' : n + ' 元');
   function calcOf(p, pf) {
     const r = p.rule || {};
-    if (r.base && r.ratio) { const base = pf[r.base]; if (!base) return null; const raw = Math.round(base * r.ratio), cap = r.cap || Infinity, amount = Math.min(raw, cap); return { amount, base, kind: 'ratio', text: `${money(base)} × ${+(r.ratio * 100).toFixed(2)}% = ${money(raw)}${raw > cap ? `，超过封顶，按 ${money(cap)}` : ''}`, capped: raw > cap }; }
+    if (r.manual) return null;
+    if (r.base && r.ratio) { const base = pf[r.base]; if (!Number.isFinite(base) || base <= 0) return null; const raw = Math.round(base * r.ratio), cap = r.cap || Infinity, amount = Math.min(raw, cap); return { amount, base, kind: 'ratio', text: `${money(base)} × ${+(r.ratio * 100).toFixed(2)}% = ${money(raw)}${raw > cap ? `，超过封顶，按 ${money(cap)}` : ''}`, capped: raw > cap }; }
     if (r.fixed) return { amount: r.fixed, kind: 'fixed', text: `${r.upTo ? '最高' : '定额'} ${money(r.fixed)}`, capped: false, upTo: !!r.upTo };
     return null;
   }
-  function matchAll(pf) {
+  function matchAll(pf, policies) {
     const out = [];
-    S().policies.forEach((p) => {
-      if (p.status && p.status !== '已发布' && X.roleOf().mask) return;
+    policies.forEach((p) => {
       const conds = p.conditions || [];
       // 自动抽取的“有相关投入/支出”属于泛化触发条件：有金额也不能断定属于本事项，标为待确认，不自动试算
       const generic = (c) => c.trigger && /有相关投入/.test(c.label || '');
@@ -47,24 +40,36 @@
       let level = checks.some((c) => c.state === 'no') ? 'no' : checks.some((c) => c.state === 'unknown') ? 'check' : 'ok';
       const t = p.times || {};
       const isGeneric = conds.some(generic); const okN = checks.filter((c) => c.state === 'ok').length;
-      out.push({ okN, id: p.id, title: p.title, level, checks: checks.map(({ label, state }) => ({ label, state })), pending: p.pending || [], window: t.window, open: t.open, ended: t.open === false, calc: level === 'no' || isGeneric ? null : calcOf(p, pf), rule: (p.rule || {}).text, doc: (p.source && p.source.docNo) || pdoc(p.doc).no || '', clause: p.clause || '', real: !!p.real, category: p.category || '' });
+      out.push({ okN, id: p.id, title: p.title, level, checks: checks.map(({ label, state }) => ({ label, state })), pending: p.pending || [], window: t.window, open: t.open, ended: t.open === false, calc: level === 'no' || isGeneric ? null : calcOf(p, pf), rule: (p.rule || {}).text, doc: p.docNo, clause: p.clause || '', example: !!p.example, real: !!p.real, category: p.category || '', sameBenefitAs: p.sameBenefitAs });
     });
     const rank = { ok: 0, check: 1, no: 2 };
     out.sort((a, b) => rank[a.level] - rank[b.level] || (a.ended - b.ended) || (b.okN - a.okN) || ((b.calc && b.calc.kind === 'ratio') - (a.calc && a.calc.kind === 'ratio')) || (b.real - a.real));
-    out.forEach((r) => delete r.okN);
-    return out;
+    const applicableIds = new Set(out.filter((r) => r.level !== 'no').map((r) => r.id));
+    return out.filter((r) => !applicableIds.has(r.sameBenefitAs))
+      .map(({ okN, sameBenefitAs, ...result }) => result);
   }
-  X.first('POST', '/api/apps/policy/match', (b) => {
+  X.on('POST', '/api/apps/policy/match', (b) => {
     let pf;
     if (b.entId) { const e = ent(b.entId); if (!e) X.err(404, 'NOT_FOUND', '企业不存在'); pf = profileOf(e); Object.assign(pf, b.overrides || {}); if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])]; }
     else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
-    const results = matchAll(pf);
+    const policies = X.visiblePolicies().map(X.policyItem);
+    const results = matchAll(pf, policies);
+    const counts = { ok: 0, check: 0, no: 0, ended: 0 };
+    const eligible = [];
+    for (const r of results) {
+      counts[r.level]++;
+      if (r.level === 'no') continue;
+      if (r.ended) counts.ended++;
+      else eligible.push(r);
+    }
+    const ok = eligible.filter((r) => r.level === 'ok');
+    const defaultItemIds = (ok.length ? ok : eligible.slice(0, 2)).map((r) => r.id);
     X.audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, 'DeepSeek-V4.1-Flash');
-    return { profile: pf, results, summary: { ok: results.filter((r) => r.level === 'ok').length, check: results.filter((r) => r.level === 'check').length, no: results.filter((r) => r.level === 'no').length } };
+    return { profile: pf, results, total: policies.length, summary: counts, defaultItemIds };
   });
-  X.first('POST', '/api/apps/policy/calc', (b) => {
-    const p = S().policies.find((x) => x.id === b.itemId); if (!p) X.err(404, 'NOT_FOUND', '事项不存在');
+  X.on('POST', '/api/apps/policy/calc', (b) => {
+    const p = X.visiblePolicies().find((x) => x.id === b.itemId); if (!p) X.err(404, 'NOT_FOUND', '事项不存在');
     const pf = {}; if (p.rule && p.rule.base) pf[p.rule.base] = +b.amount;
-    return { item: p.id, rule: (p.rule || {}).text, result: calcOf(p, pf), note: '按政策原文规则确定性计算，实际金额以评审结果为准' };
+    return { item: p.id, rule: (p.rule || {}).text, result: calcOf(p, pf), note: p.example ? '示例（无对应原文）' : p.times?.open === false ? '本批已结束，仅供历史参考' : '按政策规则试算，实际金额以评审结果为准' };
   });
 })();

@@ -8,6 +8,10 @@
   const T = Object.assign({ pickQ: '要办什么事？', pickSub: '', fillQ: '填要素', fillSub: '', draftQ: '初稿', draftSub: '', reviewQ: '批注与送审', reviewSub: '', watermark: '未定稿' }, C.text);
   const CN = '一二三四五六七八九十';
 
+  const bookShort = window.JK_DATA?.enterprises.find((e) => e.id === 'E001')?.short;
+  const bookReply = `打开${bookShort ? bookShort + '的' : ''}答复意见`;
+  const numberLabel = '发文字号（请填写）';
+
   JK.registerApp({
     manifest: {
       id: 'document', name: C.name, short: '公文', icon: 'doc', hue: 'orange', version: '4.0.0', owner: 'AI 工作组',
@@ -30,12 +34,12 @@
         { id: 'document.submit', action: 'submit', examples: ['送审签', '提交给李阳审签'], keywords: ['送审', '审签', '提交审核'], plan: ['核查无必须改问题', '等你确认', '提交审签'] },
         { id: 'document.approve', action: 'approve', examples: ['审签通过', '把这份公文退回修改'], keywords: ['通过', '退回', '签发'], plan: ['打开待审文稿', '等你确认', '通过或退回'] },
         { id: 'document.export', action: 'export', examples: ['导出 Word', '把答复意见导出成 Word'], keywords: ['导出', 'Word'], plan: ['打开文稿', '导出公文版式 Word'] },
-        { id: 'document.open', action: 'open', examples: ['打开书香里的答复意见', '看看我的文稿'], keywords: ['打开', '我的文稿', '文稿'], plan: ['打开我的文稿', '找到文稿'] },
+        { id: 'document.open', action: 'open', examples: [bookReply, '看看我的文稿'], keywords: ['打开', '我的文稿', '文稿'], plan: ['打开我的文稿', '找到文稿'] },
       ],
-      starters: ['起草一份数据券申报延期通知', '打开书香里的答复意见', '对比一下第1版和第2版'],
+      starters: ['起草一份数据券申报延期通知', bookReply, '对比一下第1版和第2版'],
       demo: [
         { title: '起草+核查', say: '起草一份数据券申报延期通知' },
-        { title: '版本对比', say: '打开书香里的答复意见，对比一下第1版和第2版' },
+        { title: '版本对比', say: `${bookReply}，对比一下第1版和第2版` },
       ],
     },
 
@@ -109,7 +113,7 @@
       }
       function inputCtl(k, label) {
         const ty = C.inputTypes[k] || 'text'; const v = S.inputs[k] || ''; const op = `data-op="document.in-${k}" data-in="${k}"`;
-        if (ty === 'policy') return `<select class="select" ${op}><option value="">请选择政策事项</option>${(POLS || []).slice(0, 120).map((p) => `<option value="${esc(p.id)}" ${p.id === v ? 'selected' : ''}>${esc(p.title)}${p.real ? '' : '（示例）'}</option>`).join('')}</select>`;
+        if (ty === 'policy') return `<select class="select" ${op}><option value="">请选择政策事项</option>${(POLS || []).slice(0, 120).map((p) => `<option value="${esc(p.id)}" ${p.id === v ? 'selected' : ''}>${esc(p.title)}${p.example ? ' · 示例（无对应原文）' : ''}</option>`).join('')}</select>`;
         if (ty === 'ent') return `<select class="select" ${op}><option value="">请选择企业</option>${(ENTS || []).map((e) => `<option value="${e.id}" ${e.id === v ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>`;
         if (ty === 'date') return `<input class="input" type="date" ${op} value="${esc(v)}">`;
         if (ty === 'long') return `<textarea class="textarea" rows="2" ${op} placeholder="${esc(label)}">${esc(v)}</textarea>`;
@@ -124,7 +128,7 @@
           ${S.from ? `<div class="callout h-indigo" style="margin-bottom:var(--s4)">${icon('link')}<div>来自${esc(S.from.label || S.from)}：已带上相关要素</div></div>` : ''}
           <div class="dc-fill"><div class="stack">${t.inputs.map(([k, label]) => `<div class="field"><label>${esc(label)}</label>${inputCtl(k, label)}</div>`).join('')}
             <div class="row" style="margin-top:var(--s2)"><button class="btn sm ghost" data-act="sample" data-op="document.sample">${icon('sparkles')}用示例填好</button><span class="sp"></span><span class="meta">${missing ? `还有 ${missing} 项没填` : '要素已齐'}</span></div>
-            ${pol ? `<div class="dc-pol"><div class="meta">政策依据</div><b>${esc(pol.title)}</b><div class="meta">${esc(pol.docNo || '')}${pol.source && pol.source.url ? ` · <a class="link" href="${esc(pol.source.url)}" target="_blank" rel="noopener">官网原文 ${icon('external')}</a>` : ''}</div></div>` : ''}</div>
+            ${pol ? `<div class="dc-pol"><div class="meta">政策依据</div><b>${esc(pol.title)}</b><div class="meta">${esc(pol.docNo || '无文号')}${!pol.example && pol.source?.url ? ` · <a class="link" href="${esc(pol.source.url)}" target="_blank" rel="noopener">官网原文 ${icon('external')}</a>` : ''}</div></div>` : ''}</div>
             <div><div class="sec">参考范文 <span class="meta">（勾选后 AI 参照写法）</span></div><div id="drefs">${refsHtml()}</div></div></div>`;
         foot(`<button class="btn ghost" data-step="0">换一类</button>`, `<button class="btn primary" data-act="gen" data-op="document.gen" ${S.busy ? 'disabled' : ''}>${S.busy ? '<span class="dc-spin"></span>起草中…' : `${icon('sparkles')}生成初稿`}</button>`);
       }
@@ -151,14 +155,15 @@
         const cm = mode === 'comment' ? S.doc.comments || [] : [];
         const badge = (i) => { const n = cm.filter((x) => x.para === i && !x.resolved).length; return mode === 'comment' ? `<button class="dc-cb ${n ? 'on' : ''}" data-cpara="${i}" title="批注">${icon('chat')}${n || ''}</button>` : ''; };
         return `<div class="dc-paper ${locked() ? 'final' : ''}" data-op="document.paper">${locked() ? '' : `<div class="dc-wm">${esc(T.watermark)}</div>`}
-          <div class="dc-red">${esc(C.redHead)}</div><div class="dc-no">${paraHtml(c.docNo || '')}</div><div class="dc-rule"></div>
+          <div class="dc-red">${esc(c.sign || C.redHead)}</div>
+          ${S.editing === 'docNo' && editable ? `<textarea class="textarea dc-ed dc-ed-t" data-ed="docNo" aria-label="发文字号">${esc(c.docNo || '')}</textarea>` : `<div class="dc-no" ${editable ? 'data-pe="docNo"' : ''}>${paraHtml(c.docNo || numberLabel)}</div>`}<div class="dc-rule"></div>
           ${S.editing === 'title' && editable ? `<textarea class="textarea dc-ed dc-ed-t" data-ed="title">${esc(c.title)}</textarea>` : `<h1 class="dc-title" ${editable ? 'data-pe="title"' : ''}>${esc(c.title)}</h1>`}
           ${c.to ? `<div class="dc-to">${esc(c.to)}</div>` : ''}
           ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}">${paraHtml(p)}</p></div>`).join('')}
           <div class="dc-sign">${esc(c.sign)}</div><div class="dc-sign">${esc(c.date)}</div></div>`;
       }
-      function startEdit(k) { if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = k === 'title' ? 'title' : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
-      function endEdit(t) { const k = t.dataset.ed; const v = t.value.trim(); if (k === 'title') S.edit.title = v; else S.edit.paragraphs[+k] = v; S.editing = null; if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null; step2(); }
+      function startEdit(k) { if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = k === 'title' || k === 'docNo' ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
+      function endEdit(t) { const k = t.dataset.ed; const v = t.value.trim(); if (k === 'title' || k === 'docNo') S.edit[k] = v; else S.edit.paragraphs[+k] = v; S.editing = null; if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null; step2(); }
       async function saveEdit(note) {
         if (!S.edit) return; try { const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' }); S.doc = r.item; S.edit = null; S.issues = null; ctx.audit('保存公文', `${S.doc.title} · 第 ${S.doc.versions.length} 版`); ui.toast(`已保存为第 ${S.doc.versions.length} 版`, { type: 'ok' }); }
         catch (e) { ui.toast(e.status === 409 || e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message, { type: 'err' }); }
@@ -180,14 +185,14 @@
         const tabs = [['check', `核查${n ? ` <span class="num">${n}</span>` : ''}`], ['polish', '润色'], ['versions', `版本 <span class="num">${S.doc.versions.length}</span>`]];
         return `<div class="seg dc-seg">${tabs.map(([k, l]) => `<button class="${S.panel === k ? 'on' : ''}" data-panel="${k}" data-op="document.panel-${k}">${l}</button>`).join('')}</div><div class="dc-pan">${S.panel === 'check' ? checkPanel() : S.panel === 'polish' ? polishPanel() : versionsPanel()}</div>`;
       }
-      const fixable = (i) => i.fix || /^c(1|-ni|-bb)$/.test(i.id);
+      const fixable = (i) => i.fix || /^c-(ni|bb)$/.test(i.id);
       function checkPanel() {
         if (!S.issues) return `<div class="dc-empty">${icon('shield', 20)}<div class="meta">核对文号、日期、数字一致、错别字、语体</div><button class="btn sm" data-act="check" data-op="document.check" ${canOp ? '' : 'disabled'}>开始核查</button></div>`;
         const ok = S.issues.length === 1 && S.issues[0].level === 'ok';
         if (ok) return `<div class="dc-empty">${tag('通过', 'checkLevel')}<div>${esc(S.issues[0].text)}</div><button class="btn sm ghost" data-act="check">再核查一次</button></div>`;
         const cnt = (l) => S.issues.filter((i) => i.level === l).length; const nf = S.issues.filter(fixable).length;
         return `<div class="row wrap gap2" style="margin-bottom:var(--s3)">${['error', 'warn', 'info'].filter((l) => cnt(l)).map((l) => `${tag(lvl(l) + ' ' + cnt(l), 'checkLevel', { hue: ui.hue(lvl(l), 'checkLevel') })}`).join('')}<span class="sp"></span><button class="btn sm ghost" data-act="check" title="重新核查">${icon('refresh')}</button></div>
-          <div class="stack rows dc-iss">${S.issues.map((i) => `<div class="card tight li" data-iss="${esc(i.id)}"><div class="grow"><div class="row gap2">${tag(lvl(i.level), 'checkLevel')}<b class="t-sm">${esc(i.kind)}</b></div><div class="s" style="margin-top:4px">${esc(i.text)}</div></div>${canOp && !locked() ? (fixable(i) ? `<button class="btn sm" data-fix="${esc(i.id)}">修正</button>` : i.para != null ? `<button class="btn sm ghost" data-goto="${i.para}">去改</button>` : '') : ''}</div>`).join('')}</div>
+          <div class="stack rows dc-iss">${S.issues.map((i) => `<div class="card tight li" data-iss="${esc(i.id)}"><div class="grow"><div class="row gap2">${tag(lvl(i.level), 'checkLevel')}<b class="t-sm">${esc(i.kind)}</b></div><div class="s" style="margin-top:4px">${esc(i.text)}</div></div>${canOp && !locked() ? (fixable(i) ? `<button class="btn sm" data-fix="${esc(i.id)}">修正</button>` : i.target === 'docNo' ? '<button class="btn sm ghost" data-pe="docNo">去填写</button>' : i.para != null ? `<button class="btn sm ghost" data-goto="${i.para}">去改</button>` : '') : ''}</div>`).join('')}</div>
           ${canOp && nf && !locked() ? `<button class="btn sm" style="width:100%;margin-top:var(--s3)" data-act="fixAll" data-op="document.fix-all">${icon('bolt')}一键修正 ${nf} 处</button>` : ''}`;
       }
       function diffHtml(parts) { return `<div class="diff dc-diff">${parts.map((p) => (p.op === 'eq' ? esc(p.t).slice(0, 4000) : p.op === 'add' ? `<ins>${esc(p.t)}</ins>` : `<del>${esc(p.t)}</del>`)).join('').replace(/\n/g, '<br>')}</div>`; }
@@ -228,7 +233,7 @@
         const ds = $('#ds'); if (!ds) return; if (!S.doc) { ds.innerHTML = skel(); foot(); return; }
         const d = S.doc; const cm = d.comments || []; const open = cm.filter((x) => !x.resolved).length;
         ds.innerHTML = `<div class="q">${esc(T.reviewQ)}</div><div class="q-sub">${esc(T.reviewSub)}</div>
-          ${locked() ? `<div class="callout h-green" style="margin-bottom:var(--s3)">${icon('lock')}<div class="grow">已定稿 · 文号 ${esc(latest().content.docNo)}。内容已锁定，需要改请另存新稿</div>${canOp ? '<button class="btn sm" data-act="saveAs" data-op="document.save-as">另存新稿</button>' : ''}</div>` : d.status === '已退回' ? `<div class="callout h-red" style="margin-bottom:var(--s3)">${icon('alert')}<div>审签退回，请按批注修改后重新送审</div></div>` : ''}
+          ${locked() ? `<div class="callout h-green" style="margin-bottom:var(--s3)">${icon('lock')}<div class="grow">已定稿 · ${esc(latest().content.docNo || numberLabel)}。内容已锁定，需要改请另存新稿</div>${canOp ? '<button class="btn sm" data-act="saveAs" data-op="document.save-as">另存新稿</button>' : ''}</div>` : d.status === '已退回' ? `<div class="callout h-red" style="margin-bottom:var(--s3)">${icon('alert')}<div>审签退回，请按批注修改后重新送审</div></div>` : ''}
           <div class="dc-split"><div>${paper(latest().content, 'comment')}</div><div class="dc-side">
             <div class="dc-status"><div class="row gap2">${tag(d.status, 'docStatus')}<span class="meta">第 ${d.versions.length} 版 · ${esc(d.author)}</span></div>
               <div class="dc-flow">${['草稿', '审签中', '已定稿'].map((s, i) => `<div class="dc-fs ${s === d.status || (d.status === '已退回' && i === 0) ? 'on' : ['草稿', '审签中', '已定稿'].indexOf(d.status) > i ? 'done' : ''}"><span class="dc-si">${['草稿', '审签中', '已定稿'].indexOf(d.status) > i || (d.status === '已定稿' && s === '已定稿') ? icon('check') : ''}</span>${s}</div>`).join('')}</div>
@@ -262,11 +267,11 @@
       async function decide(decision, comment) {
         try { const rs = (await api.reviews.list()).items; const r = rs.find((x) => x.ref === S.id && x.status === 'pending'); if (!r) { ui.toast('没有找到待审签记录', { type: 'err' }); return; }
           await api.reviews.decide(r.id, { decision, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
-          ui.toast(decision === 'approve' ? `已定稿，文号 ${latest().content.docNo}` : '已退回起草人', { type: 'ok' }); step3(); return S.doc; }
+          ui.toast(decision === 'approve' ? `已定稿 · ${latest().content.docNo || numberLabel}` : '已退回起草人', { type: 'ok' }); step3(); return S.doc; }
         catch (e) { ui.toast(e.message, { type: 'err' }); }
       }
       function rejectModal() { return ui.modal({ title: '退回修改', okText: '退回', danger: true, body: '<div class="field"><label>退回意见</label><textarea class="textarea" id="drj" rows="3" placeholder="写明需要修改的地方"></textarea></div>', ok: async (box) => { const v = box.querySelector('#drj').value.trim() || '请按批注修改'; await decide('reject', v); } }); }
-      async function saveAs() { const c = latest().content; const r = await D.draft({ templateId: S.doc.templateId, inputs: {} }); await D.save(r.item.id, { content: Object.assign({}, c, { docNo: '京技产促〔2026〕【待补】号' }), note: '另存自已定稿文稿' }); ui.toast('已另存为新稿', { type: 'ok' }); await refreshList(); return openDoc(r.item.id, 2); }
+      async function saveAs() { const c = latest().content; const r = await D.draft({ templateId: S.doc.templateId, inputs: {} }); await D.save(r.item.id, { content: Object.assign({}, c, { docNo: '' }), note: '另存自已定稿文稿' }); ui.toast('已另存为新稿', { type: 'ok' }); await refreshList(); return openDoc(r.item.id, 2); }
 
       /* ---------- 我的文稿 ---------- */
       function renderList(b) {
@@ -405,7 +410,7 @@
           await run.step(1); await run.highlight('[data-op="document.paper"]');
           const c = await run.ask(rej ? `退回「${S.doc.title}」给 ${S.doc.author} 修改吗？` : `审签通过「${S.doc.title}」？通过后定稿并编文号，内容锁定。`, [rej ? '确认退回' : '确认通过', '再看看']);
           if (!/^确认/.test(c || '')) { run.done('好的，暂不处理'); return; }
-          await run.step(2); await decide(rej ? 'reject' : 'approve', rej ? '请按批注修改' : '同意'); run.done(rej ? '已退回起草人' : `已定稿，文号 ${latest().content.docNo}`);
+          await run.step(2); await decide(rej ? 'reject' : 'approve', rej ? '请按批注修改' : '同意'); run.done(rej ? '已退回起草人' : `已定稿 · ${latest().content.docNo || numberLabel}`);
         },
         async export({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, S.step >= 2 ? S.step : 2))) return;
