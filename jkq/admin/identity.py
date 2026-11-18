@@ -1,5 +1,4 @@
 """经开区用户与部门。组织关系和授权均保存在核心身份表中。"""
-import secrets
 from typing import Annotated, Literal
 from uuid import uuid4
 
@@ -17,6 +16,13 @@ from .common import record_change, write
 Password = Annotated[str, Field(min_length=6, max_length=1024)]
 Title = Annotated[str, Field(max_length=100)]
 Status = Literal['active', 'disabled']
+# 可由核心校验器读取。scrypt 的非空摘要永远无法匹配这个空摘要。
+_UNSET_CREDENTIAL = 'scrypt$' + '00' * 16 + '$'
+_RELATIONS = (
+    ('role', 'user_roles', 'role_id'),
+    ('deptId', 'user_departments', 'department_id'),
+    ('title', 'user_positions', 'position_id'),
+)
 
 
 class UserCreate(Body):
@@ -34,7 +40,7 @@ class UserPatch(Body):
     status: Status = None
     deptId: Identifier | None = None
     title: Title = None
-    resetPassword: Password | bool = None
+    resetPassword: Password | Literal[False] = None
 
 
 class DepartmentCreate(Body):
@@ -87,6 +93,18 @@ def _department(db, did):
     if not row:
         raise AuthError(404, 'NOT_FOUND', '部门不存在')
     return dict(zip(('id', 'name', 'parent'), row))
+
+
+def _departments(db):
+    return [dict(id=did, name=name, parent=parent) for did, name, parent in
+            db.execute('select id,name,parent_id from departments order by rowid')]
+
+
+def _relations(db, uid, values):
+    return {
+        field: [row[0] for row in db.execute(f'select {column} from {table} where user_id=? order by rowid', (uid,))]
+        for field, table, column in _RELATIONS if field in values
+    }
 
 
 def _department_path(nodes, did):
@@ -159,7 +177,10 @@ def register(router, platform, admin):
     @router.get(users)
     def list_users(q: str = '', dept: str = '', role: str = '', status: Status = None, user=Depends(admin)):
         with store._lock:
-            return {'items': _users(store._db, directory.demo_login, q=q, dept=dept, role=role, status=status)}
+            db = store._db
+            return dict(items=_users(db, directory.demo_login, q=q, dept=dept, role=role, status=status),
+                        roles=[dict(id=ident, name=name) for ident, name in directory.role_names().items()],
+                        departments=_departments(db))
 
     @router.post(users)
     def create_user(body: UserCreate, request: Request, user=Depends(admin)):
@@ -167,9 +188,11 @@ def register(router, platform, admin):
         with write(platform, user) as db:
             if db.execute('select 1 from users where username=?', (body.username,)).fetchone():
                 raise AuthError(409, 'DUPLICATE', '用户名已存在')
+            credential = hash_password(body.password) if body.password else _UNSET_CREDENTIAL
+            status = 'active' if body.password else 'disabled'
             db.execute("insert into users(id,username,name,password_hash,status,failed_logins,locked_until,"
-                       "demo,all_projects,session_gen) values (?,?,?,?,'active',0,0,0,0,0)",
-                       (uid, body.username, body.name, hash_password(body.password or secrets.token_urlsafe(32))))
+                       "demo,all_projects,session_gen) values (?,?,?,?,?,0,0,0,0,0)",
+                       (uid, body.username, body.name, credential, status))
             _assign(db, uid, body.model_dump())
             after = item(db, uid)
             record_change(platform, db, user, request, action='identity.user.create', target=uid,
@@ -181,6 +204,12 @@ def register(router, platform, admin):
         values = body.model_dump(exclude_unset=True)
         with write(platform, user) as db:
             before = item(db, uid)
+            values = {field: value for field, value in values.items() if before.get(field) != value}
+            if body.status == 'active' and not body.resetPassword and db.execute(
+                'select password_hash from users where id=?', (uid,)
+            ).fetchone()[0] == _UNSET_CREDENTIAL:
+                raise AuthError(400, 'INVALID_REQUEST', '启用账号前须设置登录口令')
+            relations_before = _relations(db, uid, values)
             for field in ('status', 'name'):
                 if field in values:
                     db.execute(f'update users set {field}=? where id=?', (values[field], uid))
@@ -188,21 +217,24 @@ def register(router, platform, admin):
             if ('role' in values or 'status' in values) and not directory.has_admin(db, active_only=True):
                 raise AuthError(400, 'LAST_ADMIN', '必须保留至少一位启用的管理员')
             if body.resetPassword:
-                password = body.resetPassword if isinstance(body.resetPassword, str) else secrets.token_urlsafe(32)
                 db.execute('update users set password_hash=?,failed_logins=0,locked_until=0 where id=?',
-                           (hash_password(password), uid))
+                           (hash_password(body.resetPassword), uid))
             if body.resetPassword or (body.status == 'disabled' and before['status'] == 'active'):
                 directory.bump_session_gen(db, uid)
             after = item(db, uid)
+            metadata = {}
+            if relations_before:
+                metadata['relations'] = dict(before=relations_before, after=_relations(db, uid, values))
+            if body.resetPassword:
+                metadata['credentialReset'] = True
             record_change(platform, db, user, request, action='identity.user.update', target=uid,
-                          before=before, after=after)
+                          before=before, after=after, metadata=metadata)
         return {'item': after}
 
     @router.get(departments)
     def list_departments(user=Depends(admin)):
         with store._lock:
-            rows = store._db.execute('select id,name,parent_id from departments order by rowid')
-            return {'items': [dict(id=did, name=name, parent=parent) for did, name, parent in rows]}
+            return {'items': _departments(store._db)}
 
     @router.post(departments)
     def create_department(body: DepartmentCreate, request: Request, user=Depends(admin)):

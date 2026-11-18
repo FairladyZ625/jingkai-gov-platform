@@ -3,9 +3,12 @@
 import csv
 import io
 import json
+import time
 from datetime import datetime
+from hashlib import sha256
+from typing import Annotated
 
-from fastapi import Depends, Query, Request
+from fastapi import Depends, Header, Query, Request
 from fastapi.responses import Response
 
 from jkq.auth import BEIJING, AuthError
@@ -16,6 +19,8 @@ _COLUMNS = ('id', 'at', 'userId', 'user', 'role', 'app', 'action', 'target', 'mo
 _SOURCE = " from audit a left join users u on u.id=a.user_id"
 _ROWS = "select a.id, a.ts, a.user_id, u.name, a.app_id, a.action, a.detail" + _SOURCE
 _ORDER = " order by a.ts desc, a.id desc"
+_EXPORT_CACHE = '~jkq.audit-export'
+_REPLAY_SECONDS = 24 * 60 * 60
 
 
 def _time(value, field):
@@ -38,8 +43,9 @@ def _filters(user: str = '', app: str = '', action: str = '',
         raise AuthError(400, 'INVALID_REQUEST', '开始时间不能晚于结束时间')
     clauses, params = [], []
     if user:
-        clauses.append('(a.user_id=? or u.username=? or u.name=?)')
-        params.extend((user, user, user))
+        clauses.append("(a.user_id=? or u.username=? or u.name=? "
+                       "or json_extract(case when json_valid(a.detail) then a.detail end, '$.user')=?)")
+        params.extend((user, user, user, user))
     for column, value in (('a.app_id=?', app), ('a.action=?', action), ('a.ts>=?', start), ('a.ts<=?', end)):
         if value is not None and value != '':
             clauses.append(column)
@@ -76,6 +82,12 @@ def _csv_cell(value):
     return value
 
 
+def _csv_response(content):
+    return Response(content, media_type='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename="audit.csv"',
+                             'Cache-Control': 'no-store'})
+
+
 def register(router, platform, admin):
     store = platform.store
 
@@ -91,19 +103,34 @@ def register(router, platform, admin):
         return dict(items=[_item(row) for row in rows], total=total)
 
     @router.get('/api/v1/audit/export')
-    def export(request: Request, user=Depends(admin), filters=Depends(_filters)):
+    def export(request: Request, user=Depends(admin), filters=Depends(_filters),
+               key: Annotated[str | None, Header(alias='Idempotency-Key', min_length=1, max_length=200)] = None):
         where, params = filters
-        output = io.StringIO(newline='')
-        writer = csv.writer(output)
-        writer.writerow(_COLUMNS)
-        count = 0
         with write(platform, user) as db:
+            if key is not None:
+                now = time.time()
+                cache_key = sha256(json.dumps([user.id, key]).encode()).hexdigest()
+                signature = json.dumps([where, params], ensure_ascii=False)
+                db.execute('delete from kv where app_id=? and updated<=?', (_EXPORT_CACHE, now - _REPLAY_SECONDS))
+                cached = db.execute('select value from kv where app_id=? and key=?',
+                                    (_EXPORT_CACHE, cache_key)).fetchone()
+                if cached:
+                    old_signature, content = json.loads(cached[0])
+                    if old_signature != signature:
+                        raise AuthError(409, 'CONFLICT', '该幂等键已用于不同的筛选条件')
+                    return _csv_response(content)
+            output = io.StringIO(newline='')
+            writer = csv.writer(output)
+            writer.writerow(_COLUMNS)
+            count = 0
             for row in db.execute(_ROWS + where + _ORDER, params):
                 item = _item(row)
                 writer.writerow(_csv_cell(item[key]) for key in _COLUMNS)
                 count += 1
             record_change(platform, db, user, request, action='audit.export', target='audit',
                           before=None, after={'count': count})
-        return Response(output.getvalue(), media_type='text/csv',
-                        headers={'Content-Disposition': 'attachment; filename="audit.csv"',
-                                 'Cache-Control': 'no-store'})
+            content = output.getvalue()
+            if key is not None:
+                db.execute('insert into kv values (?,?,?,?)',
+                           (_EXPORT_CACHE, cache_key, json.dumps([signature, content], ensure_ascii=False), now))
+        return _csv_response(content)

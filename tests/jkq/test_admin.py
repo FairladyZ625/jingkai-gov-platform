@@ -9,9 +9,7 @@ import pytest
 
 pytest.importorskip('fastapi')
 from fastapi.testclient import TestClient
-from haiknow_core.main import create_app
-
-from jkq.auth import install as install_auth
+from jkq import app as instance
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +41,13 @@ def login(client, username, password):
 def build(tmp_path, monkeypatch, cheap_password_hash):
     from jkq.admin import install
 
+    install_platform = instance.install_platform
+
+    def mount_platform(app):
+        install_platform(app)
+        install(app)
+
+    monkeypatch.setattr(instance, 'install_platform', mount_platform)
     apps = tmp_path / 'apps'
     shutil.copytree(ROOT / 'tests/fixtures/platform-app', apps / APP)
     # 临时应用通过 #12 的真实授权依赖写入 SDK KV，和下游经开区应用用同一权限边界。
@@ -60,16 +65,16 @@ def build(tmp_path, monkeypatch, cheap_password_hash):
     monkeypatch.setenv('HAIKNOW_DATA_DIR', str(tmp_path / 'db'))
     monkeypatch.setenv('HAIKNOW_APPS_DIR', str(apps))
     monkeypatch.setenv('HAIKNOW_SECRET', 'isolated-admin-test-signing-value')
-    monkeypatch.delenv('HAIKNOW_DEMO_LOGIN', raising=False)
+    monkeypatch.setenv('HAIKNOW_ROOT', str(ROOT))
+    monkeypatch.setenv('HAIKNOW_DEMO_LOGIN', '0')
     for role in ('admin', 'leader', 'member', 'partner'):
         monkeypatch.setenv('JKQ_DEMO_' + role.upper() + '_PASSWORD', 'test-' + role)
 
-    def start():
-        app = create_app(ROOT)
-        install_auth(app, demo=True)
-        install(app)
-        client = TestClient(app)
-        ok(login(client, 'admin', 'test-admin'))
+    def start(*, demo=True):
+        monkeypatch.setenv('JKQ_DEMO_MODE', str(int(demo)))
+        client = TestClient(instance.create_app())
+        if demo:
+            ok(login(client, 'admin', 'test-admin'))
         return client
 
     return start
@@ -116,6 +121,51 @@ def test_last_admin_rollback(client, change):
     denied(client.patch(USERS + '/u-zhanglei', json=change), 400, 'LAST_ADMIN')
     assert user(client, 'u-zhanglei') == before
     assert items(client, AUDIT, action='identity.user.update') == []
+
+
+def test_pending_admin_cannot_replace_last_admin(build):
+    client = build(demo=False)
+    ok(client.post('/api/v1/auth/bootstrap', json=dict(username='owner', name='首位管理员',
+                                                      password='owner-test')))
+    owner, = items(client, USERS)
+    owner_path = USERS + '/' + owner['id']
+    denied(client.patch(owner_path, json={'resetPassword': True}), 400, 'INVALID_REQUEST')
+    assert ok(client.get('/api/v1/me'))['user']['id'] == owner['id']
+    ok(login(TestClient(client.app), 'owner', 'owner-test'))
+    ok(client.patch(owner_path, json={'resetPassword': 'owner-new'}))
+    denied(client.get('/api/v1/me'), 401, 'UNAUTHENTICATED')
+    denied(login(client, 'owner', 'owner-test'), 401, 'BAD_CREDENTIALS')
+    ok(login(client, 'owner', 'owner-new'))
+
+    pending = ok(client.post(USERS, json=dict(username='backup', name='备用管理员', role='admin')))['item']
+    assert pending['status'] == 'disabled'
+    pending_path = USERS + '/' + pending['id']
+    denied(client.patch(pending_path, json={'status': 'active'}), 400, 'INVALID_REQUEST')
+    denied(client.patch(owner_path, json={'status': 'disabled'}), 400, 'LAST_ADMIN')
+    ok(client.patch(pending_path, json={'status': 'active', 'resetPassword': 'fixture-backup'}))
+    backup = TestClient(client.app)
+    ok(login(backup, 'backup', 'fixture-backup'))
+    ok(backup.patch(owner_path, json={'status': 'disabled'}))
+    denied(client.get('/api/v1/me'), 401, 'UNAUTHENTICATED')
+
+
+def test_reposting_primary_assignments_preserves_secondary_memberships(client):
+    uid = 'u-wangmin'
+    store = client.app.state.platform.store
+    with store._lock, store._db as db:
+        db.execute('insert into user_departments values (?,?)', (uid, 'd-ai'))
+        db.execute('insert into user_roles values (?,?)', (uid, 'partner'))
+        db.execute('insert into positions values (?,?,null)', ('secondary-position', '副岗'))
+        db.execute('insert into user_positions values (?,?)', (uid, 'secondary-position'))
+    before = user(client, uid)
+    sample = {key: before[key] for key in ('deptId', 'role', 'title')}
+    assert ok(client.patch(USERS + '/' + uid, json=sample))['item'] == before
+    with store._lock, store._db as db:
+        for table in ('user_departments', 'user_roles', 'user_positions'):
+            assert db.execute(f'select count(*) from {table} where user_id=?', (uid,)).fetchone() == (2,)
+    ok(client.patch(USERS + '/' + uid, json={'role': 'leader'}))
+    change = items(client, AUDIT, action='identity.user.update')[0]['detail']
+    assert change['relations'] == {'before': {'role': ['member', 'partner']}, 'after': {'role': ['leader']}}
 
 
 def test_department_dependencies_and_snapshots(client):
@@ -236,6 +286,55 @@ def test_role_settings_and_app_snapshots(client, build):
     assert audit['after'] == dict(status='maintenance', statusNote='例行维护')
 
 
+def test_maintenance_applies_to_running_peer_and_legacy_updates(client, build):
+    peer = build()
+    control = ADMIN + 'apps/' + APP
+    write_path = '/api/apps/' + APP + '/records'
+    record_path = '/api/v1/apps/' + APP + '/records'
+    record = {'project': 'jkq', 'type': 'sample', 'data': {'text': '演示验收'}}
+
+    def status(reader):
+        item, = items(reader, '/api/v1/apps')
+        return item['status'], item['enabled'], item['available'], item['statusNote']
+
+    def enter_maintenance():
+        ok(client.patch(control, json={'status': 'maintenance'}))
+
+    ok(peer.post(write_path, json={'id': 'initial'}))
+    enter_maintenance()
+    # 先走业务路由，证明另一实例的开关检查独立于清单刷新。
+    assert peer.post(write_path, json={'id': 'blocked'}).status_code == 503
+    assert peer.post(record_path, json=record).status_code == 503
+    ok(client.patch('/api/admin/apps/' + APP, json={'disabledReason': '旧入口备注'}))
+    assert status(peer) == ('maintenance', False, False, '旧入口备注')
+    ok(client.put(control, json={'enabled': True}))
+    assert peer.post(record_path, json=record).status_code == 201
+    ok(peer.post(write_path, json={'id': 'restored'}))
+    assert status(peer) == ('published', True, True, '旧入口备注')
+    enter_maintenance()
+    ok(client.put(control, json={'enabled': False}))
+    assert status(peer) == ('disabled', False, False, '旧入口备注')
+
+
+def test_app_change_rolls_back_when_audit_write_fails(client, monkeypatch):
+    store = client.app.state.platform.store
+    audit = store.audit
+
+    def reject_update(app_id, user_id, action, detail, **kwargs):
+        if action == 'app.update':
+            raise RuntimeError('测试审计写入失败')
+        return audit(app_id, user_id, action, detail, **kwargs)
+
+    monkeypatch.setattr(store, 'audit', reject_update)
+    request = TestClient(client.app, raise_server_exceptions=False)
+    request.cookies.update(client.cookies)
+    response = request.patch(ADMIN + 'apps/' + APP, json={'status': 'maintenance'})
+    denied(response, 500, 'INTERNAL_ERROR')
+    item, = items(client, '/api/v1/apps')
+    assert (item['status'], item['enabled']) == ('published', True)
+    assert items(client, AUDIT, action='app.update') == []
+
+
 def test_audit_filters_and_csv(client):
     # 写入两条时间确定的旧格式审计记录，让每一种筛选都有应保留及应排除的对象。
     store = client.app.state.platform.store
@@ -252,6 +351,8 @@ def test_audit_filters_and_csv(client):
         rows = items(client, AUDIT, **{field: value})
         matches = [r['action'] for r in rows if r['action'].startswith('example.')]
         assert matches == expected
+    assert ok(client.get(AUDIT, params={'limit': 1, 'offset': 1}))['total'] == 3
+    denied(client.get(AUDIT, params={'from': '2001-01-01', 'to': '2000-01-01'}), 400, 'INVALID_REQUEST')
     result = client.get(AUDIT + '/export', params={'user': 'reader-A'})
     assert result.status_code == 200 and 'text/csv' in result.headers['content-type']
     reader = csv.DictReader(io.StringIO(result.content.decode('utf-8-sig')))
@@ -259,3 +360,30 @@ def test_audit_filters_and_csv(client):
     assert [row['action'] for row in reader] == ['example.read']
     export = detail(client, 'audit.export')
     assert (export['before'], export['after']) == (None, {'count': 1})
+
+
+def test_csv_replay_preserves_snapshot_and_audits_once(client, build):
+    params = {'app': 'platform'}
+    headers = {'Idempotency-Key': 'fixture-download-attempt'}
+    first = client.get(AUDIT + '/export', params=params, headers=headers)
+    assert first.is_success
+    ok(client.post(DEPTS, json={'name': '下载之后新增'}))
+    second = build().get(AUDIT + '/export', params=params, headers=headers)
+    assert second.content == first.content
+    denied(client.get(AUDIT + '/export', params={'app': APP}, headers=headers), 409, 'CONFLICT')
+    assert len(items(client, AUDIT, action='audit.export')) == 1
+
+
+def test_audit_filters_snapshot_name_after_rename(client):
+    admin = user(client, 'u-zhanglei')
+    ok(client.post(DEPTS, json={'name': '改名前新增'}, headers={'X-Audit-Via': 'operator'}))
+    ok(client.patch(USERS + '/' + admin['id'], json={'name': '新展示名'}))
+    action = 'identity.department.create'
+    historical, = items(client, AUDIT, action=action, user=admin['name'])
+    assert historical['user'] == admin['name']
+    assert historical['via'] == 'operator'
+    for lookup in (admin['id'], admin['username'], '新展示名'):
+        assert items(client, AUDIT, action=action, user=lookup) == [historical]
+    result = client.get(AUDIT + '/export', params={'action': action, 'user': admin['name']})
+    exported, = csv.DictReader(io.StringIO(result.text))
+    assert exported['user'] == historical['user']

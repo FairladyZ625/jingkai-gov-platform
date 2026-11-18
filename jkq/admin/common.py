@@ -17,11 +17,12 @@ def write(platform, user):
         yield db
 
 
-def record_change(platform, db, user, request, *, action, target, before, after, app='platform'):
+def record_change(platform, db, user, request, *, action, target, before, after, app='platform', metadata=None):
     roles = platform.directory.roles_of(user.id)
     role = next((role for role in ROLE_ORDER if role in roles), min(roles, default=None))
     via = request.headers.get('x-audit-via', 'api')
     platform.store.audit(app, user.id, action, {
+        **(metadata or {}),
         'target': target, 'before': before, 'after': after,
         'via': via if via in VIA else 'api', 'role': role, 'user': user.name,
     }, connection=db)

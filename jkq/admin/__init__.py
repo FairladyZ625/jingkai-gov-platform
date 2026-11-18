@@ -15,6 +15,7 @@ def install(app):
     identity.register(router, instance, admin)
     platform.register(router, instance, admin)
     audit.register(router, instance, admin)
+    app.add_middleware(platform.RefreshAppState, platform=instance)
 
     routes = app.router.routes
     offset = len(routes)

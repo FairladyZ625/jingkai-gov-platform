@@ -7,6 +7,8 @@ from typing import Literal
 import yaml
 from fastapi import Depends, Request
 from pydantic import Field
+from starlette.concurrency import run_in_threadpool
+from starlette.routing import get_route_path
 
 from haiknow_core import admin_apps
 from haiknow_core.identity_http import Body, Name
@@ -58,6 +60,29 @@ class SettingsUpdate(SettingsFields):
     seats: int = Field(default=None, ge=1)
 
 
+class RefreshAppState:
+    """让已运行实例在下一个应用请求读取已提交的开关。"""
+
+    def __init__(self, app, platform):
+        self.app, self.platform = app, platform
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http':
+            path = get_route_path(scope)
+            for prefix in ('/api/apps/', '/api/v1/apps/'):
+                if path.startswith(prefix):
+                    app_id = path[len(prefix):].split('/', 1)[0]
+                    if app_id in self.platform.apps:
+                        await run_in_threadpool(self.refresh, app_id)
+                    break
+        await self.app(scope, receive, send)
+
+    def refresh(self, app_id):
+        store = self.platform.store
+        with store._lock:
+            self.platform.apps[app_id].enabled = store.app_enabled(app_id)
+
+
 def _settings_value(db, key, default):
     row = db.execute('select value from settings where key=?', (key,)).fetchone()
     return json.loads(row[0]) if row else default
@@ -101,12 +126,13 @@ def _app_status(db, app_id, row):
         marker = db.execute('select value from kv where app_id=? and key=?',
                             (app_id, _MAINTENANCE_KEY)).fetchone()
         if marker:
-            stamp, audit_id = json.loads(marker[0])
-            # 部署和回滚也会刷新 updated_at。只有旧接口的状态写入会取代维护态。
-            if stamp == row['updated_at'] or not db.execute(
-                "select 1 from audit where id>? and action='app.update' and app_id='platform' "
-                "and json_extract(case when json_valid(detail) then detail end, '$.appId')=? limit 1",
-                (audit_id, app_id),
+            audit_id = json.loads(marker[0])
+            # 保留备注、灰度人群及版本更新前的维护标记。显式开关或离开停用态时接管。
+            if not db.execute(
+                "select 1 from audit where id>? and ((app_id=? and action in ('app.enable','app.disable')) "
+                "or (app_id='platform' and action='app.update' and json_valid(detail) "
+                "and json_extract(detail,'$.appId')=? and json_extract(detail,'$.state')<>'disabled')) limit 1",
+                (audit_id, app_id, app_id),
             ).fetchone():
                 state = 'maintenance'
     return {'status': 'published' if state == 'live' else state, 'statusNote': row['disabled_reason'] or ''}
@@ -201,6 +227,8 @@ def register(router, platform, admin):
             db.execute('delete from role_grants where role_id=? and app_id=?', (role_id, app_id))
             db.executemany('insert into role_grants values (?,?,?)',
                            [(role_id, app_id, action) for action in actions])
+            if app_id == '*' and 'admin' in old and not platform.directory.has_admin(db, active_only=True):
+                raise AuthError(400, 'LAST_ADMIN', '必须保留至少一位启用的管理员')
             after = dict(role=role_id, app=app_id, actions=actions)
             record_change(platform, db, user, request, action='identity.grant.update',
                           app=app_id if app_id != '*' else 'platform', target=f'{role_id}/{app_id}',
@@ -210,14 +238,16 @@ def register(router, platform, admin):
 
     @router.get('/api/v1/apps')
     def list_apps(user=Depends(current_user)):
-        with store._lock:
+        with store._lock, store._db as db:
+            db.execute('BEGIN')
             is_admin = 'admin' in platform.rbac.actions(user, '*')
             items = []
             for app_id, entry in platform.apps.items():
                 actions = platform.rbac.actions(user, app_id)
                 if 'view' in actions and admin_apps.visible(platform, app_id, user, is_admin):
                     row = admin_apps.registry(platform, app_id)
-                    items.append(_app_item(entry, row, _app_status(store._db, app_id, row), actions))
+                    entry.enabled = store.app_enabled(app_id)
+                    items.append(_app_item(entry, row, _app_status(db, app_id, row), actions))
         return {'items': items}
 
     @router.patch('/api/v1/admin/apps/{app_id}')
@@ -251,7 +281,7 @@ def register(router, platform, admin):
                     db.execute(
                         'insert into kv values (?,?,?,?) on conflict(app_id,key) '
                         'do update set value=excluded.value,updated=excluded.updated',
-                        (app_id, _MAINTENANCE_KEY, json.dumps((stamp, audit_id)), ts),
+                        (app_id, _MAINTENANCE_KEY, json.dumps(audit_id), ts),
                     )
                 else:
                     db.execute('delete from kv where app_id=? and key=?', (app_id, _MAINTENANCE_KEY))
