@@ -5,6 +5,12 @@ on:
     paths:
       - "core/**"
       - "apps/_template/**"
+      - "jkq/**"
+      - "tests/jkq/**"
+      - "tests/fixtures/**"
+      - "conftest.py"
+      - "requirements-dev.txt"
+      - ".github/workflows/core.yml"
 
 permissions:
   contents: read
