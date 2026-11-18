@@ -33,10 +33,14 @@ def install_platform(app: FastAPI) -> None:
     from . import admin, jobs_api, reviews_api
     from .conversations import routes as conversations
     from .kb import ask as kb_ask
+    from .operator import routes as operator
+    from .orchestrator import routes as orchestrator
 
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
+    orchestrator.install(app, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    operator.install(app, current_user)
     kb_ask.install(app, app.state.platform, current_user)
     admin.install(app)
     if "document" in app.state.platform.data.apps:
