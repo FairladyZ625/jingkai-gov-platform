@@ -12,6 +12,7 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.formparsers import MultiPartParser
 
+from .minutes import minutes_for, public_todos
 from .transcription import (
     DEMO_AUDIO, MEETING_LOCK, MEETING_TYPES, OPERATION, RECORD_TYPE, Options,
     __haiknow_jobs__, attach_job, meeting_record,
@@ -56,7 +57,9 @@ class MeetingRoute(APIRoute):
                     401: 'UNAUTHENTICATED',
                     403: 'FORBIDDEN',
                     404: 'NOT_FOUND',
+                    409: 'INVALID_STATE',
                     413: 'PAYLOAD_TOO_LARGE',
+                    503: 'APP_UNAVAILABLE',
                 }.get(exc.status_code, 'INVALID_REQUEST')
                 return error_response(code, str(exc.detail), exc.status_code)
 
@@ -82,7 +85,9 @@ def job_view(job):
 
 
 def meeting_view(ctx, record):
-    item = {**record['data'], 'id': record['id']}
+    data = record['data']
+    item = {key: value for key, value in data.items() if key != 'minutesEdit'}
+    item.update(id=record['id'], todos=public_todos(data))
     item['status'] = 'done' if item.get('transcript') else 'new'
     if item.get('jobId'):
         try:
@@ -238,9 +243,13 @@ async def create_meeting(request: Request, ctx=Depends(require('operate'))):
     return {'item': meeting_view(ctx, record)}
 
 
+def meeting_detail(ctx, record):
+    return {'item': meeting_view(ctx, record), 'minutes': minutes_for(record['data'])}
+
+
 @router.get('/meetings/{meeting_id}')
 def get_meeting(meeting_id: str, ctx=Depends(app_context)):
-    return {'item': meeting_view(ctx, meeting_record(ctx, meeting_id)), 'minutes': None}
+    return meeting_detail(ctx, meeting_record(ctx, meeting_id))
 
 
 @router.post('/meetings/{meeting_id}/transcribe', status_code=202)

@@ -8,7 +8,7 @@ from fastapi.routing import APIRoute
 from haiknow_sdk import AppContext, DataError, PermissionDenied, app_context, require
 from pydantic import BaseModel, Field, StringConstraints
 
-from . import drafts, templates
+from . import comments, drafts, templates
 
 ERROR_STATUSES = {"invalid_request": 400, "locked": 409, "app_unavailable": 503}
 
@@ -83,7 +83,15 @@ def list_templates(ctx: Viewer):
 
 @router.get("/documents")
 def list_documents(ctx: Viewer):
-    return {"items": drafts.summaries(ctx)}
+    items = drafts.summaries(ctx)
+    groups = comments.by_draft(ctx)
+    for entry in items:
+        entry["comments"] = sum(not c["resolved"] for c in groups.get(entry["id"], []))
+    return {"items": items}
+
+
+def _with_comments(ctx, draft):
+    return {**draft, "comments": comments.by_draft(ctx).get(draft["id"], [])}
 
 
 @router.post("/drafts")
@@ -99,9 +107,9 @@ def create_draft(body: DraftIn, ctx: Operator, request: Request):
 
 @router.get("/drafts/{identity}")
 def get_draft(identity: str, ctx: Viewer, version: Annotated[int | None, Query(ge=0)] = None):
-    return {"item": drafts.get(ctx, identity, version)}
+    return {"item": _with_comments(ctx, drafts.get(ctx, identity, version))}
 
 
 @router.put("/drafts/{identity}")
 def save_draft(identity: str, body: SaveIn, ctx: Operator):
-    return {"item": drafts.save(ctx, identity, body.content.model_dump(), body.note)}
+    return {"item": _with_comments(ctx, drafts.save(ctx, identity, body.content.model_dump(), body.note))}
