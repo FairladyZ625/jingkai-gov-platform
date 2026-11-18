@@ -1,0 +1,19 @@
+{
+  "keywords": [
+    "人天",
+    "报价",
+    "毛利",
+    "采购价"
+  ],
+  "public_phrases": {
+    "data/public/kb_docs.json": [
+      "通用人形机器人天工3.0"
+    ],
+    "data/public/rules.json": [
+      "接受竞买报价，签订成交确认书"
+    ],
+    "prototype/v4/data/real-kb.js": [
+      "通用人形机器人天工3.0"
+    ]
+  }
+}
