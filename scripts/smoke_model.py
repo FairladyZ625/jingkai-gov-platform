@@ -12,9 +12,9 @@ sys.path[:0] = [str(ROOT), str(ROOT / "core/server"), str(ROOT / "core/sdk")]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", help="配置中的模型标识，或 codex-cli。默认使用 JKQ_MODEL_PROVIDER 或 cloud。")
+    parser.add_argument("--provider", help="配置中的模型标识，或 codex-cli。默认优先使用 JKQ_MODEL_PROVIDER，再按配置顺序选择。")
     args = parser.parse_args()
-    provider_id = args.provider or os.getenv("JKQ_MODEL_PROVIDER") or "cloud"
+    provider_id = args.provider or os.getenv("JKQ_MODEL_PROVIDER", "").strip()
     if provider_id == "codex-cli":
         import shutil
 
@@ -39,11 +39,30 @@ def main():
             content = codex_smoke(os.getenv("JKQ_CODEX_MODEL_NAME"))
         else:
             config = load_config()
-            definition = next((item for item in config.models if item.id == provider_id), None)
-            if definition is None or definition.kind == "mock":
-                parser.error("请选择已登记的 OpenAI 兼容 provider 或 codex-cli。")
-            provider = provider_from_environment(definition)
-            if provider is None:
+            if args.provider:
+                candidates = [item for item in config.models if item.id == args.provider and item.kind != "mock"]
+                if not candidates:
+                    parser.error("请选择已登记的 OpenAI 兼容 provider 或 codex-cli。")
+            else:
+                candidates = sorted(
+                    (item for item in config.models if item.enabled and item.kind != "mock"),
+                    key=lambda item: item.id != provider_id,
+                )
+            invalid = False
+            for definition in candidates:
+                try:
+                    provider = provider_from_environment(definition)
+                except ValueError:
+                    if args.provider:
+                        raise
+                    invalid = True
+                    continue
+                if provider is not None:
+                    provider_id = definition.id
+                    break
+            else:
+                if invalid:
+                    raise ValueError("模型接入地址无效。")
                 print("跳过：所选 provider 的地址、模型名或必需密钥未配置。")
                 return 0
             payload = {"messages": [{"role": "user", "content": SMOKE_PROMPT}]}
