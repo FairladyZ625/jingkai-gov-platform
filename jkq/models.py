@@ -317,22 +317,36 @@ def _gateway_error(error):
     return _response_error(status, error.kind.upper(), str(error))
 
 
-@asynccontextmanager
-async def _lifespan(app):
+def _bind(app):
+    if getattr(app.state, "jkq_models", None) is not None:
+        return None
     platform = app.state.platform
     path = platform.config_dir / "models.yaml"
     service = ModelService(platform, load_config(path if path.exists() else DEFAULT_CONFIG))
     original = platform.model
     platform.model = _SDKModelGateway(original, service)
     app.state.jkq_models = service
+    return original
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    original = _bind(app)
     try:
         yield
     finally:
-        platform.model = original
-        del app.state.jkq_models
+        if original is not None:
+            app.state.platform.model = original
+            del app.state.jkq_models
 
 
 router = APIRouter(prefix="/api/v1", lifespan=_lifespan)
+
+
+def install(app):
+    """在实例 register_routes 中登记模型目录、/me 默认模型和文本对话。"""
+    _bind(app)
+    app.include_router(router)
 
 
 def _service(request: Request):
@@ -342,6 +356,25 @@ def _service(request: Request):
 def current_model(request: Request, user_id: str):
     """供 /me 读取与 /models/current 同一份偏好。"""
     return _service(request).current(user_id)
+
+
+@router.get("/me")
+def me(request: Request, user=Depends(current_user)):
+    platform = request.app.state.platform
+    model = current_model(request, user.id)
+    visible = []
+    if platform.data is not None:
+        visible = [project for project in platform.data.projects.by_id
+                   if platform.data.projects.visible(user, project)]
+    return {
+        "id": user.id,
+        "name": user.name,
+        "roles": list(user.roles),
+        "projects": visible,
+        "isAdmin": "admin" in platform.rbac.actions(user, "*"),
+        "defaultModel": model,
+        "settings": {"defaultModel": model},
+    }
 
 
 @router.get("/models")
