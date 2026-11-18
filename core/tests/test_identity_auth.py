@@ -23,7 +23,7 @@ def test_password_hash_salt_and_verification():
 def test_production_scrypt_cost_is_unchanged_in_clean_process():
     """测试夹具把 scrypt 成本降到最低；这里在没有夹具的干净进程里确认生产参数仍是 n=16384,r=8,p=1，
     且生产散列与标准库 scrypt 的同参数结果逐位一致。"""
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     code = (
         "import sys; sys.path[:0] = [sys.argv[1]]\n"
         "from haiknow_core import passwords as p\n"
