@@ -3,12 +3,14 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Header, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from haiknow_sdk import DataError, PermissionDenied, app_context, require
+from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
+from starlette.formparsers import MultiPartParser
 
 from .transcription import (
     DEMO_AUDIO, MEETING_LOCK, MEETING_TYPES, OPERATION, RECORD_TYPE, Options,
@@ -50,9 +52,12 @@ class MeetingRoute(APIRoute):
                 fields = [list(error['loc']) for error in exc.errors()]
                 return error_response('INVALID_REQUEST', '请求字段缺失或类型不正确', 422, {'fields': fields})
             except HTTPException as exc:
-                code = {401: 'UNAUTHENTICATED', 403: 'FORBIDDEN', 404: 'NOT_FOUND'}.get(
-                    exc.status_code, 'INVALID_REQUEST'
-                )
+                code = {
+                    401: 'UNAUTHENTICATED',
+                    403: 'FORBIDDEN',
+                    404: 'NOT_FOUND',
+                    413: 'PAYLOAD_TOO_LARGE',
+                }.get(exc.status_code, 'INVALID_REQUEST')
                 return error_response(code, str(exc.detail), exc.status_code)
 
         return handle
@@ -70,6 +75,7 @@ def job_view(job):
     )
     return {
         'id': job['id'], 'kind': OPERATION, 'ref': job['input'].get('ref'), 'status': status,
+        'cancelled': job['status'] in {'cancelled', 'cancelling'},
         'progress': 100 if status == 'done' else 100 * completed // (completed + 1),
         'step': max(0, len(names) - 1), 'steps': names, 'stepName': names[-1] if names else None,
     }
@@ -103,6 +109,58 @@ def parse_participants(value):
     ):
         raise DataError('invalid_request', '参会人员须为不超过 100 项的非空字符串数组')
     return [name.strip() for name in people]
+
+
+async def read_meeting_form(request):
+    """先完成鉴权，再在上限内解析 multipart，避免未授权或超限请求先落临时文件。"""
+    limit = MAX_AUDIO_BYTES + 256 * 1024
+    length = request.headers.get('content-length')
+    if length is not None:
+        try:
+            size = int(length)
+        except ValueError as exc:
+            raise HTTPException(413, '单份录音不得超过 64 MiB') from exc
+        if size > limit:
+            raise HTTPException(413, '单份录音不得超过 64 MiB')
+    content_type = request.headers.get('content-type') or ''
+    if 'application/x-www-form-urlencoded' in content_type:
+        return await request.form(), None
+    if 'multipart/form-data' not in content_type:
+        raise DataError('invalid_request', '请使用 multipart 上传录音')
+
+    chunks = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > limit:
+            raise HTTPException(413, '单份录音不得超过 64 MiB')
+        chunks.append(chunk)
+    body = b''.join(chunks)
+
+    async def body_stream():
+        yield body
+
+    try:
+        form = await MultiPartParser(
+            request.headers,
+            body_stream(),
+            max_files=2,
+            max_fields=20,
+            max_part_size=limit,
+        ).parse()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        name = type(exc).__name__
+        if 'MultiPart' in name or 'ClientDisconnect' in name:
+            raise HTTPException(413, '单份录音不得超过 64 MiB') from exc
+        raise
+    files = [value for _, value in form.multi_items() if isinstance(value, UploadFile)]
+    if len(files) > 1:
+        for item in files:
+            await item.close()
+        raise HTTPException(413, '一次只能上传一份录音')
+    return form, files[0] if files else None
 
 
 def audio_upload(file):
@@ -152,12 +210,14 @@ def list_meetings(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, g
 
 
 @router.post('/meetings', status_code=201)
-def create_meeting(title: str = Form(min_length=1, max_length=160),
-                   type: str = Form(default=MEETING_TYPES[0]),
-                   participants: str = Form(default='[]'), file: UploadFile | None = None,
-                   source: str = Form(default='upload'), ctx=Depends(require('operate'))):
-    title = title.strip()
-    if not title or type not in MEETING_TYPES or source not in {'upload', 'live', 'nas', 'demo'}:
+async def create_meeting(request: Request, ctx=Depends(require('operate'))):
+    form, file = await read_meeting_form(request)
+    title = str(form.get('title') or '').strip()
+    type = str(form.get('type') or MEETING_TYPES[0])
+    participants = form.get('participants')
+    participants = '[]' if participants is None else str(participants)
+    source = str(form.get('source') or 'upload')
+    if not title or len(title) > 160 or type not in MEETING_TYPES or source not in {'upload', 'live', 'nas', 'demo'}:
         raise DataError('invalid_request', '请填写会议名称、有效类型和录音来源')
     people = parse_participants(participants)
     if file is not None and source != 'demo':
@@ -203,11 +263,17 @@ def start_transcription(meeting_id: str, options: Options | None = None,
                 if exc.code != 'not_found':
                     raise
                 raise DataError('invalid_state', '该会议已有转写任务') from exc
-            if current['submitter'] != ctx.user.id or (
+            cancelled = current['status'] in {'cancelled', 'cancelling'}
+            if cancelled:
+                if key is not None and key == current.get('idempotencyKey'):
+                    return {'job': job_view(current)}
+                job_key = key if key is not None else f'meeting:{meeting_id}:restart'
+            elif current['submitter'] != ctx.user.id or (
                 key is not None and key != current['idempotencyKey']
             ):
                 raise DataError('invalid_state', '该会议已有转写任务，请在原任务中查看或重试')
-            job_key = current['idempotencyKey']
+            else:
+                job_key = current['idempotencyKey']
         job = ctx.preview.jobs.submit(OPERATION, project=record['project'], input=inputs, idempotency_key=job_key)
         attach_job(ctx, record, job['id'])
     return {'job': job_view(job)}

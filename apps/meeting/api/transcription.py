@@ -41,7 +41,14 @@ def attach_job(ctx, record, job_id):
     if active_id == job_id:
         return
     if active_id:
-        raise DataError('invalid_state', '该会议已有转写任务，请在原任务中查看或重试')
+        try:
+            current = ctx.preview.jobs.get(active_id)
+        except DataError as exc:
+            if exc.code != 'not_found':
+                raise
+            current = None
+        if current is not None and current['status'] not in {'cancelled', 'cancelling'}:
+            raise DataError('invalid_state', '该会议已有转写任务，请在原任务中查看或重试')
     ctx.records.save(id=record['id'], baseVersion=record['version'], data={**data, 'jobId': job_id})
 
 
