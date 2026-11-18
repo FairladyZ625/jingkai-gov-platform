@@ -8,8 +8,8 @@ const { labels, installChecks } = require('./checks.cjs');
 const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
 const report = path.join(__dirname, 'REPORT.md');
 
-// PR #59 合入后移除对应标记。只有已知故障的具体症状属于预期失败。
-const expectedFailures = new Set(['p0-conversation', 'p0-document']);
+// PR #59 已合入，两个 P0 不再预期失败。只有已知故障的具体症状属于预期失败。
+const expectedFailures = new Set();
 class KnownP0 extends Error {}
 
 function result(name, width, theme) {
