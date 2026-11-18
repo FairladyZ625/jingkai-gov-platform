@@ -1,0 +1,57 @@
+name: 仓库检查
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 scripts/check_pr_body.py
+
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: 防泄密检查
+        run: |
+          if test -f scripts/guard.py; then
+            python3 scripts/guard.py
+          else
+            echo "::notice::等待 #2 提供 scripts/guard.py，本次跳过"
+          fi
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install pytest
+      - run: python3 -m pytest -q --ignore=tests/demo
+
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: 前端冒烟
+        run: |
+          if test -d tests/demo; then
+            cd tests/demo
+            npm ci
+            npx --no-install playwright install --with-deps chromium
+            npm test
+          else
+            echo "::notice::tests/demo 尚未交付，本次跳过"
+          fi
