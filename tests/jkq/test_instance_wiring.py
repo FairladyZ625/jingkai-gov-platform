@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 import shutil
 from pathlib import Path
 
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONVERSATIONS = "/api/v1/conversations"
 REVIEWS = "/api/v1/reviews"
 JOBS = "/api/v1/jobs"
-PASSWORD = "wiring-test-password"
+PASSWORD = secrets.token_urlsafe(12)  # 每次运行随机，避免口令字面量入库
 PANEL = {"app": "policy", "route": "detail", "params": {"id": "PI-03"}}
 
 
