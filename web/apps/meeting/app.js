@@ -526,7 +526,7 @@
           goFlow();
           if (route === 'record' || params.upload || !id) {
             S.step = 0; S.setup = null;
-            if (route === 'record' || params.upload) S.src = route === 'record' ? 'live' : 'upload';
+            if (route === 'record' || params.upload) S.src = canOp ? (route === 'record' ? 'live' : 'upload') : 'nas';
             body(); return;
           }
           return openMeeting(id, route === 'transcript' ? 2 : 3);
