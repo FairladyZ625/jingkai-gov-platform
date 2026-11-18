@@ -1,0 +1,6 @@
+{
+  "name": "jingkai-demo-regression",
+  "private": true,
+  "scripts": { "test": "node run.cjs && node --test errors.test.cjs" },
+  "devDependencies": { "playwright": "1.58.2" }
+}

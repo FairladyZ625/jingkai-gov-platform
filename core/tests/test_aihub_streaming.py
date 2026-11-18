@@ -5,6 +5,7 @@ import threading
 import httpx
 import pytest
 
+from conftest import set_provider_credential
 from haiknow_core.aihub.gateway import Gateway
 from haiknow_core.aihub.errors import AIError
 from haiknow_core.settings import AISettings
@@ -20,11 +21,12 @@ def sse(delta, finish=None):
                                  ensure_ascii=False) + '\n\n'
 
 
-def gateway(tmp_path, fallback=False):
+def gateway(tmp_path, monkeypatch, fallback=False):
     settings = AISettings(tmp_path)
-    settings.put_provider('p', 'openai', 'https://example.test/v1', 'test-only-key', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test/v1', 'test-only-key')
+    settings.put_provider('p', 'openai', 'https://example.test/v1', ['m'], True)
     if fallback:
-        settings.put_provider('backup', 'mock', '', '', ['m'], True)
+        settings.put_provider('backup', 'mock', '', ['m'], True)
     settings.put_route('chat', 'p', 'm', 'backup' if fallback else None, 'm' if fallback else None)
     return Gateway(settings)
 
@@ -35,7 +37,7 @@ def fake_http(monkeypatch, respond):
 
 
 def test_native_tools_stream_and_usage(tmp_path, monkeypatch):
-    g = gateway(tmp_path)
+    g = gateway(tmp_path, monkeypatch)
     requests, chunks = [], []
 
     def respond(request):
@@ -54,15 +56,15 @@ def test_native_tools_stream_and_usage(tmp_path, monkeypatch):
 
 
 def test_stream_obeys_outbound_and_quota_before_network(tmp_path, monkeypatch):
-    g = gateway(tmp_path)
-    g.settings.put_provider('p', 'openai', 'https://example.test/v1', 'test-only-key', ['m'], True,
+    g = gateway(tmp_path, monkeypatch)
+    g.settings.put_provider('p', 'openai', 'https://example.test/v1', ['m'], True,
                             allow_outbound='public')
     fake_http(monkeypatch, lambda request: pytest.fail('出站被拒绝后仍请求网络'))
     with pytest.raises(AIError) as error:
         g.stream_chat('platform-builder', PAYLOAD, lambda _: None, threading.Event())
     assert error.value.kind == 'outbound_denied'
     assert g.settings.usage() == []
-    g.settings.put_provider('p', 'openai', 'https://example.test/v1', 'test-only-key', ['m'], True,
+    g.settings.put_provider('p', 'openai', 'https://example.test/v1', ['m'], True,
                             allow_outbound='internal')
     g.settings.put_quota('platform-builder', 0)
     with pytest.raises(AIError) as error:
@@ -71,7 +73,7 @@ def test_stream_obeys_outbound_and_quota_before_network(tmp_path, monkeypatch):
 
 
 def test_partial_failure_is_not_replayed_to_backup(tmp_path, monkeypatch):
-    g = gateway(tmp_path, fallback=True)
+    g = gateway(tmp_path, monkeypatch, fallback=True)
     chunks = []
     fake_http(monkeypatch, lambda request: httpx.Response(200, text=sse({'content': '半句话'})))
     with pytest.raises(AIError) as error:
@@ -84,7 +86,7 @@ def test_partial_failure_is_not_replayed_to_backup(tmp_path, monkeypatch):
 
 
 def test_stream_http_error_is_sanitized_and_failure_is_settled(tmp_path, monkeypatch):
-    g = gateway(tmp_path)
+    g = gateway(tmp_path, monkeypatch)
     fake_http(monkeypatch, lambda request: httpx.Response(401, text='test-only-key-private-error'))
     with pytest.raises(AIError) as error:
         g.stream_chat('platform-builder', PAYLOAD, lambda _: pytest.fail('泄漏上游正文'), threading.Event())
@@ -94,7 +96,7 @@ def test_stream_http_error_is_sanitized_and_failure_is_settled(tmp_path, monkeyp
 
 
 def test_sdk_chat_result_stays_text(tmp_path, monkeypatch):
-    g = gateway(tmp_path)
+    g = gateway(tmp_path, monkeypatch)
     fake_http(monkeypatch, lambda request: httpx.Response(200, json={
         'choices': [{'message': {'content': '普通对话仍返回文本'}}]}))
     assert g.call('demo', 'chat', PAYLOAD)['result'] == '普通对话仍返回文本'
@@ -104,7 +106,7 @@ def test_stream_cancellation_closes_upstream_and_settles_failure(tmp_path, monke
     import time
     from anyio import sleep
 
-    g = gateway(tmp_path)
+    g = gateway(tmp_path, monkeypatch)
     stop, closed = threading.Event(), threading.Event()
     timer = threading.Timer(0.2, stop.set)
 

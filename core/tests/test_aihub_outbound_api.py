@@ -5,6 +5,7 @@ import httpx
 import pytest
 from fastapi import Depends
 
+from conftest import set_provider_credential
 from haiknow_sdk import AppContext, app_context
 from test_aihub_adapters import HTML, fake_http, public_dns
 from test_aihub_tools import login
@@ -12,8 +13,8 @@ from test_aihub_tools import login
 
 def test_embedding_stable_preview_and_http_use_same_policy(tmp_path, monkeypatch):
     client = login(tmp_path, monkeypatch)
-    provider = {'kind': 'openai', 'base_url': 'https://provider.test/v1', 'api_key': 'dummy-key',
-                'models': ['m'], 'allow_outbound': 'public'}
+    set_provider_credential(monkeypatch, 'p', 'https://provider.test/v1', 'dummy-key')
+    provider = {'kind': 'openai', 'base_url': 'https://provider.test/v1', 'models': ['m'], 'allow_outbound': 'public'}
     assert client.put('/api/v1/admin/ai/providers/p', json=provider).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/embedding', json={'provider': 'p', 'model': 'm'}).status_code == 200
 
@@ -49,6 +50,7 @@ def test_embedding_stable_preview_and_http_use_same_policy(tmp_path, monkeypatch
         'capability': 'embedding', 'classification': 'internal'} for item in audit)
     # 未配置上限的旧服务商仍能承接稳定入口的 internal 缺省分类。
     provider.pop('allow_outbound')
+    set_provider_credential(monkeypatch, 'plain', provider['base_url'])
     assert client.put('/api/v1/admin/ai/providers/plain', json=provider).status_code == 200
     assert client.put('/api/v1/admin/ai/routes/embedding', json={'provider': 'plain', 'model': 'm'}).status_code == 200
     assert client.get('/api/apps/sample-app/stable-embedding').status_code == 200

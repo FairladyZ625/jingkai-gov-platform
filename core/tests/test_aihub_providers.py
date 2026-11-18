@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from conftest import set_provider_credential
 from haiknow_core.aihub.gateway import Gateway, TEST_SAMPLES
 from haiknow_core.aihub.errors import AIError
 from haiknow_core.settings import AISettings
@@ -15,7 +16,8 @@ from haiknow_core.settings import AISettings
 ])
 def test_provider_wire_format(tmp_path, monkeypatch, kind, capability, payload, path, response, expected):
     store = AISettings(tmp_path)
-    store.put_provider('p', kind, 'https://example.test', 'dummy', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test', 'dummy')
+    store.put_provider('p', kind, 'https://example.test', ['m'], True)
     store.put_route(capability, 'p', 'm')
     requests = []
     def respond(request):
@@ -32,8 +34,9 @@ def test_provider_wire_format(tmp_path, monkeypatch, kind, capability, payload, 
 
 def test_fallback_on_provider_failure_and_record(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('first', 'openai', 'https://example.test', 'dummy', ['m'], True)
-    store.put_provider('backup', 'mock', '', '', ['m'], True)
+    set_provider_credential(monkeypatch, 'first', 'https://example.test', 'dummy')
+    store.put_provider('first', 'openai', 'https://example.test', ['m'], True)
+    store.put_provider('backup', 'mock', '', ['m'], True)
     store.put_route('image', 'first', 'm', 'backup', 'm')
     original = httpx.AsyncClient
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(lambda r: httpx.Response(503)), **kwargs))
@@ -47,7 +50,8 @@ def test_fallback_on_provider_failure_and_record(tmp_path, monkeypatch):
 
 def test_timeout_and_bad_input_are_distinct(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://example.test', 'dummy', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test', 'dummy')
+    store.put_provider('p', 'openai', 'https://example.test', ['m'], True)
     store.put_route('transcribe', 'p', 'm')
     gateway = Gateway(store)
     with pytest.raises(AIError) as error:
@@ -67,8 +71,9 @@ def test_timeout_and_bad_input_are_distinct(tmp_path, monkeypatch):
 
 def test_speech_and_mock_transcription_shapes(tmp_path, monkeypatch):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://example.test', 'dummy', ['m'], True)
-    store.put_provider('fake', 'mock', '', '', ['m'], True)
+    set_provider_credential(monkeypatch, 'p', 'https://example.test', 'dummy')
+    store.put_provider('p', 'openai', 'https://example.test', ['m'], True)
+    store.put_provider('fake', 'mock', '', ['m'], True)
     store.put_route('speech', 'p', 'm')
     store.put_route('transcribe', 'fake', 'm')
     original = httpx.AsyncClient
