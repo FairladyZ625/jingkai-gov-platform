@@ -110,7 +110,7 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
     hits = []
     for hit in ranked[:min(limit, 50)]:
         score, snippet, doc, coverage = hit
-        hits.append(dict(metadata(doc), chunk=0, snippet=snippet, score=-rank(hit)[1]))
+        hits.append(dict(metadata(doc), chunk=0, snippet=snippet, score=-rank(hit)[2]))
     return dict(hits=hits, total=len(ranked), terms=terms, facets=facets(hit[2] for hit in ranked))
 
 
@@ -204,28 +204,14 @@ def install(app, platform, current_user, visible_spaces=None):
         limit: int = Field(default=8, ge=1)
         filters: Optional[Filters] = None
 
-    try:
-        from .docs import KbRoute
-    except ModuleNotFoundError as exc:
-        if exc.name != __package__ + ".docs":
-            raise
-        # #24 尚未合入时，保持相同的路由级错误契约。
-        from fastapi.exceptions import RequestValidationError
-        from fastapi.routing import APIRoute
+    from .docs import KbError, KbRoute
 
-        class KbRoute(APIRoute):
-            def get_route_handler(self):
-                handle = super().get_route_handler()
+    if KbError not in app.exception_handlers:
+        # 单独安装（测试桩）时也保持 #24 的错误对象契约。
+        async def kb_error(request, exc):
+            return JSONResponse({"error": exc.error}, status_code=exc.status)
 
-                async def checked(request):
-                    try:
-                        return await handle(request)
-                    except RequestValidationError as exc:
-                        fields = [list(error["loc"]) for error in exc.errors()]
-                        error = dict(code="CHECK_FAILED", message="知识库请求参数无效",
-                                     details=dict(fields=fields))
-                        return JSONResponse({"error": error}, status_code=422)
-                return checked
+        app.add_exception_handler(KbError, kb_error)
 
     router = APIRouter(prefix="/api/v1/kb", route_class=KbRoute)
     session = Depends(current_user)

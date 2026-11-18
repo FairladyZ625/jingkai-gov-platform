@@ -215,3 +215,41 @@ def test_vector_startup_and_semantic_hit(monkeypatch):
     baseline = search(docs, "企业")
     mixed = client.post("/api/v1/kb/search", json={"q": "企业"}).json()
     assert [h["id"] for h in mixed["hits"]] == [h["id"] for h in baseline["hits"]]
+
+
+def test_hit_score_is_relevance(seed):
+    hits = search(seed, "算力券 封顶")["hits"]
+    scores = [h["score"] for h in hits]
+    assert scores[0] > 0 and all(isinstance(s, float) for s in scores)
+
+
+def test_instance_registers_search_routes(monkeypatch, tmp_path, cheap_password_hash):
+    pytest.importorskip("fastapi")
+    import os
+    from fastapi.testclient import TestClient
+    from jkq.app import create_app
+
+    for name in tuple(os.environ):
+        if name.startswith(("HAIKNOW_", "JKQ_WEB_DIR", "JKQ_KB_VECTOR")):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(tmp_path / "database"))
+    base = "/api/v1/kb/"
+    with TestClient(create_app()) as client:
+        response = client.post(base + "search", json={"q": "算力券"})
+        assert (response.status_code, response.json()["error"]["code"]) == (401, "UNAUTHENTICATED")
+        body = {"username": "test-admin", "password": "demo-password", "name": "测试管理员"}
+        assert client.post("/api/auth/bootstrap", json=body).status_code == 200
+        result = client.post(base + "search", json={"q": "算力券 封顶"}).json()
+        assert result["total"] > 0 and "算力券" in result["hits"][0]["snippet"]
+        hit = result["hits"][0]
+        item = client.get(base + "docs/" + hit["id"]).json()["item"]
+        assert hit["snippet"] in item["text"] and len(item["chunkList"]) == hit["chunks"] == 1
+        counts = client.get(base + "stats").json()
+        assert counts["docs"] == client.get(base + "docs?limit=1").json()["total"]
+        assert len(client.get(base + "suggest").json()["items"]) >= 3
+        bad = client.post(base + "search", json={"q": "。"})
+        assert (bad.status_code, bad.json()["error"]["code"]) == (400, "INVALID_QUERY")
+        zero = client.post(base + "search", json={"q": "企业", "limit": 0})
+        assert (zero.status_code, zero.json()["error"]["code"]) == (422, "CHECK_FAILED")
