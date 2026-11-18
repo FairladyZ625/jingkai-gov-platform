@@ -32,8 +32,20 @@ make dev
 
 ## 挂载平台业务
 
-业务模块导出 `router = APIRouter(prefix="/api/v1/业务前缀")`，
-由 `jkq/routers.py` 的 `ROUTERS` 集中登记。原生路由优先处理同方法、同路径的请求。
+按两种方式接入实例，每个模块只占一行：
+
+- 纯新增、不需要回落 core 的路由：模块导出
+  `router = APIRouter(prefix="/api/v1/业务前缀")`，登记进 `jkq/routers.py` 的 `ROUTERS`。
+- 需要包住或回落 core 路由，或需要平台存储的模块：导出 `install(app, ...)`，
+  在 `jkq/app.py` 的 `install_platform` 中调用（实例在 `register_routes(app)` 之后执行它）。
+  存储对象挂在 `app.state` 上供下游模块取用，会话存储为 `app.state.conversations`。
+  长任务（`jobs_api`）和审签（`reviews_api`）原地替换 core 路由，带 SDK 参数的请求仍交给 core，
+  不能改成登记进 `ROUTERS` 的 APIRouter。
+
+登录依赖在 `install_platform` 中统一指定，目前使用 core 的 `current_user`，
+换成经开区登录态时只改这一处。
+
+`ROUTERS` 中原生路由优先处理同方法、同路径的请求。
 auth、admin、kb 的前缀分别映射到 core 的 `/api/auth`、`/api/admin`、
 `/api/v1/knowledge`。别名目标完全匹配时允许转发，其余请求保留原生路由的
 尾斜杠重定向和方法限制。会话和权限检查由目标接口执行。
