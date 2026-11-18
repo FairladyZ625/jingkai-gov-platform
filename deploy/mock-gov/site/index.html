@@ -29,9 +29,10 @@
           <button data-op="apply-next" disabled>下一步：上传附件</button>
         </section>
         <section id="upload" hidden><h2 tabindex="-1">上传附件</h2>
-          <p>使用本站提供的样例材料完成模拟上传。</p>
+          <p>可直接使用预设附件，也可选择同名的演练文件。请勿选择真实材料。</p>
           <dl><dt>申报材料</dt><dd>演示申请书.txt</dd></dl>
-          <button data-op="upload">上传样例附件</button><p role="status" id="upload-status"></p>
+          <label for="attachment">选择演练文件</label><input id="attachment" data-op="attachment" type="file" accept=".txt">
+          <button data-op="upload">使用预设附件</button><p role="status" id="upload-status"></p>
           <div class="actions"><button class="back" data-op="upload-back">上一步</button><button data-op="upload-next" disabled>下一步：核验</button></div>
         </section>
         <section id="captcha" hidden><h2 tabindex="-1">验证码核验</h2>

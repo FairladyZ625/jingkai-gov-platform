@@ -17,9 +17,24 @@ op('login').onclick = () => show('apply');
 op('service').onchange = () => { op('apply-next').disabled = !op('service').value; };
 op('apply-next').onclick = () => show('upload');
 op('upload-back').onclick = () => show('apply');
-op('upload').onclick = () => {
+function acceptSample() {
   byId('upload-status').textContent = '样例附件已就绪';
   op('upload-next').disabled = false;
+}
+op('upload').onclick = () => {
+  op('attachment').value = '';
+  acceptSample();
+};
+op('attachment').onchange = () => {
+  const selected = op('attachment').files[0];
+  const isSample = selected?.name === '演示申请书.txt';
+  op('attachment').value = '';
+  if (isSample) {
+    acceptSample();
+  } else {
+    byId('upload-status').textContent = '请选择演示申请书.txt，或使用预设附件。';
+    op('upload-next').disabled = true;
+  }
 };
 op('upload-next').onclick = () => show('captcha');
 op('captcha-back').onclick = () => show('upload');

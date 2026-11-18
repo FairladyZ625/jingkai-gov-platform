@@ -39,6 +39,11 @@ try {
   assert(await op('upload-next').isDisabled());
   await click('upload-back');
   await click('apply-next');
+  await op('attachment').setInputFiles({ name: '演示申请书.txt', mimeType: 'text/plain', buffer: Buffer.from('模拟') });
+  assert(await op('upload-next').isEnabled());
+  assert.equal(await op('attachment').inputValue(), '');
+  await op('attachment').setInputFiles({ name: '错误样例.txt', mimeType: 'text/plain', buffer: Buffer.alloc(0) });
+  assert(await op('upload-next').isDisabled());
   await click('upload');
   await click('upload-next');
   await visible('captcha');
