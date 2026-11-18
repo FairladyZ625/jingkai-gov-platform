@@ -220,9 +220,9 @@ def register(router, platform, admin):
         with write(platform, user) as db:
             before = _department(db, did)
             if db.execute('select 1 from user_departments where department_id=? union all '
-                          'select 1 from departments where parent_id=? limit 1', (did, did)).fetchone():
-                raise AuthError(409, 'NOT_EMPTY', '部门仍有成员或下级部门')
-            db.execute('update positions set department_id=null where department_id=?', (did,))
+                          'select 1 from departments where parent_id=? union all '
+                          'select 1 from positions where department_id=? limit 1', (did, did, did)).fetchone():
+                raise AuthError(409, 'NOT_EMPTY', '部门仍有成员、下级部门或岗位')
             db.execute('delete from departments where id=?', (did,))
             record_change(platform, db, user, request, action='identity.department.delete', target=did,
                           before=before, after=None)
