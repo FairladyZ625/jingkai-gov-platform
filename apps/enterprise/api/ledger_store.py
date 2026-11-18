@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from haiknow_sdk import DataError
 
-from .company import Duplicate, public, validate
+from .company import Duplicate, public, shape, validate
 
 PROJECT = "jkq"
 TYPE = "enterprise.company"
@@ -29,7 +29,7 @@ def document(ctx, company_id, version=None):
 
 
 def item(doc):
-    return {**doc["data"]["item"], "id": doc["id"]}
+    return {**shape(doc["data"]["item"]), "id": doc["id"]}
 
 
 @contextmanager

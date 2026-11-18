@@ -138,3 +138,49 @@ def test_simultaneous_duplicate(client):
         responses = list(pool.map(lambda _: client.post(COMPANIES, json={"name": "同名样例"}), range(2)))
     assert sorted(r.status_code for r in responses) == [200, 409]
     assert client.get(COMPANIES).json()["total"] == 1
+
+
+def test_minimal_shape_and_nonfinite(client):
+    item = create(client, name="最小档案")
+    for row in (item, client.get(COMPANIES, params={"q": "最小档案"}).json()["items"][0],
+                client.get(COMPANIES + "/" + item["id"]).json()["item"]):
+        assert row["industry"] == "" and row["short"] == "" and row["employees"] == 0
+        assert row["revenue"]["value"] == "" and row["servicer"] == ""
+    payload = json.dumps({"name": "坏值", "fieldStatus": {"score": float("inf")}}, allow_nan=True)
+    bad = client.post(COMPANIES, content=payload, headers={"Content-Type": "application/json"})
+    assert bad.status_code == 400
+    mixed = json.dumps({"rows": [
+        {"name": "好行"},
+        {"name": "坏行", "fieldStatus": {"score": float("nan")}},
+        {"name": "又一行"},
+    ]}, allow_nan=True)
+    result = client.post(PREFIX + "/import", content=mixed, headers={"Content-Type": "application/json"}).json()
+    assert result["added"] == 2 and result["errors"][0]["row"] == 2
+    assert {row["name"] for row in client.get(COMPANIES).json()["items"]} >= {"好行", "又一行", "最小档案"}
+
+
+def test_csv_unclosed_quotes_rejected(client):
+    before = client.get(COMPANIES).json()["total"]
+    text = "name,industry\n合法企业,制造\n\"未闭合,软件\n后续合法,制造\n"
+    response = client.post(PREFIX + "/import", json={"csv": text})
+    assert response.status_code == 400
+    body = response.json()["error"]
+    assert body["code"] == "INVALID_REQUEST" and "边界" in body["message"]
+    assert client.get(COMPANIES).json()["total"] == before
+
+
+def test_partner_revenue_order_and_denial_audit(client):
+    create(client, name="低营收", revenue={"value": 1})
+    create(client, name="高营收", revenue={"value": 999})
+    def names(user):
+        return [row["name"] for row in client.get(COMPANIES, params={"sort": "revenue"}).json()["items"]
+                if row["name"] in {"低营收", "高营收"}]
+    assert names("admin") == ["高营收", "低营收"]
+    assert client.post("/api/auth/login", json={"user_id": "partner"}).is_success
+    assert names("partner") == ["低营收", "高营收"]
+    denied = client.post(COMPANIES, json={"name": "越权"})
+    assert denied.status_code == 403
+    assert denied.json()["error"]["details"] == {"app": "enterprise", "need": "operate"}
+    assert client.post("/api/auth/login", json={"user_id": "sampleadmin"}).is_success
+    audit = client.get("/api/audit", params={"app_id": "enterprise"}).json()["items"]
+    assert any(entry["action"] == "enterprise.denied" and entry.get("user") == "partner" for entry in audit)

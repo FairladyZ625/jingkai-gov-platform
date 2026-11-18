@@ -21,8 +21,8 @@ class LedgerRoute(APIRoute):
                 return await handler(request)
             except DataError as exc:
                 return error(exc.status, exc.code.upper(), str(exc))
-            except PermissionDenied:
-                return forbidden()
+            except PermissionDenied as exc:
+                return error(403, "FORBIDDEN", str(exc), {"app": exc.app_id, "need": exc.action})
             except HTTPException as exc:
                 if exc.status_code == 401:
                     return error(401, "UNAUTHENTICATED", "请先登录")
@@ -33,23 +33,32 @@ class LedgerRoute(APIRoute):
 router = APIRouter(route_class=LedgerRoute)
 
 
-def error(status, code, message):
-    return JSONResponse({"error": {"code": code, "message": message, "details": {}}}, status_code=status)
+def error(status, code, message, details=None):
+    return JSONResponse({"error": {"code": code, "message": message, "details": details or {}}}, status_code=status)
 
 
 def denied(ctx):
     return "partner" in ctx.user.roles or not ctx.can("operate")
 
 
-def forbidden():
-    return error(403, "FORBIDDEN", "无权修改企业台账")
+def forbidden(ctx):
+    ctx.audit("enterprise.denied", {"need": "operate"})
+    return error(403, "FORBIDDEN", "无权修改企业台账", {"app": "enterprise", "need": "operate"})
+
+
+RELATED_FIELDS = ("id", "entId", "status", "title", "due", "type")
 
 
 def related(ctx, kind, company_id=None):
-    # #33/#34 按项目提供可对外展示的关联记录；敏感自由文本由其所属模块投影。
+    # #33/#34 按项目提供可对外展示的关联记录；此处只透出约定字段，自由文本由其模块投影。
     docs = ctx.records.list(project=PROJECT, type="enterprise." + kind)["items"]
-    return [item(doc) for doc in docs if company_id is None or
-            doc["data"]["item"].get("entId") == company_id]
+    rows = []
+    for doc in docs:
+        payload = doc.get("data", {}).get("item") or {}
+        if company_id is not None and payload.get("entId") != company_id:
+            continue
+        rows.append({key: payload[key] for key in RELATED_FIELDS if key in payload} | {"id": doc["id"]})
+    return rows
 
 
 @router.get("/companies")
@@ -57,21 +66,24 @@ def companies(request: Request, ctx=Depends(app_context)):
     query = request.query_params
     docs = documents(ctx)
     sort = query.get("sort", "lastVisit")
-    if sort == "revenue" and docs:
-        def revenue(doc):
+    if sort not in {"name", "lastVisit", "revenue"}:
+        return error(400, "INVALID_REQUEST", "不支持该排序字段")
+    rows = [item(doc) for doc in docs]
+    if sort == "revenue" and docs and not denied(ctx):
+        def revenue(pair):
             try:
-                return float(original(db, doc).get("revenue", {}).get("value", 0))
-            except ValueError:
+                return float(original(db, pair[0]).get("revenue", {}).get("value", 0) or 0)
+            except (TypeError, ValueError):
                 return 0
         with snapshots(writing=False) as db:
-            docs.sort(key=revenue, reverse=True)
-    rows = [item(doc) for doc in docs]
-    if sort == "name":
-        rows.sort(key=lambda row: row["name"])
+            rows = [row for _, row in sorted(zip(docs, rows), key=revenue, reverse=True)]
+    elif sort == "name" or (sort == "revenue" and denied(ctx)):
+        # partner / 只读角色只能按已公开字段排，避免用私库原值暴露营收高低。
+        rows.sort(key=lambda row: (str(row.get("revenue", {}).get("value", "")), row["name"]))
+        if sort == "name":
+            rows.sort(key=lambda row: row["name"])
     elif sort == "lastVisit":
         rows.sort(key=lambda row: row.get("lastVisitDays", 0), reverse=True)
-    elif sort != "revenue":
-        return error(400, "INVALID_REQUEST", "不支持该排序字段")
     today = datetime.now(BEIJING).date()
     alerts = set()
     if query.get("alert") == "1":
@@ -110,7 +122,7 @@ def detail(company_id: str, ctx=Depends(app_context)):
 
 def save(ctx, changes, company_id=None):
     if denied(ctx):
-        return forbidden()
+        return forbidden(ctx)
     if not isinstance(changes, dict) or not changes:
         return error(400, "INVALID_REQUEST", "企业字段不能为空")
     with snapshots(writing=True) as db:
@@ -136,26 +148,28 @@ def update(company_id: str, changes: dict = Body(default=None), ctx=Depends(app_
 @router.post("/import")
 def import_companies(body: dict, ctx=Depends(app_context)):
     if denied(ctx):
-        return forbidden()
+        return forbidden(ctx)
     if isinstance(body.get("csv"), str):
-        rows = ledger_csv.rows(body["csv"])
+        try:
+            rows = list(ledger_csv.rows(body["csv"]))
+        except ledger_csv.UnrecoverableCsv as exc:
+            return error(400, "INVALID_REQUEST", str(exc))
+        except (InvalidRow, csv.Error):
+            return error(400, "INVALID_REQUEST", "CSV 表头无效")
     elif isinstance(body.get("rows"), list):
-        rows = ((n, row, None) for n, row in enumerate(body["rows"], 1))
+        rows = [(n, row, None) for n, row in enumerate(body["rows"], 1)]
     else:
         return error(400, "INVALID_REQUEST", "请提供 csv 文本或 rows 数组")
     items, errors = [], []
     with snapshots(writing=True) as db:
         names = names_by_id(ctx)
-        try:
-            for number, row, reason in rows:
-                try:
-                    if reason or not isinstance(row, dict):
-                        raise InvalidRow(reason or "行必须为对象")
-                    items.append(write(ctx, db, row, names))
-                except InvalidRow as exc:
-                    errors.append({"row": number, "reason": str(exc)})
-        except (InvalidRow, csv.Error):
-            return error(400, "INVALID_REQUEST", "CSV 表头无效")
+        for number, row, reason in rows:
+            try:
+                if reason or not isinstance(row, dict):
+                    raise InvalidRow(reason or "行必须为对象")
+                items.append(write(ctx, db, row, names))
+            except InvalidRow as exc:
+                errors.append({"row": number, "reason": str(exc)})
     return {"added": len(items), "items": items, "errors": errors}
 
 

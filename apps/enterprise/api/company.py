@@ -1,8 +1,9 @@
 """企业字段与对外投影，供台账和后续走访、诉求接口复用。"""
+import json
 from datetime import date, timedelta
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 class Enterprise(BaseModel):
@@ -43,6 +44,14 @@ class Enterprise(BaseModel):
             raise ValueError("企业名称不能为空")
         return value
 
+    @model_validator(mode="after")
+    def json_safe(self):
+        try:
+            json.dumps(self.model_dump(), ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("字段无法序列化为 JSON") from exc
+        return self
+
 
 class InvalidRow(ValueError):
     pass
@@ -54,15 +63,27 @@ class Duplicate(InvalidRow):
 
 def validate(row):
     try:
-        return Enterprise.model_validate(row).model_dump(exclude_unset=True)
+        return Enterprise.model_validate(row).model_dump()
     except ValidationError as exc:
-        field = exc.errors(include_input=False)[0]["loc"][0]
+        err = exc.errors(include_input=False)[0]
+        field = err["loc"][0] if err["loc"] else "fieldStatus"
         raise InvalidRow(f"字段 {field} 缺失或格式错误") from None
+
+
+def shape(row):
+    """补齐界面渲染所需的默认字段，兼容只传 name 的历史记录。"""
+    data = {**Enterprise(name=str(row.get("name") or "x")).model_dump(), **row}
+    revenue = data.get("revenue")
+    if not isinstance(revenue, dict):
+        data["revenue"] = {"value": ""}
+    elif "value" not in revenue:
+        data["revenue"] = {"value": "", **revenue}
+    return data
 
 
 def public(row):
     # #14 的接口适配点。所有 HTTP、历史和核心版本共用此边界。
-    result = dict(row)
+    result = shape(row)
 
     def phone(value):
         return value[:3] + "****" + value[-4:] if len(value) > 7 else "****"
