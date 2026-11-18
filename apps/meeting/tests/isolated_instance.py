@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import secrets
 import shutil
 import sys
 import time
@@ -13,33 +14,41 @@ MEETINGS = '/api/apps/meeting/meetings'
 JOBS = '/api/v1/jobs'
 
 
+PASSWORD_ENV = 'JKQ_MEETING_TEST_PASSWORD'
+OUTSIDER = 'meeting-outsider'
+
+
 def fixture_environment(base):
-    """#29 入主干后用正式清单，当前夹具只涵盖会议上传与转写。"""
+    """使用经开区真实口令登录（#78）：临时角色表 + 演示账号，口令每次随机生成。"""
     apps = base / 'apps'
     config = base / 'config'
     config.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'config/projects.yaml', config / 'projects.yaml')
     roles = {'operator': ['view', 'operate'], 'reader': ['view']}
+    role_specs = {
+        role: {'name': role, 'desc': '会议测试', 'mask': False, 'grants': {'meeting': actions}}
+        for role, actions in roles.items()
+    }
+    (config / 'roles.yaml').write_text(json.dumps({'apps': ['meeting'], 'roles': role_specs},
+                                                  ensure_ascii=False), encoding='utf-8')
     users = [
-        dict(id='meeting-writer', name='会议办理员', roles=['operator'], projects=['jkq']),
-        dict(id='meeting-reader', name='会议观察员', roles=['reader'], projects=['jkq']),
-        dict(id='meeting-outsider', name='项目外人员', roles=['reader'], projects=[]),
+        dict(id='meeting-writer', name='会议办理员', role='operator'),
+        dict(id='meeting-reader', name='会议观察员', role='reader'),
+        dict(id=OUTSIDER, name='项目外人员', role='reader'),
     ]
-    (config / 'users.yaml').write_text(json.dumps({'users': users}, ensure_ascii=False), encoding='utf-8')
+    demo_users = [dict(user, username=user['id'], passwordEnv=PASSWORD_ENV) for user in users]
+    (config / 'users.yaml').write_text(json.dumps({'demoUsers': demo_users}, ensure_ascii=False),
+                                       encoding='utf-8')
     app = apps / 'meeting'
     for directory in ('api', 'samples', 'web'):
         shutil.copytree(MEETING / directory, app / directory, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
-    (app / 'app.json').write_text(json.dumps({
-        'contract': 1, 'sdk': '1', 'id': 'meeting', 'name': '会议记录', 'summary': '会议记录测试',
-        'sector': 'other', 'kind': 'module', 'owner': 'tester',
-        'actions': ['view', 'operate'], 'defaultRoles': roles, 'status': 'usable',
-    }, ensure_ascii=False), encoding='utf-8')
-    (app / 'api/router.py').write_text('from .meetings import router, __haiknow_jobs__\n', encoding='utf-8')
+    shutil.copyfile(MEETING / 'app.json', app / 'app.json')  # 用正式清单与 router.py，覆盖实际挂载
     return {
         'HAIKNOW_ROOT': str(ROOT), 'HAIKNOW_APPS_DIR': str(apps), 'HAIKNOW_CONFIG_DIR': str(config),
-        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '1', 'HAIKNOW_KB_SEED': '0',
-        'HAIKNOW_NO_AUTOAPP': '1', 'HAIKNOW_SECRET': 'local-meeting-test-only',
+        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '0', 'JKQ_DEMO_MODE': '1',
+        'HAIKNOW_KB_SEED': '0', 'HAIKNOW_NO_AUTOAPP': '1', 'HAIKNOW_SECRET': 'local-meeting-test-only',
+        PASSWORD_ENV: os.environ.get(PASSWORD_ENV) or secrets.token_urlsafe(12),
     }
 
 
@@ -50,6 +59,11 @@ def create_instance():
 
     app = create_app()
     install(app, current_user)
+    store = app.state.platform.store
+    with store._lock, store._db as db:  # 演示账号默认可见全部项目，这里收回项目外人员的范围
+        store.begin_write()
+        db.execute('update users set all_projects=0 where id=?', (OUTSIDER,))
+        db.execute('delete from project_members where user_id=?', (OUTSIDER,))
     return app
 
 
@@ -58,7 +72,8 @@ def transcription_module():
 
 
 def login(client, user='meeting-writer'):
-    result = client.post('/api/auth/login', json={'user_id': user})
+    result = client.post('/api/v1/auth/login',
+                         json={'username': user, 'password': os.environ[PASSWORD_ENV]})
     assert result.status_code == 200, result.text
 
 
