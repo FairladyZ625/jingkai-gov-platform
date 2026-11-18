@@ -573,6 +573,9 @@ def test_instance_rechecks_source_on_poll_and_idempotent_replay(instance, mode, 
         store = api.app.state.platform.store
         with store._lock, store._db as db:
             db.execute("delete from role_grants where role_id='member' and app_id='kb'")
+        drafted = api.post(f"{ROOT}/draft", json={"text": PUBLIC_QUERY})
+        error(drafted, 403, "FORBIDDEN")
+        assert drafted.json()["error"]["details"] == {"app": "kb", "need": "view"}
     for response in (api.get(f"{ROOT}/jobs/{jid}"), api.post(path, json=body, headers=headers)):
         error(response, 403, "FORBIDDEN")
         assert citation["snippet"] not in response.text and "result" not in response.json()

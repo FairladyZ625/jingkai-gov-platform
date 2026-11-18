@@ -66,7 +66,8 @@ class SkillProvider:
         try:
             return self.platform.kb.candidates(user)
         except KbError as exc:
-            raise SkillError(exc.status, **exc.error) from exc
+            error = exc.error
+            raise SkillError(exc.status, error["code"], error["message"], **error["details"]) from exc
 
     def search(self, user, params):
         space = params.get("space")
@@ -164,7 +165,9 @@ class SkillProvider:
     def _tool_access(self, user, name, need):
         app_id = name.partition(".")[0]
         entry = self.platform.apps.get(app_id)
-        if entry is None or not any(tool["name"] == name for tool in entry.manifest.get("tools", ())):
+        if name not in READ_TOOLS or entry is None or not any(
+            tool["name"] == name for tool in entry.manifest.get("tools", ())
+        ):
             raise SkillError(503, "TOOL_UNAVAILABLE", "业务工具尚未接入")
         if not {"view", need} <= self.platform.rbac.actions(user, app_id):
             raise SkillError(403, "FORBIDDEN", "没有业务工具的访问权限", app=app_id, need=need)
