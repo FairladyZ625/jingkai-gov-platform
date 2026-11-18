@@ -101,12 +101,13 @@ def test_compare_text(collaboration_client, before, after, stats):
 def test_finalized_document_allows_comments_but_not_adoption(collaboration_client, make_client):
     client = collaboration_client
     draft, url = drafts_url(client)
-    review = client.post("/api/v1/reviews", json={
+    # 通用 POST /api/v1/reviews 已拒绝公文（须经 #41 核查）；这里直接走数据底座送审。
+    platform = client.app.state.platform
+    review = platform.data.submit_review(platform.directory.user("sampleoperator"), {
         "appId": "document", "recordId": draft["id"], "version": 1, "assignee": "samplereviewer",
     })
-    assert review.status_code == 201, review.text
     login(client, "samplereviewer")
-    response = client.post(f"/api/v1/reviews/{review.json()['id']}/decisions", json={"version": 1, "decision": "confirm"})
+    response = client.post(f"/api/v1/reviews/{review['id']}/decisions", json={"version": 1, "decision": "confirm"})
     assert response.status_code == 200, response.text
     login(client, "sampleoperator")
     assert item(client.get(url))["status"] == "已定稿"

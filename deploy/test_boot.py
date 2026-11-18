@@ -85,6 +85,22 @@ def test_runtime_patch_is_opt_in_and_keeps_source_mock(tmp_path, monkeypatch):
     assert source.read_text(encoding="utf-8") == original
 
 
+def test_frontend_mode_switch_keeps_mock(tmp_path, monkeypatch):
+    original = (ROOT / "prototype/v4/config/app.config.js").read_text(encoding="utf-8")
+    target = tmp_path / "prototype/v4/config/app.config.js"
+    target.parent.mkdir(parents=True)
+    target.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("JKQ_DEPLOY_RUNTIME", "1")
+    monkeypatch.setenv("JKQ_FRONTEND_API_MODE", "mock")
+    use_same_origin_http(tmp_path)
+    assert target.read_text(encoding="utf-8") == original
+    monkeypatch.setenv("JKQ_FRONTEND_API_MODE", "http")
+    use_same_origin_http(tmp_path)
+    assert "mode: 'http'" in target.read_text(encoding="utf-8")
+    compose = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "JKQ_FRONTEND_API_MODE: ${JKQ_FRONTEND_API_MODE:-http}" in compose
+
+
 def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monkeypatch, cheap_password_hash):
     apps = tmp_path / "apps"
     data = tmp_path / "data"
