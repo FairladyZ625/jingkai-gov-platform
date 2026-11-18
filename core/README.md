@@ -12,7 +12,7 @@ HAIKNOW_DATA_DIR="$(mktemp -d)" PYTHONPATH=core/server:core/sdk \
   python3 -m uvicorn haiknow_core.main:app --host 127.0.0.1 --port 8000
 ```
 
-`GET /api/health` 返回启动状态，`GET /openapi.json` 返回路由契约，`/docs` 可交互查看 API。全新目录以空账号集启动，`GET /api/auth/state` 返回 `needsBootstrap: true`。临时目录以外的实例配置由经开区实例任务提供。
+`GET /api/health` 返回启动状态，`GET /openapi.json` 返回路由契约，`/docs` 可交互查看 API。全新目录以空账号集启动，`GET /api/auth/state` 返回 `needsBootstrap: true`。临时目录以外的经开区实例配置见 [jkq/README.md](../jkq/README.md)。
 
 `HAIKNOW_DEMO_LOGIN=1` 启用演示身份。关闭后重启，即使复用原数据库与会话签名配置，演示身份也无法登录或使用已有会话。若库中只有演示管理员，可以引导正式管理员。
 
@@ -39,7 +39,7 @@ Codex CLI 仅用于公开合成文本的本机联调。它在独立临时目录�
 
 ## 验证
 
-安装开发依赖后，`pytest -q` 收集仓库、core、应用模板及已生成应用的测试。仅安装 pytest 时，默认收集仓库中无需 core 运行依赖的测试。完整 `check.py` 显式检查所有测试目录，并在 Node 可用时运行 SDK 的 JavaScript 行为测试。
+安装开发依赖后，`pytest -q` 收集仓库、core、应用模板及已生成应用的测试。仅安装 pytest 时，默认收集仓库中无需 core 运行依赖的测试。完整 `check.py` 显式检查所有测试目录，并在 Node 可用时运行 SDK 的 JavaScript 行为测试（Windows 上可将 `python3` 替换为 `python`）。
 
 ```sh
 python3 -m pip install -r requirements-dev.txt

@@ -6,3 +6,4 @@ RUN pip install --no-cache-dir -r requirements.txt playwright==1.57.0 \
     && rm -rf /var/lib/apt/lists/*
 ENV PYTHONPATH=/srv/app:/srv/app/core/server:/srv/app/core/sdk PYTHONUNBUFFERED=1
 COPY . .
+RUN cp -a deploy/hold/jkq-hold apps/jkq-hold
