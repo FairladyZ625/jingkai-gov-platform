@@ -176,12 +176,34 @@
     }
     return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '京技产促〔2026〕【待补】号' };
   }
+  const DOC_DATE = String.raw`\d{4}(?:年\d{1,2}月\d{1,2}日|-\d{2}-\d{2})`;
+  const DOC_DATE_ONLY = new RegExp(`^${DOC_DATE}$`);
+  const EXTENSION_DATES = new RegExp(String.raw`申报截止时间\s*由\s*([^。]*?)\s*延长至\s*(${DOC_DATE})(?![\d-])`);
+  function docDateValue(text) {
+    const value = (text || '').trim();
+    if (!DOC_DATE_ONLY.test(value)) return NaN;
+    const [year, month, day] = value.match(/\d+/g);
+    const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const time = Date.parse(iso);
+    return Number.isFinite(time) && new Date(time).toISOString().startsWith(iso) ? time : NaN;
+  }
   function checkDoc(d) {
     const issues = []; const all = [d.title, d.to, ...d.paragraphs].join('\n');
     if (/【待补/.test(d.docNo)) issues.push({ id: 'c1', level: 'warn', kind: '文号', text: '发文字号未填写', fix: '京技产促〔2026〕58号', target: 'docNo' });
     d.paragraphs.forEach((p, i) => {
       if (/【待补：/.test(p)) issues.push({ id: 'c-m' + i, level: 'error', kind: '缺要素', text: `第 ${i + 1} 段有未填写的要素：${p.match(/【待补：(.+?)】/)[1]}`, para: i });
       if (/\d{4}-\d{2}-\d{2}/.test(p)) issues.push({ id: 'c-d' + i, level: 'warn', kind: '日期格式', text: `第 ${i + 1} 段日期写法不规范（应为“2026年12月1日”）`, para: i, fix: 'date' });
+      if (d.templateId === 'T06') {
+        const dates = EXTENSION_DATES.exec(p);
+        if (dates) {
+          const [, oldEnd, newEnd] = dates;
+          const end = docDateValue(newEnd);
+          const reasons = [];
+          if (end <= docDateValue(oldEnd)) reasons.push('原截止日');
+          if (end <= docDateValue(d.date)) reasons.push('发文日期');
+          if (reasons.length) issues.push({ id: 'c-order' + i, level: 'warn', kind: '日期先后', text: `新截止日须晚于${reasons.join('和')}`, para: i });
+        }
+      }
       if (/的的|申报申报|载止|截至日期/.test(p)) issues.push({ id: 'c-t' + i, level: 'warn', kind: '错别字', text: `第 ${i + 1} 段疑似错别字：${p.match(/的的|申报申报|载止|截至日期/)[0]}`, para: i, fix: 'typo' });
       if (/咱们|赶紧|搞|弄好|大家/.test(p)) issues.push({ id: 'c-s' + i, level: 'info', kind: '语体', text: `第 ${i + 1} 段有口语化表达：“${p.match(/咱们|赶紧|搞|弄好|大家/)[0]}”`, para: i, fix: 'polish' });
     });
