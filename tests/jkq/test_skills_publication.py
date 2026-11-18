@@ -56,6 +56,25 @@ def error(response, status, code):
     assert response.json()["error"]["code"] == code
 
 
+def publish_zone(api, path, perm="use"):
+    response = call(api, "POST", path + "/publish", body={"share": {"scope": "zone", "perm": perm}})
+    assert response.status_code == 200, response.text
+    return response.json()["review"]
+
+
+def decide(api, path, review, choice="approve", **extra):
+    return call(api, "POST", path + "/review", "samplereviewer",
+                {"decision": choice, "reviewId": review.get("reviewId", review["id"]),
+                 "version": review["version"], **extra})
+
+
+def review_queue(api, endpoint=ROOT, user="samplereviewer"):
+    params = {"review": "true"} if endpoint == ROOT else {}
+    response = api.get(endpoint, params=params, headers={"x-test-user": user})
+    assert response.status_code == 200, response.text
+    return response.json()["items"]
+
+
 @pytest.mark.parametrize("scope,visible", [("private", False), ("dept", True), ("people", True)])
 def test_immediate_scope(api, scope, visible):
     path = create(api)
@@ -90,7 +109,7 @@ def test_review(api, reviewer, choice):
         resp = api.post("/api/v1/reviews/" + review["id"] + "/decisions", headers={"x-test-user": reviewer},
                         json={"decision": choice, "version": review["version"]})
     else:
-        resp = call(api, "POST", path + "/review", reviewer, {"decision": choice, "reason": "需补充"})
+        resp = decide(api, path, review, choice, reason="需补充")
     assert resp.status_code == 200, resp.text
     assert listed(api, "sampleextra", path) == (choice == "approve")
     assert api.get("/api/v1/reviews", headers={"x-test-user": reviewer}).json()["items"] == []
@@ -98,10 +117,129 @@ def test_review(api, reviewer, choice):
 
 def test_self_and_stale(api):
     path = create(api, "sampleadmin")
-    call(api, "POST", path + "/share", "sampleadmin", {"scope": "zone"})
-    error(call(api, "POST", path + "/review", "sampleadmin", {"decision": "approve"}), 409, "SELF_REVIEW")
+    review = call(api, "POST", path + "/share", "sampleadmin", {"scope": "zone"}).json()["review"]
+    error(call(api, "POST", path + "/review", "sampleadmin", {
+        "decision": "approve", "reviewId": review["reviewId"], "version": review["version"],
+    }), 409, "SELF_REVIEW")
     call(api, "PATCH", path, "sampleadmin", {"name": "新版本"})
-    error(call(api, "POST", path + "/review", "samplereviewer", {"decision": "approve"}), 409, "STALE_VERSION")
+    error(decide(api, path, review), 409, "STALE_VERSION")
+
+
+@pytest.mark.parametrize("operation", ["patch", "restore"])
+def test_approved_zone_changes_require_new_review(api, operation):
+    path = create(api)
+    approved = publish_zone(api, path, perm="edit")
+    assert decide(api, path, approved).status_code == 200
+    assert listed(api, "sampleobserver", path)
+    assert call(api, "GET", path, "sampleobserver").json()["item"]["version"] == "0.1.0"
+
+    if operation == "patch":
+        response = call(api, "PATCH", path, "sampleextra", {"spec": {"prompt": "更新内容"}})
+    else:
+        response = call(api, "POST", path + "/restore", "sampleextra", {"v": "0.1.0"})
+    assert response.status_code == 200, response.text
+    draft = response.json()["item"]
+    assert (draft["version"], draft["status"]) == ("0.2.0", "in_review")
+    assert draft["spec"]["prompt"] == ("更新内容" if operation == "patch" else "")
+    assert not listed(api, "sampleobserver", path)
+    error(call(api, "GET", path, "sampleobserver"), 403, "FORBIDDEN")
+    for user in ("sampleoperator", "sampleextra"):
+        assert listed(api, user, path)
+        assert call(api, "GET", path, user).json()["item"]["version"] == draft["version"]
+
+    pending, = review_queue(api)
+    assert pending["id"] == path[1:] and pending["reviewId"] != approved["reviewId"]
+    assert pending["version"] > approved["version"] and pending["spec"] == draft["spec"]
+    error(decide(api, path, approved), 409, "STALE_VERSION")
+    assert decide(api, path, pending).status_code == 200
+    assert listed(api, "sampleobserver", path)
+    public = call(api, "GET", path, "sampleobserver").json()["item"]
+    assert (public["version"], public["spec"]) == (draft["version"], draft["spec"])
+    assert [snapshot["v"] for snapshot in public["versions"]] == ["0.1.0", "0.2.0"]
+
+
+def test_zone_public_history_only_includes_approved_content(api):
+    path = create(api)
+    call(api, "PATCH", path, body={"spec": {"prompt": "首发前私有草稿"}})
+    call(api, "PATCH", path, body={"spec": {"prompt": "首发公开版本"}})
+    assert decide(api, path, publish_zone(api, path)).status_code == 200
+    call(api, "PATCH", path, body={"spec": {"prompt": "审核驳回内容"}})
+    rejected, = review_queue(api)
+    assert decide(api, path, rejected, "reject", reason="需要补充").status_code == 200
+    assert not listed(api, "sampleobserver", path)
+    call(api, "PATCH", path, body={"spec": {"prompt": "再次获批的内容"}})
+    pending, = review_queue(api)
+    assert decide(api, path, pending).status_code == 200
+
+    public = call(api, "GET", path, "sampleobserver").json()["item"]
+    assert [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in public["versions"]] == [
+        ("0.3.0", "首发公开版本"), ("0.5.0", "再次获批的内容"),
+    ]
+    owner = call(api, "GET", path).json()["item"]
+    assert [snapshot["v"] for snapshot in owner["versions"]] == ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]
+    for version in ("0.2.0", "0.4.0"):
+        error(call(api, "POST", user="sampleextra", body={
+            "forkOf": {"id": path[1:], "version": version},
+        }), 404, "NOT_FOUND")
+    rate = call(api, "POST", path + "/rate", "sampleobserver", {"useful": True})
+    assert rate.status_code == 200
+    assert rate.json()["item"]["versions"] == public["versions"]
+
+
+def test_queue_tracks_active_review_after_author_edit(api):
+    path = create(api)
+    original = publish_zone(api, path)
+    reviewer_path = "/api/v1/reviews"
+    pending, = review_queue(api)
+    assert (pending["reviewId"], pending["version"]) == (original["id"], original["version"])
+    inbox, = review_queue(api, reviewer_path)
+    assert (inbox["reviewId"], inbox["version"]) == (pending["reviewId"], pending["version"])
+
+    edited = call(api, "PATCH", path, body={"spec": {"prompt": "补充后重新送审"}})
+    assert edited.status_code == 200, edited.text
+    assert review_queue(api) == review_queue(api, reviewer_path) == []
+    error(decide(api, path, pending), 409, "STALE_VERSION")
+    replacement = publish_zone(api, path)
+    assert replacement["reviewId"] != pending["reviewId"]
+    for body in ({"decision": "approve"}, {"decision": "approve", "version": replacement["version"]},
+                 {"decision": "approve", "reviewId": replacement["reviewId"], "version": True}):
+        error(call(api, "POST", path + "/review", "samplereviewer", body), 400, "INVALID_REQUEST")
+    error(decide(api, path, pending), 409, "STALE_VERSION")
+    error(decide(api, path, pending, version=replacement["version"]), 409, "STALE_VERSION")
+    error(api.post(f"{reviewer_path}/{pending['reviewId']}/decisions",
+                   headers={"x-test-user": "samplereviewer"},
+                   json={"decision": "approve", "version": pending["version"]}), 409, "STALE_VERSION")
+    assert not listed(api, "sampleobserver", path)
+    assert decide(api, path, replacement).status_code == 200
+    assert review_queue(api) == review_queue(api, reviewer_path) == []
+    error(decide(api, path, replacement), 409, "STALE_VERSION")
+
+
+def test_legacy_zone_edit_is_hidden_without_approval(api):
+    from jkq.skills.storage import Skills
+
+    path = create(api)
+    assert decide(api, path, publish_zone(api, path)).status_code == 200
+    # 模拟已有库中旧版 CRUD 继承 published 状态的记录。
+    skills = api.app.state.skills
+    owner = skills.platform.rbac.users["sampleoperator"]
+    doc = skills.load(owner, path[1:], edit=True)
+    Skills.save(skills, owner, doc, {"version": "0.2.0", "name": "旧流程中未经审核的版本"})
+    assert not listed(api, "sampleobserver", path)
+    error(call(api, "GET", path, "sampleobserver"), 403, "FORBIDDEN")
+    assert call(api, "GET", path).json()["item"]["version"] == "0.2.0"
+
+
+def test_withdrawing_zone_scope_revokes_previous_editor_grant(api):
+    path = create(api)
+    assert decide(api, path, publish_zone(api, path, perm="edit")).status_code == 200
+    assert call(api, "GET", path, "sampleextra").json()["item"]["canEdit"]
+    call(api, "POST", path + "/share", body={"scope": "private"})
+    pending = publish_zone(api, path, perm="edit")
+    error(call(api, "GET", path, "sampleextra"), 403, "FORBIDDEN")
+    error(call(api, "PATCH", path, "sampleextra", {"name": "无权修改"}), 403, "FORBIDDEN")
+    assert decide(api, path, pending).status_code == 200
+    assert call(api, "GET", path, "sampleextra").json()["item"]["canEdit"]
 
 
 def test_latest_vote(api):
@@ -125,17 +263,25 @@ def test_invalid_share_preserves_draft(api, share):
     assert call(api, "GET", path).json()["item"]["status"] == "draft"
 
 
-def test_failed_review_creation_rolls_back_publication(api):
+@pytest.mark.parametrize("operation", ["publish", "patch"])
+def test_failed_review_creation_rolls_back_publication(api, operation):
     import sqlite3
 
     path = create(api)
+    if operation == "patch":
+        assert decide(api, path, publish_zone(api, path)).status_code == 200
+    before = call(api, "GET", path).json()["item"]
     store = api.app.state.skills.store
     with store._lock, store._db as db:
         db.execute("""CREATE TRIGGER reject_review BEFORE INSERT ON v1_reviews
                       BEGIN SELECT RAISE(ABORT, '审核写入失败'); END""")
     with pytest.raises(sqlite3.IntegrityError, match="审核写入失败"):
-        call(api, "POST", path + "/publish", body={"share": {"scope": "zone"}})
-    assert call(api, "GET", path).json()["item"]["status"] == "draft"
+        if operation == "publish":
+            publish_zone(api, path)
+        else:
+            call(api, "PATCH", path, body={"name": "不能保存的版本"})
+    assert call(api, "GET", path).json()["item"] == before
+    assert review_queue(api) == []
 
 
 def test_concurrent_votes_keep_both_users(api):
