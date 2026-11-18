@@ -46,6 +46,8 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
             item = doc["data"]
             if item["deleted"] or not skills.access(user, item)[0]:
                 continue
+            if item["status"] == "in_review" and not review and item["authorId"] != user.id:
+                continue
             if mine and item["authorId"] != user.id or review and item["status"] != "in_review":
                 continue
             items.append(skills.view(user, doc, history=False))
