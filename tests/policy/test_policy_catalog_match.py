@@ -77,8 +77,8 @@ def test_every_demo_match_agrees_with_review_table_and_cites_conditions():
         assert row["doc"] == item["docNo"]
         assert row["clause"] == item["clause"]
         assert row["source"] == item["source"]
-        assert row["checks"][0]["condition"]["f"] == "subjectType"
-        assert [check["condition"] for check in row["checks"][1:]] == item["conditions"]
+        assert item["conditions"][0]["f"] == "subjectType"
+        assert [check["condition"] for check in row["checks"]] == item["conditions"]
         assert all(check["label"] in check["reason"] for check in row["checks"])
 
 
@@ -100,3 +100,14 @@ def test_missing_facts_are_unknown_and_known_scale_and_amount_can_disagree():
         for check in results["rd-3623656-art11-1"]["checks"]
     }
     assert checks == {"subjectType": "ok", "scale": "no", "license": "unknown", "inIntegrationCarrier": "unknown"}
+
+
+def test_unrelated_or_partial_notices_stay_unknown():
+    result = list_items("RP-075", "", "open", today=date(2026, 5, 29))
+    assert "RP-075" not in {item["id"] for item in result["items"]}
+    result = list_items("RP-075", "", "unknown", today=date(2026, 5, 29))
+    assert any(item["id"] == "RP-075" and item["times"]["open"] is None for item in result["items"])
+    result = list_items("RP-074", "", "open", today=date(2026, 11, 10))
+    assert "RP-074" not in {item["id"] for item in result["items"]}
+    result = list_items("RP-074", "", "unknown", today=date(2026, 11, 10))
+    assert any(item["id"] == "RP-074" and item["times"]["open"] is None for item in result["items"])

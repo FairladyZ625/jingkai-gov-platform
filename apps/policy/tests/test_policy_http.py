@@ -23,12 +23,21 @@ class SnapshotClock(datetime):
         return cls(2026, 11, 18, 12, tzinfo=tz)
 
 
+class DummyContext:
+    def __init__(self, *actions: str):
+        self.app_id = "policy"
+        self.actions = set(actions)
+
+    def can(self, action: str) -> bool:
+        return action in self.actions
+
+
 @pytest.fixture
 def api(monkeypatch):
     monkeypatch.setattr(policy_catalog, "datetime", SnapshotClock)
     app = FastAPI()
     app.include_router(router, prefix=PREFIX)
-    app.dependency_overrides[app_context] = lambda: None
+    app.dependency_overrides[app_context] = lambda: DummyContext("view", "operate")
     with TestClient(app) as client:
         yield client
 
@@ -161,3 +170,48 @@ def test_routes_require_platform_view_grant(api):
     response = api.post(f"{PREFIX}/calc", json={"itemId": "PI-03", "amount": 420000})
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_enterprise_match_requires_operate(api):
+    api.app.dependency_overrides[app_context] = lambda: DummyContext("view")
+    response = api.post(f"{PREFIX}/match", json={"entId": "E002"})
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert response.json()["error"]["details"]["need"] == "operate"
+    api.app.dependency_overrides[app_context] = lambda: DummyContext("view")
+    allowed = api.post(f"{PREFIX}/match", json={"profile": {"subjectType": "个人"}})
+    assert allowed.status_code == 200
+    api.app.dependency_overrides[app_context] = lambda: DummyContext("view", "operate")
+    response = api.post(f"{PREFIX}/match", json={"entId": "E002"})
+    assert response.status_code == 200
+    results = {row["id"]: row["level"] for row in response.json()["results"]}
+    assert results["RP-029"] == "check"
+    assert results["RP-070"] == "check"
+
+
+@pytest.mark.parametrize(
+    ("item_id", "amount", "expected"),
+    [
+        ("RP-071", 100000, {"amount": 50000, "base": 100000, "kind": "ratio", "capped": False, "text": "10 万元 × 50% = 5 万元"}),
+        ("RP-079", 100000, {"amount": 40000, "base": 100000, "kind": "ratio", "capped": False, "text": "10 万元 × 40% = 4 万元"}),
+        ("RP-071", 8000000, {"amount": 3000000, "base": 8000000, "kind": "ratio", "capped": True, "text": "800 万元 × 50% = 400 万元，超过封顶，按 300 万元"}),
+    ],
+)
+def test_ratio_caps_use_the_input_amount(api, item_id, amount, expected):
+    response = api.post(f"{PREFIX}/calc", json={"itemId": item_id, "amount": amount})
+    assert response.status_code == 200
+    assert response.json()["result"] == expected
+
+
+def test_tiered_award_needs_a_level_and_uses_the_matching_tier(api):
+    missing = api.post(f"{PREFIX}/calc", json={"itemId": "RP-070", "amount": 100000})
+    assert missing.status_code == 200
+    assert missing.json()["result"] is None
+    assert "人工核算" in missing.json()["note"]
+    municipal = api.post(f"{PREFIX}/calc", json={"itemId": "RP-070", "amount": 100000, "level": "市级"})
+    assert municipal.status_code == 200
+    assert municipal.json()["result"]["amount"] == 3000000
+    assert municipal.json()["result"]["capped"] is False
+    national = api.post(f"{PREFIX}/calc", json={"itemId": "RP-070", "amount": 100000, "level": "国家级"})
+    assert national.status_code == 200
+    assert national.json()["result"]["amount"] == 5000000

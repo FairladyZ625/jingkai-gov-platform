@@ -19,6 +19,30 @@ def _json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def normalized_conditions(item: dict) -> list[dict]:
+    """事项详情与匹配检查使用同一条件序列，主体条件始终在第一位。"""
+    conditions = list(item.get("conditions") or [])
+    if not conditions or conditions[0].get("f") != "subjectType":
+        conditions = [{
+            "f": "subjectType",
+            "op": "==",
+            "v": item["object"],
+            "label": f"申报对象为{item['object']}",
+        }, *conditions]
+    return conditions
+
+
+def _notice_period(times: dict) -> dict:
+    notice = times.get("notice") or {}
+    period = notice.get("window") or {}
+    scope = str(notice.get("scope") or "")
+    if not period.get("start") or not period.get("end"):
+        return {}
+    if any(token in scope for token in ("未确认", "部分覆盖", "仅覆盖")):
+        return {}
+    return period
+
+
 def _public_snapshot() -> dict:
     seed = ROOT / "data/seed/real-policies.json"
     supplement = _json(APP_DATA / "public_snapshot_additions.json")
@@ -77,7 +101,7 @@ def catalog() -> tuple[dict, dict]:
 
 def _window(item: dict, today: date) -> dict:
     times = item["times"]
-    period = (times.get("notice") or {}).get("window") or {}
+    period = _notice_period(times)
     start, end = period.get("start"), period.get("end")
     if not start or not end:
         return times
@@ -126,6 +150,7 @@ def list_items(q: str, object_type: str, window: str, *, today: date | None = No
 def item_with_doc(item: dict, doc: dict, *, today: date | None = None) -> dict:
     return {
         **item,
+        "conditions": normalized_conditions(item),
         "times": _window(item, today or datetime.now(BEIJING).date()),
         "docNo": doc["no"],
         "docTitle": doc["title"],
