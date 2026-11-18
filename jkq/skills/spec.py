@@ -1,0 +1,87 @@
+"""技能编辑器与保存接口共用的工具目录、内容字段和结构校验。"""
+
+import json
+import re
+
+
+TOOLS = (
+    {"id": "policy.match", "label": "匹配兑现事项", "needs": "ent"},
+    {"id": "enterprise.get", "label": "读取企业档案", "needs": "ent"},
+    {"id": "meeting.list", "label": "汇总会议记录"},
+)
+CONTENT = ("name", "summary", "icon", "base", "spec")
+
+
+class SkillError(ValueError):
+    def __init__(self, status, code, message, **details):
+        super().__init__(message)
+        self.status = status
+        self.error = {"code": code, "message": message, "details": details}
+
+
+def invalid(message):
+    raise SkillError(400, "INVALID_REQUEST", message)
+
+
+def validate_spec(spec):
+    if not isinstance(spec, dict):
+        invalid("技能规格应为对象")
+    try:
+        json.dumps(spec, allow_nan=False, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        invalid("规格须可编码为 UTF-8 JSON，数字须为有限值")
+    for key, kind in (("triggers", str), ("inputs", dict), ("steps", dict), ("kb", str)):
+        values = spec.get(key, [])
+        if not isinstance(values, list) or not all(isinstance(i, kind) for i in values):
+            invalid(f"{key} 列表格式有误")
+    keys = set()
+    for field in spec.get("inputs", []):
+        key = field.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            invalid("输入标识须以字母或下划线开头，仅可含字母、数字和下划线")
+        if key in keys or key in ("__proto__", "constructor", "prototype"):
+            invalid("输入标识重复或为保留名")
+        keys.add(key)
+    output = spec.get("output", {})
+    if not isinstance(output, dict):
+        invalid("输出设置应为对象")
+    output = {"format": "要点", "title": "", **output}
+    if output["format"] not in ("要点", "表格", "清单", "公文") or not isinstance(output["title"], str):
+        invalid("输出格式或标题无效")
+    for name in ("cat", "model", "prompt"):
+        if name in spec and not isinstance(spec[name], str):
+            invalid(f"{name} 应为文本")
+    steps = spec.get("steps", [])
+    if len(steps) > 5:
+        invalid("技能最多允许五个步骤")
+    allowed = {t["id"] for t in TOOLS}
+    declarations = spec.get("tools", [])
+    if not isinstance(declarations, list):
+        invalid("工具声明应为列表")
+    tools = list(declarations)
+    for step in steps:
+        if step.get("type") not in ("tool", "kb", "computer", "model"):
+            invalid("未知的步骤类型")
+        if step["type"] == "tool" or "tool" in step:
+            tools.append(step.get("tool"))
+    for tool in tools:
+        if not isinstance(tool, str) or tool not in allowed:
+            raise SkillError(400, "SKILL_TOOL_NOT_ALLOWED", "工具不在技能白名单内")
+    return {"cat": "知识", "model": "auto", "prompt": "", "triggers": [], "inputs": [],
+            "steps": [], "kb": [], **spec, "output": output}
+
+
+def content_fields(body):
+    content = {key: body[key] for key in CONTENT if key in body}
+    if "spec" in content:
+        content["spec"] = validate_spec(content["spec"])
+    if any(not isinstance(value, str) for key, value in content.items() if key != "spec"):
+        invalid("技能基本信息应为文本")
+    if "name" in content and not content["name"].strip():
+        invalid("技能名称不能为空")
+    return content
+
+
+def next_version(version):
+    major, minor, _ = version.split(".")
+    return f"{major}.{int(minor) + 1}.0"

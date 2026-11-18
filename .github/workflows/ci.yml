@@ -70,6 +70,28 @@ jobs:
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm test
 
+  demo-data:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 检查离线脚本与种子一致
+        run: |
+          python3 prototype/v4/mock/build_mock.py
+          git diff --exit-code -- prototype/v4/config/mock-data.js
+          python3 scripts/check_names.py
+      - name: 演示数据契约与离线浏览器
+        working-directory: tests/demo-data
+        run: |
+          npm ci
+          npm test
+          npx --no-install playwright install --with-deps chromium
+          npm run test:browser
+
   contract:
     runs-on: ubuntu-latest
     steps:
