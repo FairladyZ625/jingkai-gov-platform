@@ -108,17 +108,57 @@
 
       /* ---------- 播放：AI 一步步操作 ---------- */
       async function start(task, params, run) {
-        let r; try { r = (await API.start(Object.assign({ task }, params || {}))).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
-        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: [], status: 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
+        const body = Object.assign({ task }, params || {});
+        if (body.ent === '') delete body.ent;
+        let r; try { r = (await API.start(body)).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
+        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: r.shots || [], status: r.status || 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
         const me = P; st.view = 'run'; render();
-        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; await API.report(r.id, { status: 'failed', log: '失败：' + (e.message || e) }); } else if (me.status !== 'stopped' && me.status !== 'draft') { me.status = 'stopped'; await API.report(r.id, { status: 'stopped', log: '已停止', who: ctx.user.name }); } }
+        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } else if (me.status !== 'stopped' && me.status !== 'draft' && me.status !== 'done') { me.status = 'stopped'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } }
         if (P === me && st.view === 'run') renderRun(); load().catch(() => {});
         return me;
       }
       const stepsOf = () => P.run.steps;
       let GEN = 0;
       async function hold() { if (P && P.gen !== GEN) throw 'STOP'; while (P.paused || P.manual) { await sleepRaw(150); if (P.stopped) throw 'STOP'; } if (P.stopped || !alive) throw 'STOP'; if (P.chatRun && P.chatRun.stopped) { P.stopped = true; throw 'STOP'; } }
+      async function playServer() {
+        const labels = { otp: '验证码核验', sign: '签章', pay: '付款', submit: '提交' };
+        while (P && !P.stopped) {
+          const item = (await API.run(P.run.id)).item;
+          P.run = item;
+          P.shots = item.shots || [];
+          P.step = item.step || 0;
+          P.status = item.status;
+          if (item.status === 'waiting' && item.pending) {
+            const kind = item.pending.kind;
+            const label = labels[kind] || kind;
+            const opts = ['确认并继续', '停止'];
+            P.waitKind = kind === 'otp' ? 'otp' : 'gate';
+            P.waitMsg = 'AI 已停在「' + label + '」前，请确认后再继续。';
+            P.waitOpts = opts;
+            hideCursor();
+            if (st.view === 'run') renderRun();
+            let ans;
+            if (P.chatRun) ans = await P.chatRun.ask(P.waitMsg, opts);
+            else ans = await new Promise((res) => (P.resolveWait = res));
+            P.resolveWait = null;
+            P.waitMsg = '';
+            if (P.stopped) { try { await API.confirm(item.id, { decision: 'decline' }); } catch (_) {} throw 'STOP'; }
+            const ok = ans === opts[0];
+            const res = await API.confirm(item.id, ok ? { decision: 'approve', kind } : { decision: 'decline' });
+            P.run = res.item;
+            P.status = res.item.status;
+            if (!ok) { P.status = res.item.status || 'stopped'; throw 'STOP'; }
+          } else if (['done', 'stopped', 'failed'].includes(item.status)) {
+            if (st.view === 'run') renderRun();
+            return;
+          } else {
+            if (st.view === 'run') renderRun();
+            await sleep(400);
+          }
+        }
+      }
       async function play() {
+        if (!(P.run.steps && P.run.steps.length)) return playServer();
         const steps = stepsOf();
         for (let i = P.step; i < steps.length; i++) {
           P.step = i; const s = steps[i];
