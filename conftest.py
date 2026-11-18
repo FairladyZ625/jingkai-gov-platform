@@ -1,5 +1,4 @@
 """仓库级 pytest 夹具：平台测试和各应用的 tests/ 共用。"""
-import gc
 import json
 import os
 import re
@@ -14,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent
 PLATFORM_APP = ROOT / "tests/fixtures/platform-app"
 # importlib 模式需要显式加入平台模块、公共测试辅助和仓库脚本的导入路径。
-sys.path[:0] = [str(ROOT / "core/server"), str(ROOT / "core/sdk"), str(ROOT / "tests"), str(ROOT)]
+sys.path[:0] = [str(ROOT), str(ROOT / "core/server"), str(ROOT / "core/sdk"), str(ROOT / "core/tests")]
 os.environ["HAIKNOW_NO_AUTOAPP"] = "1"
 # 测试默认不导入 CAP-04 开发种子，需要样本的用例自行打开 HAIKNOW_KB_SEED=1。
 os.environ.setdefault("HAIKNOW_KB_SEED", "0")
@@ -37,20 +36,10 @@ def ensure_loopback_no_proxy(env: MutableMapping[str, str]) -> MutableMapping[st
 ensure_loopback_no_proxy(os.environ)
 
 
-def pytest_collection_finish(session):
-    """测试进程里 create_app 反复构建 pydantic/FastAPI 对象，默认 gc 阈值下频繁做全代回收。
-    收集完成后冻结已导入对象并放宽新生代阈值，实测 create_app 约快 15%。
-    老年代阈值不能放太宽：每次 create_app 都留下循环引用，老年代回收过稀会让进程内存线性上涨。
-    (20000, 20, 100) 时同镜像 -n 2 峰值约 4 GB，被 3 GiB 上限的 runner OOM 杀掉 worker；改为 10 后峰值约 2.6 GB。"""
-    gc.collect()
-    gc.freeze()
-    gc.set_threshold(20000, 20, 10)
-
-
 _ROUTERS: dict = {}
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def reuse_loaded_routers(monkeypatch):
     """每次 create_app 都要重新 exec 全部应用的 api/*.py（定义 pydantic 模型、解析依赖），约占 create_app 三分之一。
     同一个 api 目录且其中 .py 的 mtime、大小都没变时，复用上次加载出的 router 与模块；
@@ -76,7 +65,7 @@ def reuse_loaded_routers(monkeypatch):
     monkeypatch.setattr(main, "_load_router", load)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def cheap_password_hash(monkeypatch):
     """scrypt 生产参数（n=16384）每次约 50ms，每个夹具 seed 5 个演示账号就是 0.25s。
     测试只验证“散列可校验、盐不同”，不验证抗暴力强度，所以把成本降到最低；
@@ -85,7 +74,7 @@ def cheap_password_hash(monkeypatch):
     monkeypatch.setattr(passwords, "SCRYPT_N", 2)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def isolated_platform(tmp_path, monkeypatch):
     """测试默认隔离宿主模型配置；需要真实路径的测试自行注入本地桩地址。"""
     for name in ("BASE_URL", "API_KEY", "NAME"):
@@ -135,7 +124,7 @@ def isolated_platform(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def make_client(isolated_platform, monkeypatch):
+def make_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch):
     from fastapi.testclient import TestClient
     from haiknow_core.main import create_app
 
