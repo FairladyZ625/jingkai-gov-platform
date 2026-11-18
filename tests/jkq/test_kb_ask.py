@@ -142,25 +142,42 @@ def test_demo_citations_with_bm25(case, public_docs):
     assert citation["snippet"] in next(doc["text"] for doc in public_docs if doc["id"] == case["id"])
 
 
-def test_http_with_cookie_auth_and_partner_space_filter(isolated_platform, cheap_password_hash, monkeypatch):
+@pytest.fixture
+def instance_factory(isolated_platform, cheap_password_hash, monkeypatch):
     pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
-
-    from haiknow_core.main import current_user
     from jkq.app import create_app
-    from jkq.kb.ask import install
 
     monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
     monkeypatch.setenv("HAIKNOW_CONFIG_DIR", str(ROOT / "config"))
-    app = create_app()
-    platform = app.state.platform
+    return create_app
+
+
+def test_default_startup_exposes_ask_before_search_merges(instance_factory, monkeypatch):
+    from fastapi.testclient import TestClient
+    from jkq.kb import ask as module
+
+    monkeypatch.setattr(module, "_load_search", lambda: None)
+    app = instance_factory()
+    gateway = Gateway()
+    monkeypatch.setattr(app.state.platform.model, "aihub", gateway)
+    with TestClient(app) as client:
+        endpoint = "/api/v1/kb/ask"
+        assert client.post(endpoint, json={"q": "算力券 封顶"}).status_code == 401
+        credentials = {"username": "ask-user", "password": "demo-password"}
+        assert client.post("/api/auth/bootstrap", json={**credentials, "name": "测试用户"}).status_code == 200
+        response = client.post(endpoint, json={"q": "算力券 封顶"})
+        assert response.status_code == 200
+        assert response.json() == module.no_answer(module.SEARCH_UNAVAILABLE)
+        assert gateway.calls == []
+
+
+def test_http_with_cookie_auth_and_partner_space_filter(instance_factory, monkeypatch):
+    from fastapi.testclient import TestClient
+    from jkq.kb import ask as module
+
     public = hit("public", "仅限公开片段。")
     enterprise = hit("private", "企业内部资料。", space="enterprise")
-    # 同时模拟候选服务与检索边界意外返回了过量结果。
-    monkeypatch.setattr(platform.kb, "candidates", lambda user: [
-        dict(public, text=public["snippet"]), dict(enterprise, text=enterprise["snippet"]),
-    ])
     calls = []
 
     def search(docs, question, *, filters):
@@ -168,9 +185,15 @@ def test_http_with_cookie_auth_and_partner_space_filter(isolated_platform, cheap
         assert [doc["space"] for doc in docs] == ["policy"]
         return {"hits": {"问题": [enterprise, public], "无命中": [], "只有企业": [enterprise]}[question]}
 
+    monkeypatch.setattr(module, "_load_search", lambda: search)
+    app = instance_factory()
+    platform = app.state.platform
+    # 同时模拟候选服务与检索边界意外返回了过量结果。
+    monkeypatch.setattr(platform.kb, "candidates", lambda user: [
+        dict(public, text=public["snippet"]), dict(enterprise, text=enterprise["snippet"]),
+    ])
     gateway = Gateway(output((1, enterprise["snippet"]), (1, public["snippet"])))
     monkeypatch.setattr(platform.model, "aihub", gateway)
-    install(app, platform, current_user, search=search)
     with TestClient(app) as client:
         endpoint = "/api/v1/kb/ask"
         assert client.post(endpoint, json={"q": "问题"}).json()["error"]["code"] == "UNAUTHENTICATED"
