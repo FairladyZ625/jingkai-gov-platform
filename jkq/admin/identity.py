@@ -78,14 +78,17 @@ def _seed_org(platform):
         ):
             db.execute('insert or ignore into departments values (?,?,?)', (did, name, parent))
         for profile in profiles:
-            uid, did = profile['id'], profile['deptId']
+            uid, did = profile['id'], profile.get('deptId')
+            # 精简的测试或实例配置可能不带组织字段，此时只跳过组织播种。
+            if not did:
+                continue
             parent = {'d-yzsk': 'd-ext', 'd-qyfw': 'd-cyc'}.get(did, 'd-root')
             db.execute('insert or ignore into departments values (?,?,?)',
-                       (did, profile['dept'].split(' · ')[-1], parent))
+                       (did, (profile.get('dept') or did).split(' · ')[-1], parent))
             db.execute('insert into user_departments select ?,? where not exists '
                        '(select 1 from user_departments where user_id=?)', (uid, did, uid))
             if not db.execute('select 1 from user_positions where user_id=?', (uid,)).fetchone():
-                _set_title(db, uid, profile['title'])
+                _set_title(db, uid, profile.get('title') or '')
 
 
 def _department(db, did):
