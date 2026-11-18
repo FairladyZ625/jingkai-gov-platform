@@ -13,10 +13,19 @@ def seed_identities(store, roles, users):
     with store._lock, store._db as db:
         store.begin_write()
         for role, spec in roles.items():
-            inserted = db.execute(
+            initialized = db.execute(
                 'insert into roles values (?,?,1) on conflict(id) do nothing', (role, spec['name']),
-            )
-            if inserted.rowcount:
+            ).rowcount
+            if role == 'admin' and not initialized:
+                # 旧库无 roles.yaml 时，卫华会在空身份目录中预建无授权的首管占位角色。
+                initialized = db.execute(
+                    "update roles set name=? where id='admin' and name='平台管理员' and builtin=1 "
+                    "and not exists (select 1 from users) "
+                    "and not exists (select 1 from user_roles where role_id='admin') "
+                    "and not exists (select 1 from role_grants where role_id='admin')",
+                    (spec['name'],),
+                ).rowcount
+            if initialized:
                 db.executemany('insert into role_grants values (?,?,?)', (
                     (role, app_id, action)
                     for app_id, actions in spec['grants'].items()

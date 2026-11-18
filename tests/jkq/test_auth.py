@@ -329,6 +329,22 @@ def test_init_missing_roles_in_existing_database_preserves_custom_grants(instanc
     assert response(login(client, 'admin'), 200)['grants']['*'] == ['view', 'admin']
 
 
+def test_init_legacy_empty_admin_placeholder(instance, monkeypatch, tmp_path):
+    build, _ = instance
+    old_config = tmp_path / 'old-config'
+    old_config.mkdir()
+    with monkeypatch.context() as legacy_env:
+        legacy_env.setenv('HAIKNOW_CONFIG_DIR', str(old_config))
+        legacy = create_app(ROOT).state.platform
+    assert legacy.directory.role_names() == {'admin': '平台管理员'}
+
+    client, _ = build()
+    admin = response(login(client, 'admin'), 200)
+    assert admin['role']['name'] == '管理员'
+    assert admin['grants']['*'] == ['view', 'operate', 'approve', 'admin']
+    response(client.get(ADMIN), 200)
+
+
 @pytest.mark.parametrize('path', [ADMIN, '/api/admin/users'])
 def test_login_admin_denial_logout_are_audited_once(instance, path):
     build, _ = instance
