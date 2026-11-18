@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, get_route_path
 
+from .app_catalogs import install as install_app_catalogs
 from .compat import Compatibility, install_error_handlers
 from .projects import load_project_seed, restore_empty_projects
 from .settings import REPO_ROOT, core_environment, required_environment, web_directory
@@ -29,7 +30,7 @@ def install_platform(app: FastAPI) -> None:
     """安装需要包住 core 路由或挂平台存储的模块，每个模块一行。"""
     from haiknow_core.main import current_user  # 登录依赖只在这里指定
 
-    from . import jobs_api, reviews_api
+    from . import admin, jobs_api, reviews_api
     from .conversations import routes as conversations
     from .kb import ask as kb_ask
 
@@ -37,6 +38,7 @@ def install_platform(app: FastAPI) -> None:
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
     kb_ask.install(app, app.state.platform, current_user)
+    admin.install(app)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。
         from apps.document.instance import install as install_document
@@ -56,6 +58,7 @@ def create_app() -> FastAPI:
         from .routers import register_routes
 
         app = create_core_app(root)
+        install_app_catalogs(app)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
         install_auth(app)
