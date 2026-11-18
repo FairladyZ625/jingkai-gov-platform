@@ -17,6 +17,7 @@ from haiknow_core.aihub.transcribe import (
 )
 from haiknow_core.aihub.transcribe_audio import SAMPLE_RATE, TranscribeError, split_audio
 from haiknow_core.main import current_user
+from haiknow_sdk.resources import DataError
 
 DEFAULT_HOTWORDS = (
     '北京经济技术开发区管理委员会',
@@ -45,6 +46,7 @@ class Transcriber:
     provider: TranscribeProvider | None = None
     hotwords: tuple[str, ...] = DEFAULT_HOTWORDS
     timeout: float = DEFAULT_TIMEOUT
+    model: str | None = None
 
     def preset_result(self, chunks):
         return self._result(chunks, _PRESET, duration_ms=_PRESET_DURATION_MS)
@@ -135,7 +137,7 @@ def transcriber_from_environment(
     provider = FunASRProvider(str(endpoint), model, api_key, transport=transport) if mode == 'local' else factory(
         str(endpoint), model, api_key,
     )
-    return Transcriber(mode, provider, hotwords, timeout)
+    return Transcriber(mode, provider, hotwords, timeout, model)
 
 
 router = APIRouter()
@@ -144,19 +146,21 @@ router = APIRouter()
 @router.post('/api/v1/ai/transcribe')
 async def transcribe_file(body: TranscribeBody, request: Request, user=Depends(current_user)):
     platform = request.app.state.platform
-    await run_in_threadpool(platform.data.app, user, body.appId, 'operate')
-    audio = await run_in_threadpool(platform.data.read_file, user, body.fileId)
     audit = {'fileId': body.fileId, 'status': 'failed'}
     try:
+        await run_in_threadpool(platform.data.app, user, body.appId, 'operate')
+        audio = await run_in_threadpool(platform.data.read_file, user, body.fileId)
         transcriber = transcriber_from_environment(
             classification=body.classification,
             cloud_providers=getattr(request.app.state, 'transcribe_cloud_providers', None),
         )
         audit['source'] = transcriber.source
+        if transcriber.model:
+            audit['model'] = transcriber.model
         result = await transcriber.transcribe(audio)
         audit['status'] = 'success'
         return result
-    except TranscribeError as error:
+    except DataError as error:
         audit['status'] = error.code
         raise
     finally:

@@ -291,3 +291,7 @@ def test_instance_route_uses_core_file_permissions_and_v1_error_envelope(monkeyp
         assert preset.json()['mock'] and preset.json()['source'] == 'preset'
         assert client.post('/api/auth/login', json={'user_id': 'sampleextra'}).status_code == 200
         assert client.post(PATH, json=valid).status_code == 403
+        items = client.app.state.platform.store.audit_list('sample-app')
+        attempts = [item['detail'] for item in items if item['action'] == 'ai.transcribe']
+        assert [a['status'] for a in attempts] == ['forbidden', 'success', 'UNSUPPORTED_TYPE', 'not_found']
+        assert attempts[1]['source'] == 'preset'
