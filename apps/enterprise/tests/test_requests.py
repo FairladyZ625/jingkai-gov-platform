@@ -19,8 +19,6 @@ def site(isolated_platform, make_client, tmp_path, monkeypatch):
     config, apps = isolated_platform
     directory = apps / "enterprise"
     shutil.copytree(Path(__file__).resolve().parents[1] / "api", directory / "api")
-    (directory / "api/router.py").write_text(
-        "from .ledger import router\nfrom .reminders import register\nregister(router, globals())\n")
     manifest = json.loads((apps / "sample-app/app.json").read_text())
     manifest.update(id="enterprise", defaultRoles={"partner": ["view", "operate"]})
     (directory / "app.json").write_text(json.dumps(manifest))
