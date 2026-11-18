@@ -121,7 +121,7 @@
       let GEN = 0;
       async function hold() { if (P && P.gen !== GEN) throw 'STOP'; while (P.paused || P.manual) { await sleepRaw(150); if (P.stopped) throw 'STOP'; } if (P.stopped || !alive) throw 'STOP'; if (P.chatRun && P.chatRun.stopped) { P.stopped = true; throw 'STOP'; } }
       async function playServer() {
-        const labels = { otp: '验证码核验', sign: '签章', pay: '付款', submit: '提交' };
+        const labels = { otp: '验证码核验', sign: '签章', pay: '付款', submit: '提交', import: '入库' };
         while (P && !P.stopped) {
           const item = (await API.run(P.run.id)).item;
           P.run = item;
@@ -149,6 +149,7 @@
             P.status = res.item.status;
             if (!ok) { P.status = res.item.status || 'stopped'; throw 'STOP'; }
           } else if (['done', 'stopped', 'failed'].includes(item.status)) {
+            if (item.task === 'notice' && item.result && (item.result.docs || []).length) P.imported = true;
             if (st.view === 'run') renderRun();
             return;
           } else {
