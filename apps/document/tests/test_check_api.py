@@ -1,6 +1,7 @@
 """通过公文应用真实入口验证路由、数据版本及权限。"""
 
 import json
+import secrets
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from jkq.app import create_app
 
 APP = "/api/apps/document"
 APPS = Path(__file__).resolve().parents[2]
+PASSWORD = secrets.token_urlsafe(12)
 INPUTS = {
     "orig": "示例征集通知", "oldEnd": "2026-11-02", "newEnd": "2026-11-06", "reason": "示例原因",
     "docNo": "测试[2026]08号", "to": "各单位", "sign": "测试单位", "date": "2026年11月1日",
@@ -35,27 +37,35 @@ def document(isolated_platform, cheap_password_hash, monkeypatch):
     seed["companies"][0]["projects"] = [{"id": "jkq", "name": "示例经开区", "products": []}]
     path.write_text(json.dumps(seed))
     path = config / "roles.yaml"
-    seed = json.loads(path.read_text())
-    seed["roles"]["sampleobserver"] = {"grants": {"document": ["view"]}}
-    seed["roles"]["samplereviewer"] = {"grants": {"document": ["view", "approve"]}}
-    path.write_text(json.dumps(seed))
-    path = config / "users.yaml"
-    seed = json.loads(path.read_text())
-    for user in seed["users"]:
-        if user["id"] in {"sampleobserver", "samplereviewer"}:
-            user["projects"].append("jkq")
-    path.write_text(json.dumps(seed))
+    roles = {
+        "admin": {"name": "管理员", "grants": {"*": ["view", "operate", "approve", "admin"]}},
+        "sampleobserver": {"name": "观察员", "grants": {"document": ["view"]}},
+        "samplereviewer": {"name": "审核员", "grants": {"document": ["view", "approve"]}},
+    }
+    path.write_text(json.dumps({"apps": ["document"], "roles": roles}))
+    accounts = {"sampleadmin": "admin", "sampleobserver": "sampleobserver", "samplereviewer": "samplereviewer"}
+    (config / "users.yaml").write_text(json.dumps({"demoUsers": [
+        {"id": identity, "username": identity, "name": identity, "role": role, "passwordEnv": "JKQ_TEST_DOC_PASSWORD"}
+        for identity, role in accounts.items()
+    ]}))
     monkeypatch.setattr(AI, "chat", lambda *args, **kwargs: {"result": '{"issues":[]}'})
     monkeypatch.delenv("HAIKNOW_ROOT", raising=False)
     monkeypatch.delenv("JKQ_WEB_DIR", raising=False)
     monkeypatch.delenv("JKQ_MOCK_GOV_URL", raising=False)
+    monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    monkeypatch.setenv("JKQ_TEST_DOC_PASSWORD", PASSWORD)
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
     monkeypatch.setenv("HAIKNOW_APPS_DIR", str(APPS))
     with TestClient(create_app()) as client:
-        assert client.post("/api/auth/login", json={"user_id": "sampleadmin"}).status_code == 200
+        login(client, "sampleadmin")
         knowledge = Knowledge()
         client.app.state.platform.kb = knowledge
         yield client, knowledge
+
+
+def login(client, identity):
+    payload(client.post("/api/v1/auth/login", json={"username": identity, "password": PASSWORD}))
 
 
 def payload(response):
@@ -110,7 +120,7 @@ def test_language_failure_and_request_errors(document, monkeypatch):
     assert client.post(f"{APP}/drafts/missing/check").json()["error"]["code"] == "NOT_FOUND"
     assert payload(client.post(f"{url}/fix", json={"ids": []}))["item"] == original
 
-    assert client.post("/api/auth/login", json={"user_id": "sampleobserver"}).status_code == 200
+    login(client, "sampleobserver")
     assert client.post(f"{url}/check").status_code == 200
     denied = client.post(f"{url}/fix", json={"ids": []})
     assert (denied.status_code, denied.json()["error"]["code"]) == (403, "FORBIDDEN")
@@ -148,10 +158,10 @@ def test_finalized_draft_can_be_checked_but_not_fixed(document):
     })
     assert response.status_code == 201, response.text
     review = response.json()["id"]
-    assert client.post("/api/auth/login", json={"user_id": "samplereviewer"}).status_code == 200
+    login(client, "samplereviewer")
     response = client.post(f"/api/v1/reviews/{review}/decisions", json={"version": 1, "decision": "confirm"})
     assert response.status_code == 200, response.text
-    assert client.post("/api/auth/login", json={"user_id": "sampleadmin"}).status_code == 200
+    login(client, "sampleadmin")
     assert payload(client.post(f"{url}/check"))["issues"]
     result = client.post(f"{url}/fix", json={"ids": ["不存在"]})
     assert (result.status_code, result.json()["error"]["code"]) == (409, "LOCKED")
