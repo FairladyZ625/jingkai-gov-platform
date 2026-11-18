@@ -58,6 +58,9 @@ window.JK_CONFIG = {
     mode: 'mock',
     baseUrl: 'http://127.0.0.1:8080',
     timeoutMs: 20000,
-    // modules: { policy: 'http' },
+    modules: {
+      platform: /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock',
+      kb: /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock',
+    },
   },
 };
