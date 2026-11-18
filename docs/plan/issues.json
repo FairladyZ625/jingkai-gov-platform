@@ -1,0 +1,1605 @@
+[
+ {
+  "id": "T01",
+  "title": "T01 仓库骨架、忽略规则与防泄密检查",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:repo",
+   "type:chore",
+   "priority:P0",
+   "reuse:adapt"
+  ],
+  "depends_on": [],
+  "wave": 1,
+  "source": "原 T01（拆分）",
+  "reuse": [
+   {
+    "path": "scripts/check.py（check_secrets，CHK-REPO-03/04）",
+    "mode": "改造",
+    "change": "抽出密钥正则与 .env 拦截逻辑放进 guard.py，补上内部资料路径与敏感关键词规则"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 1 批｜来源：原 T01（拆分）\n\n### 目标\n把公开仓库的“什么不能进”变成机器检查，后面每个 PR 自动把关。\n\n### 范围（要做什么）\n- 按目录约定建 core/ apps/ jkq/ web/ data/ scripts/ docs/ deploy/ .github/ 骨架和 README\n- .gitignore：00_内部资料*、.env*、*.key、data/private/、录音文件、node_modules、__pycache__\n- scripts/guard.py：内部资料路径、商务核算类敏感词（清单只放 guard 配置）、疑似密钥（sk-、AK、私钥头）即失败；关键词清单放配置文件，配置本身豁免\n- pre-commit 钩子调用 guard.py\n\n### 验收标准\n- [ ] 故意提交含敏感关键词的 md，guard 失败并指出文件和行号\n- [ ] 故意提交 .env，本地钩子拦截\n- [ ] README 写清一句话定位、目录说明、怎么跑、开发流程\n\n### 涉及接口（接口规范 v1.3）\n无\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `scripts/check.py（check_secrets，CHK-REPO-03/04）` | 改造 | 抽出密钥正则与 .env 拦截逻辑放进 guard.py，补上内部资料路径与敏感关键词规则 |\n\n### 依赖与并行\n- 依赖（须先合并）：无\n- 被依赖：T02、T03、T09、T46\n- 同批可并行：无\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-repo-guard`\n- HA：`ha task create --work <M0 的 work-id> --title \"T01 仓库骨架、忽略规则与防泄密检查\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T02",
+  "title": "T02 PR/Issue 模板、PR 描述检查、CI 工作流、AGENTS.md 与 Codex 技能",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:repo",
+   "type:chore",
+   "priority:P0",
+   "reuse:adapt"
+  ],
+  "depends_on": [
+   "T01"
+  ],
+  "wave": 2,
+  "source": "原 T01（拆分）+ 新增",
+  "reuse": [
+   {
+    "path": "ops/gitlab/check_mr_description.py",
+    "mode": "改造",
+    "change": "读取来源从 GitLab CI 变量改为 GitHub PR 事件；界面路径改为 web/**、apps/*/web/**；截图宽度改为 1440/1280"
+   },
+   {
+    "path": "skills/dev/haiknow-app-author/SKILL.md",
+    "mode": "改造",
+    "change": "改写为经开区版“写一个小应用”，契约指向 docs/APP_CONTRACT 与接口规范 v1.3"
+   },
+   {
+    "path": "skills/ops/haiknow-issue-mr-flow/SKILL.md",
+    "mode": "改造",
+    "change": "glab/GitLab 换成 gh/GitHub，去掉飞书晋升规则"
+   },
+   {
+    "path": "docs/process/研发流程.md、docs/specs/开发流程规范.md",
+    "mode": "参考",
+    "change": "提炼成 AGENTS.md 的流程一节"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 2 批｜来源：原 T01（拆分）+ 新增\n\n### 目标\n让 HA 的 Codex worker 拿到 Issue 就知道怎么开分支、写什么测试、PR 写成什么样。\n\n### 范围（要做什么）\n- Issue 模板（目标/范围/验收标准/接口/卫华复用）与 PR 模板（Refs #n、改了什么、怎么验证、截图）\n- PR 描述检查：模板各节已填、用 Refs 关联 Issue、改界面必须附截图（1440 与 1280 两宽度）\n- GitHub Actions：guard、PR 描述检查、pytest、前端冒烟（空任务占位，后续填充）\n- AGENTS.md：仓库规矩、目录、命令、禁止事项；docs/agents/ 下两份技能：写小应用、Issue→分支→PR\n- labels 与 5 个 milestone 的创建脚本（由 Ben 获准后执行）\n\n### 验收标准\n- [ ] 新建 PR 时模板自动出现；缺 Refs 或缺截图时检查失败\n- [ ] CI 在空 PR 上全绿\n- [ ] Codex worker 只读 AGENTS.md 就能复述分支命名与 PR 要求\n\n### 涉及接口（接口规范 v1.3）\n无\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `ops/gitlab/check_mr_description.py` | 改造 | 读取来源从 GitLab CI 变量改为 GitHub PR 事件；界面路径改为 web/**、apps/*/web/**；截图宽度改为 1440/1280 |\n| `skills/dev/haiknow-app-author/SKILL.md` | 改造 | 改写为经开区版“写一个小应用”，契约指向 docs/APP_CONTRACT 与接口规范 v1.3 |\n| `skills/ops/haiknow-issue-mr-flow/SKILL.md` | 改造 | glab/GitLab 换成 gh/GitHub，去掉飞书晋升规则 |\n| `docs/process/研发流程.md、docs/specs/开发流程规范.md` | 参考 | 提炼成 AGENTS.md 的流程一节 |\n\n### 依赖与并行\n- 依赖（须先合并）：T01\n- 被依赖：无\n- 同批可并行：T03、T09、T46\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-pr-ci-agents`\n- HA：`ha task create --work <M0 的 work-id> --title \"T02 PR/Issue 模板、PR 描述检查、CI 工作流、AGENTS.md 与 Codex 技能\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T03",
+  "title": "T03 导入 v4 原型到 web/，文档导入 docs/",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:web",
+   "type:chore",
+   "priority:P0",
+   "reuse:none"
+  ],
+  "depends_on": [
+   "T01"
+  ],
+  "wave": 2,
+  "source": "原 T02",
+  "reuse": [
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "v4 前端是对话优先的新外壳，卫华 core/web 工作台外壳不进入"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 2 批｜来源：原 T02\n\n### 目标\n前端起点：v4 原型原样进新仓库，一键演示照常跑通。\n\n### 范围（要做什么）\n- 把 02_产出物/v4 拷到 web/（index.html、assets、apps/<id>、api、mock、config、data）\n- 接口规范 v1.3、APP_CONTRACT、requirements.md 拷到 docs/（删去商务核算类段落）\n- smoke.js、e2e.js 放 web/tests/，改为相对路径；CI 冒烟改为真实执行\n\n### 验收标准\n- [ ] mock 模式下一键演示 12 段跑通\n- [ ] guard 通过：没有内部资料与本机绝对路径\n- [ ] CI 冒烟真实执行并通过\n\n### 涉及接口（接口规范 v1.3）\n全部（mock 模式）\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| — | 不复用 | v4 前端是对话优先的新外壳，卫华 core/web 工作台外壳不进入 |\n\n### 依赖与并行\n- 依赖（须先合并）：T01\n- 被依赖：T04、T05、T08、T10\n- 同批可并行：T02、T09、T46\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-import-v4`\n- HA：`ha task create --work <M0 的 work-id> --title \"T03 导入 v4 原型到 web/，文档导入 docs/\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T04",
+  "title": "T04 修复两个 P0：切换对话面板串台、跨应用首次打开丢参数",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:web",
+   "type:bug",
+   "priority:P0",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T03"
+  ],
+  "wave": 3,
+  "source": "原 T03 + T04（合并）",
+  "reuse": [
+   {
+    "path": "core/web/shell-context.js、core/web/app-frame.js",
+    "mode": "参考",
+    "change": "对照卫华 ctx 注入与路由参数传递方式，保持 mount(el, ctx) 契约一致"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 3 批｜来源：原 T03 + T04（合并）\n\n### 目标\n两个 P0 都在外壳 shell.js 的面板管理里，合成一个任务避免同文件冲突。\n\n### 范围（要做什么）\n- runIntent / 操作员 done() 时写 conv.panel = { app, route, params }；openConv 时按 conv.panel 恢复，没有则复位\n- newChat() 时各应用 go('home') 复位\n- openApp 首次挂载等 ready() 后补调 slot.ctl.go(route, params)；四个应用 mount 末尾兜底读 ctx.params.route\n- 核对四条跳转：政策→公文、会议→企业、政策提示“查看”→企业诉求、告知单→公文\n- 为两个问题各写一条 Playwright 回归用例\n\n### 验收标准\n- [ ] A 对话开政策、B 对话开企业，来回切换面板跟随对话\n- [ ] 四条跨应用跳转首次打开即落在正确页面并带参数\n- [ ] 两条回归用例进 CI\n\n### 涉及接口（接口规范 v1.3）\n§3.3 Conversation.panel（同步更新规范）\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/web/shell-context.js、core/web/app-frame.js` | 参考 | 对照卫华 ctx 注入与路由参数传递方式，保持 mount(el, ctx) 契约一致 |\n\n### 依赖与并行\n- 依赖（须先合并）：T03\n- 被依赖：无\n- 同批可并行：T05、T08、T10\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-fix-panel-params`\n- HA：`ha task create --work <M0 的 work-id> --title \"T04 修复两个 P0：切换对话面板串台、跨应用首次打开丢参数\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T05",
+  "title": "T05 种子数据单一来源 + 示例事项清理",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:data",
+   "type:bug",
+   "priority:P0",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T03"
+  ],
+  "wave": 3,
+  "source": "原 T05",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/knowledge/seed.py",
+    "mode": "参考",
+    "change": "沿用“已入库则跳过、样本显式标注”的种子导入做法，后端阶段直接读同一份 JSON"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 3 批｜来源：原 T05\n\n### 目标\nmock 和后端种子只有一份，挂真实文号的数据必须和原文一致。\n\n### 范围（要做什么）\n- 建 data/seed/*.json 为唯一数据源（政策文件、事项、知识库文档、企业示例、模板等）；scripts/build_mock.py 生成 web/mock 用的 JS\n- 18 条 PI-* 示例事项：有原文的改成原文写法，无依据的下线或改标“示例（无对应原文）”\n- RP-010、RP-045、RP-074 封顶额按原文复核改正；同一“文号+条款”只保留真实那条；每条保留 source.url\n\n### 验收标准\n- [ ] data/seed 中没有“挂真实文号 + 金额与原文不符”的条目（附核对表）\n- [ ] build_mock.py 生成结果结构不变，冒烟通过\n- [ ] 星河智驾的匹配结果不再出现两条算力券\n\n### 涉及接口（接口规范 v1.3）\n§2.2 PolicyItem、§4.1\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/knowledge/seed.py` | 参考 | 沿用“已入库则跳过、样本显式标注”的种子导入做法，后端阶段直接读同一份 JSON |\n\n### 依赖与并行\n- 依赖（须先合并）：T03\n- 被依赖：T06、T07、T28\n- 同批可并行：T04、T08、T10\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-seed-single-source`\n- HA：`ha task create --work <M0 的 work-id> --title \"T05 种子数据单一来源 + 示例事项清理\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T06",
+  "title": "T06 演示数据口径统一 + 演示企业改名与示例标注",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:data",
+   "area:web",
+   "type:bug",
+   "priority:P1",
+   "reuse:none"
+  ],
+  "depends_on": [
+   "T05"
+  ],
+  "wave": 4,
+  "source": "原 T06 + T08（合并）",
+  "reuse": [
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "纯数据与文案修正"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P1｜批次：第 4 批｜来源：原 T06 + T08（合并）\n\n### 目标\n界面上的数字、分类、落款和企业名都经得起局方当面核对。\n\n### 范围（要做什么）\n- mock-api.js 计数改为实际条数；知识库总数拆成“真实 N + 示例 M”；“已选 14 项”注明 3 项本批已结束\n- 空间改名：“公文范文 55”→“申报通知”，“部门制度 27 条职责页”→“机构职责”；会议示例加“示例”标识\n- 告知单落款按事项 source.deptResp 生成，电话留空标“请填写”；去掉自造发文代字\n- 按 name_check 结果改掉高、中风险企业名（明显虚构、不与公开名单重合）；信用代码改示例格式；企业卡片加“示例企业”角标\n- 同步替换对话样例、演示脚本、starters 里的企业名\n\n### 验收标准\n- [ ] 所有计数与列表条数一致\n- [ ] 企业名与 137 家公开名单零重合（附比对脚本输出）\n- [ ] 界面上每家演示企业都有“示例企业”角标\n\n### 涉及接口（接口规范 v1.3）\n§2.3、§4.1 notice\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| — | 不复用 | 纯数据与文案修正 |\n\n### 依赖与并行\n- 依赖（须先合并）：T05\n- 被依赖：无\n- 同批可并行：T07、T11、T14、T19\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-demo-data-cleanup`\n- HA：`ha task create --work <M0 的 work-id> --title \"T06 演示数据口径统一 + 演示企业改名与示例标注\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T07",
+  "title": "T07 导入真实补充数据（公文范文、部门制度、会议素材、企业公开名单）",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:data",
+   "area:kb",
+   "type:feat",
+   "priority:P1",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T05"
+  ],
+  "wave": 4,
+  "source": "原 T07",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/knowledge/service.py（kb_entries 字段：status/version/source/visibility）",
+    "mode": "参考",
+    "change": "种子字段按卫华知识库元数据对齐，M2 入库时无需再转换"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P1｜批次：第 4 批｜来源：原 T07\n\n### 目标\n把已抓到的真实公开数据放进种子，每条可追溯来源。\n\n### 范围（要做什么）\n- gongwen.json → 公文范文（按文种打标签，外地样本标“格式参考（非北京）”）\n- rules.json → 部门制度（失效的标“已失效”）；minutes.json → 会议素材（注明是新闻通稿，不进会议纪要空间）\n- enterprises.json → 企业公开名单参考库（只含公开字段，未核实的标“未核实”），不当企业台账\n- 每条保留 source_url 与抓取日期；data/seed/REAL_DATA.md 写来源说明\n\n### 验收标准\n- [ ] 抽查 10 条，source_url 可打开且内容一致\n- [ ] 公开名单不出现在企业台账里\n- [ ] REAL_DATA.md 列出每个文件的来源、条数、抓取日期\n\n### 涉及接口（接口规范 v1.3）\n§2.6 KbDoc\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/knowledge/service.py（kb_entries 字段：status/version/source/visibility）` | 参考 | 种子字段按卫华知识库元数据对齐，M2 入库时无需再转换 |\n\n### 依赖与并行\n- 依赖（须先合并）：T05\n- 被依赖：T23\n- 同批可并行：T06、T11、T14、T19\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-real-data-seed`\n- HA：`ha task create --work <M0 的 work-id> --title \"T07 导入真实补充数据（公文范文、部门制度、会议素材、企业公开名单）\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T08",
+  "title": "T08 按模块切换 mock/http + 契约测试脚手架",
+  "milestone": "M0 仓库与原型就位",
+  "labels": [
+   "area:web",
+   "type:test",
+   "priority:P0",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T03"
+  ],
+  "wave": 3,
+  "source": "原 T09",
+  "reuse": [
+   {
+    "path": "contracts/v1/*.json、tests/test_v1_contracts.py",
+    "mode": "参考",
+    "change": "照卫华“契约 JSON + 测试读契约断言”的写法组织 web/tests/contract"
+   }
+  ],
+  "body": "> 里程碑：M0 仓库与原型就位｜优先级：P0｜批次：第 3 批｜来源：原 T09\n\n### 目标\n后端做完一块就切一块，契约测试当验收。\n\n### 范围（要做什么）\n- config/app.config.js 支持 api.modules = { platform:'http', policy:'mock', … }，缺省回落全局 mode\n- web/tests/contract/：按接口规范 §7 的 117 条路径，为每个模块写请求/响应形状断言\n- CI 在 mock 模式跑冒烟 + 契约；提供 npm run contract -- --base <url> --module <m> 对真后端跑\n\n### 验收标准\n- [ ] mock 模式 117 条契约断言全部通过\n- [ ] 单模块切 http 时其余模块仍走 mock\n- [ ] 契约命令可指定模块对任意地址运行\n\n### 涉及接口（接口规范 v1.3）\n§7 全部\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `contracts/v1/*.json、tests/test_v1_contracts.py` | 参考 | 照卫华“契约 JSON + 测试读契约断言”的写法组织 web/tests/contract |\n\n### 依赖与并行\n- 依赖（须先合并）：T03\n- 被依赖：T27\n- 同批可并行：T04、T05、T10\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-module-switch-contract`\n- HA：`ha task create --work <M0 的 work-id> --title \"T08 按模块切换 mock/http + 契约测试脚手架\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T09",
+  "title": "T09 引入卫华 core 并裁剪",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T01"
+  ],
+  "wave": 2,
+  "source": "原 T10（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/*（auth、identity、rbac、manifest、data、store、migrations、aihub、knowledge、jobs、schedules、api_v1）",
+    "mode": "直接用",
+    "change": "原样拷入，只改 main.py 的模块注册列表"
+   },
+   {
+    "path": "core/sdk/haiknow_sdk、core/sdk/js",
+    "mode": "直接用",
+    "change": "原样拷入"
+   },
+   {
+    "path": "scripts/check.py、scripts/new_app.py、apps/_template",
+    "mode": "直接用",
+    "change": "原样拷入，经开区规则在后续任务追加"
+   },
+   {
+    "path": "tests/test_*.py（保留模块对应部分）",
+    "mode": "直接用",
+    "change": "随模块拷入，作为回归"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 2 批｜来源：原 T10（拆分）\n\n### 目标\n把卫华底座原样带进来、固定版本、停掉经开区用不到的模块，测试全绿。\n\n### 范围（要做什么）\n- 拷入 core/server、core/sdk、scripts/check.py、scripts/new_app.py、apps/_template、requirements*.txt 与相关 tests；core/VERSION 记录来源 commit（当前 4d744e0）\n- 停用（不注册路由）：feishu、cad、latex、datasets、embed_proxy、builder；30 个制造业应用与 config 里的卫华演示数据不拷入\n- 保留并跑通：auth、identity、rbac、manifest、data、aihub、knowledge、jobs、schedules、api_v1\n- CI 增加 pytest 与 check.py\n\n### 验收标准\n- [ ] 保留模块的卫华原测试在新仓库通过\n- [ ] 仓库里搜不到卫华客户名、真实业务数据或卫华演示账号\n- [ ] core/VERSION 指向的 commit 可在卫华仓库找到\n\n### 涉及接口（接口规范 v1.3）\n无（底座）\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/*（auth、identity、rbac、manifest、data、store、migrations、aihub、knowledge、jobs、schedules、api_v1）` | 直接用 | 原样拷入，只改 main.py 的模块注册列表 |\n| `core/sdk/haiknow_sdk、core/sdk/js` | 直接用 | 原样拷入 |\n| `scripts/check.py、scripts/new_app.py、apps/_template` | 直接用 | 原样拷入，经开区规则在后续任务追加 |\n| `tests/test_*.py（保留模块对应部分）` | 直接用 | 随模块拷入，作为回归 |\n\n### 依赖与并行\n- 依赖（须先合并）：T01\n- 被依赖：T10\n- 同批可并行：T02、T03、T46\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-import-haiknow-core`\n- HA：`ha task create --work <M1 的 work-id> --title \"T09 引入卫华 core 并裁剪\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T10",
+  "title": "T10 经开区实例：配置、/api/v1 路径兼容层、托管 web/",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T09",
+   "T03"
+  ],
+  "wave": 3,
+  "source": "原 T10（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/main.py（create_app、HAIKNOW_* 环境变量、StaticFiles 挂载）",
+    "mode": "直接用",
+    "change": "用环境变量指向经开区目录，不改卫华代码"
+   },
+   {
+    "path": "core/server/haiknow_core/projects.py、config/projects.yaml",
+    "mode": "改造",
+    "change": "项目目录换成单项目 jkq，所有记录归到这个项目"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 3 批｜来源：原 T10（拆分）\n\n### 目标\n一条命令起经开区实例，前端从同源访问，路径与接口规范一致。\n\n### 范围（要做什么）\n- jkq/：实例配置（HAIKNOW_ROOT / APPS_DIR / DATA_DIR / CONFIG_DIR 指向本仓库），config/ 换成经开区单项目 jkq\n- jkq/compat.py：把规范路径映射到卫华路径（/api/v1/auth/* → /api/auth/*，/api/v1/admin/* → /api/admin/*，/api/v1/kb/* → /api/v1/knowledge/*），统一错误码为规范写法（BAD_CREDENTIALS 等）\n- FastAPI 静态托管 web/，/api/health 健康检查\n- Makefile：make dev / make test / make seed\n\n### 验收标准\n- [ ] make dev 后浏览器打开即见原型（mock 模式）\n- [ ] 兼容层有单测覆盖每条映射与错误码转换\n- [ ] /api/health 返回 200\n\n### 涉及接口（接口规范 v1.3）\n§1 通用约定\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/main.py（create_app、HAIKNOW_* 环境变量、StaticFiles 挂载）` | 直接用 | 用环境变量指向经开区目录，不改卫华代码 |\n| `core/server/haiknow_core/projects.py、config/projects.yaml` | 改造 | 项目目录换成单项目 jkq，所有记录归到这个项目 |\n\n### 依赖与并行\n- 依赖（须先合并）：T09、T03\n- 被依赖：T11、T14、T19\n- 同批可并行：T04、T05、T08\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-jkq-instance`\n- HA：`ha task create --work <M1 的 work-id> --title \"T10 经开区实例：配置、/api/v1 路径兼容层、托管 web/\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T11",
+  "title": "T11 真登录与 4 个角色、演示账号、授权矩阵",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T10"
+  ],
+  "wave": 4,
+  "source": "原 T11",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/auth.py",
+    "mode": "直接用",
+    "change": "通过 T10 兼容层挂到 /api/v1/auth；错误码映射；锁定时长按定稿调整常量"
+   },
+   {
+    "path": "core/server/haiknow_core/identity.py、identity_models.py、passwords.py",
+    "mode": "直接用",
+    "change": "只换种子 yaml"
+   },
+   {
+    "path": "core/server/haiknow_core/rbac.py、config/roles.yaml",
+    "mode": "直接用",
+    "change": "动作仍为 view/operate/approve/admin，角色换成经开区四个"
+   },
+   {
+    "path": "—（session、me/prefs、me/role）",
+    "mode": "不复用",
+    "change": "卫华没有，新写 3 个薄接口"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 4 批｜来源：原 T11\n\n### 目标\n管理员 / 审签领导 / 经办人员 / 外部协作者四个角色真登录、按授权矩阵控制。\n\n### 范围（要做什么）\n- §3.1：login、logout、session、me、me/password、me/prefs；me/role 仅演示环境开启\n- config/roles.yaml 与 users.yaml 换成经开区：admin、leader、member、partner 与演示账号（王敏、李阳、何军等），口令从环境变量或首次启动生成\n- 授权矩阵：角色 × 应用 × view/operate/approve/admin\n- 停用账号 403；连续 5 次失败锁定（时长按规范定稿，见待决问题）；登录、登出、越权写审计\n\n### 验收标准\n- [ ] 4 个演示账号可登录，看到的应用与授权矩阵一致\n- [ ] 越权调用返回 403 并有审计记录\n- [ ] 密码从不出现在任何响应里\n\n### 涉及接口（接口规范 v1.3）\n§3.1、§2.1 User/Role/Grant/Session\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/auth.py` | 直接用 | 通过 T10 兼容层挂到 /api/v1/auth；错误码映射；锁定时长按定稿调整常量 |\n| `core/server/haiknow_core/identity.py、identity_models.py、passwords.py` | 直接用 | 只换种子 yaml |\n| `core/server/haiknow_core/rbac.py、config/roles.yaml` | 直接用 | 动作仍为 view/operate/approve/admin，角色换成经开区四个 |\n| `—（session、me/prefs、me/role）` | 不复用 | 卫华没有，新写 3 个薄接口 |\n\n### 依赖与并行\n- 依赖（须先合并）：T10\n- 被依赖：T12、T16、T17、T20、T23\n- 同批可并行：T06、T07、T14、T19\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-auth-roles`\n- HA：`ha task create --work <M1 的 work-id> --title \"T11 真登录与 4 个角色、演示账号、授权矩阵\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T12",
+  "title": "T12 管理后台接口与审计查询",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T11"
+  ],
+  "wave": 5,
+  "source": "原 T12（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/admin_identity.py（users/org/roles/grants/settings，已有 last_admin 保护）",
+    "mode": "直接用",
+    "change": "经 T10 兼容层挂到 /api/v1/admin；错误码改写"
+   },
+   {
+    "path": "core/server/haiknow_core/admin_apps.py",
+    "mode": "直接用",
+    "change": "PATCH /admin/apps/{id} 对应启停与回滚"
+   },
+   {
+    "path": "core/server/haiknow_core/store.py（audit）、main.py（/api/audit）",
+    "mode": "改造",
+    "change": "审计查询加筛选参数和分页，补 via 字段（ui/chat/operator/api/computer）"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P1｜批次：第 5 批｜来源：原 T12（拆分）\n\n### 目标\n管理员能管用户、部门、角色授权、应用上下架和平台设置，能查审计。\n\n### 范围（要做什么）\n- §3.9：users、departments、roles、grants、admin/apps、settings\n- /api/v1/audit：按用户、应用、动作、时间筛选\n- 错误码：LAST_ADMIN、NOT_EMPTY、DUPLICATE 等与规范对齐\n\n### 验收标准\n- [ ] 删最后一个管理员返回 409 LAST_ADMIN\n- [ ] 删有成员的部门被拒\n- [ ] 每个写操作在审计里可查到前后值\n\n### 涉及接口（接口规范 v1.3）\n§3.9、§3.5 audit\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/admin_identity.py（users/org/roles/grants/settings，已有 last_admin 保护）` | 直接用 | 经 T10 兼容层挂到 /api/v1/admin；错误码改写 |\n| `core/server/haiknow_core/admin_apps.py` | 直接用 | PATCH /admin/apps/{id} 对应启停与回滚 |\n| `core/server/haiknow_core/store.py（audit）、main.py（/api/audit）` | 改造 | 审计查询加筛选参数和分页，补 via 字段（ui/chat/operator/api/computer） |\n\n### 依赖与并行\n- 依赖（须先合并）：T11\n- 被依赖：T13、T27\n- 同批可并行：T15、T16、T17、T20、T23、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-admin-audit`\n- HA：`ha task create --work <M1 的 work-id> --title \"T12 管理后台接口与审计查询\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T13",
+  "title": "T13 外部协作者字段级脱敏",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P1",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T12"
+  ],
+  "wave": 6,
+  "source": "原 T12（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/knowledge/service.py（visibility public/internal/restricted）",
+    "mode": "参考",
+    "change": "沿用其“按角色判可见”的位置，在序列化层新增字段级过滤"
+   },
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "卫华没有字段级脱敏，新写过滤器"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P1｜批次：第 6 批｜来源：原 T12（拆分）\n\n### 目标\npartner 角色读企业等数据时，电话、营收、税额等字段统一打码。\n\n### 范围（要做什么）\n- MaskRule 配置：实体 → 字段路径清单 → 打码样式（如 139****3456）\n- 响应序列化统一过滤，应用代码不用各自处理\n- 知识库 enterprise 空间对 partner 始终不可见\n\n### 验收标准\n- [ ] partner 调企业详情，配置的字段全部打码\n- [ ] admin/leader/member 看到原值\n- [ ] 脱敏规则改配置即生效，有单测\n\n### 涉及接口（接口规范 v1.3）\n§2.1 MaskRule、§3.6 spaces\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/knowledge/service.py（visibility public/internal/restricted）` | 参考 | 沿用其“按角色判可见”的位置，在序列化层新增字段级过滤 |\n| — | 不复用 | 卫华没有字段级脱敏，新写过滤器 |\n\n### 依赖与并行\n- 依赖（须先合并）：T12\n- 被依赖：T31\n- 同批可并行：T18、T21、T22、T24、T25、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-partner-masking`\n- HA：`ha task create --work <M1 的 work-id> --title \"T13 外部协作者字段级脱敏\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T14",
+  "title": "T14 模型网关：接国产模型、/models 接口、出域拦截",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T10"
+  ],
+  "wave": 4,
+  "source": "原 T13（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub/gateway.py（能力路由、回退、出域拦截、配额）",
+    "mode": "直接用",
+    "change": "不改逻辑"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/adapters.py、settings.py（Fernet 加密存 key）",
+    "mode": "直接用",
+    "change": "新增启动时从环境变量写入 provider 的小脚本"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/api.py（/api/v1/admin/ai/providers、routes、usage）",
+    "mode": "改造",
+    "change": "包一层 /api/v1/models 的用户视图与个人默认模型"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 4 批｜来源：原 T13（拆分）\n\n### 目标\n对话、问答、起草都走同一个网关，能切模型、能限制敏感内容不出域。\n\n### 范围（要做什么）\n- 启动时从环境变量注入 provider（key 不落仓库）；kind=openai 接 OpenAI 兼容接口（千问、GLM 等），kind=deepseek 接 DeepSeek；海外模型默认停用\n- §3.2：GET /models、PUT /models/current（个人默认）、PATCH /models/{id}（管理员启停）\n- 能力路由与失败回退；confidential 内容只走允许的 provider\n- CI 用 kind=mock，不调真模型；每次调用记用量\n\n### 验收标准\n- [ ] 配置真实 key 时一次真调用成功；无 key 时 mock 返回\n- [ ] 停用的模型选不了，返回 403 MODEL_DISABLED\n- [ ] 标 confidential 的请求不会发往未授权 provider（有单测）\n\n### 涉及接口（接口规范 v1.3）\n§3.2\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub/gateway.py（能力路由、回退、出域拦截、配额）` | 直接用 | 不改逻辑 |\n| `core/server/haiknow_core/aihub/adapters.py、settings.py（Fernet 加密存 key）` | 直接用 | 新增启动时从环境变量写入 provider 的小脚本 |\n| `core/server/haiknow_core/aihub/api.py（/api/v1/admin/ai/providers、routes、usage）` | 改造 | 包一层 /api/v1/models 的用户视图与个人默认模型 |\n\n### 依赖与并行\n- 依赖（须先合并）：T10\n- 被依赖：T15、T18、T24、T34\n- 同批可并行：T06、T07、T11、T19\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-model-gateway`\n- HA：`ha task create --work <M1 的 work-id> --title \"T14 模型网关：接国产模型、/models 接口、出域拦截\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T15",
+  "title": "T15 网关对话能力扩展：工具调用与流式透出",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T14"
+  ],
+  "wave": 5,
+  "source": "原 T13 + T16（各拆一部分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub/gateway.py（_invoke 的 chat 分支目前只取 choices[0].message.content）",
+    "mode": "改造",
+    "change": "新增返回完整 message 的路径；请求体已原样透传 tools，无需改请求侧"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/streaming.py（SSE Channel）",
+    "mode": "直接用",
+    "change": "增加 tool_call 增量的拼装"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 5 批｜来源：原 T13 + T16（各拆一部分）\n\n### 目标\n对话编排要用大模型工具调用，卫华网关目前只返回文字，要补齐。\n\n### 范围（要做什么）\n- gateway 的 chat 能力：保留旧返回（字符串）兼容卫华调用；新增返回完整 message（content + tool_calls）的入口\n- SSE 流式：文本增量与 tool_call 事件透出\n- /api/v1/ai/chat 网关直连接口（§3.2）\n- mock provider 支持按脚本返回 tool_calls，供 CI 使用\n\n### 验收标准\n- [ ] 请求带 tools 时能拿到 tool_calls\n- [ ] 卫华原有 chat 测试仍通过\n- [ ] 流式在 mock 下可复现\n\n### 涉及接口（接口规范 v1.3）\n§3.2 /ai/chat\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub/gateway.py（_invoke 的 chat 分支目前只取 choices[0].message.content）` | 改造 | 新增返回完整 message 的路径；请求体已原样透传 tools，无需改请求侧 |\n| `core/server/haiknow_core/aihub/streaming.py（SSE Channel）` | 直接用 | 增加 tool_call 增量的拼装 |\n\n### 依赖与并行\n- 依赖（须先合并）：T14\n- 被依赖：T21、T26、T32、T37\n- 同批可并行：T12、T16、T17、T20、T23、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-gateway-tools-stream`\n- HA：`ha task create --work <M1 的 work-id> --title \"T15 网关对话能力扩展：工具调用与流式透出\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T16",
+  "title": "T16 应用注册与工具桥：app.json 扩展字段、/apps、/tools",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T11"
+  ],
+  "wave": 5,
+  "source": "原 T14",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/manifest.py",
+    "mode": "改造",
+    "change": "validate 增加扩展字段校验，contract 版本号不变"
+   },
+   {
+    "path": "core/server/haiknow_core/main.py（自动发现 apps/<id>，挂到 /api/apps/{id}）",
+    "mode": "直接用",
+    "change": "业务应用路径 /api/apps/policy/... 与规范一致"
+   },
+   {
+    "path": "core/server/haiknow_core/main.py（GET /api/apps）",
+    "mode": "改造",
+    "change": "包成 /api/v1/apps，补 tools/starters 字段"
+   },
+   {
+    "path": "apps/_template、scripts/new_app.py",
+    "mode": "改造",
+    "change": "模板加扩展字段"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 5 批｜来源：原 T14\n\n### 目标\n对话能调小应用的工具，且与应用界面共用同一套权限和留痕。\n\n### 范围（要做什么）\n- manifest 校验支持 tools[]、starters、chatCards、deepLink、dataClass、accepts、intents、routes\n- §3.4：GET /apps（按权限过滤）、/apps/{id}、/tools、POST /apps/{id}/tools/{tool}\n- write=true 的工具在对话里只生成“待确认”（落到 reviews）\n- apps/_template 加扩展字段示例\n\n### 验收标准\n- [ ] 无权应用不出现在 /apps 与 /tools\n- [ ] 写工具从对话调用时生成待确认而不是直接写\n- [ ] manifest 缺字段时 check.py 给出明确报错\n\n### 涉及接口（接口规范 v1.3）\n§3.4、§5\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/manifest.py` | 改造 | validate 增加扩展字段校验，contract 版本号不变 |\n| `core/server/haiknow_core/main.py（自动发现 apps/<id>，挂到 /api/apps/{id}）` | 直接用 | 业务应用路径 /api/apps/policy/... 与规范一致 |\n| `core/server/haiknow_core/main.py（GET /api/apps）` | 改造 | 包成 /api/v1/apps，补 tools/starters 字段 |\n| `apps/_template、scripts/new_app.py` | 改造 | 模板加扩展字段 |\n\n### 依赖与并行\n- 依赖（须先合并）：T11\n- 被依赖：T21、T22、T28、T45\n- 同批可并行：T12、T15、T17、T20、T23、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-app-registry-tools`\n- HA：`ha task create --work <M1 的 work-id> --title \"T16 应用注册与工具桥：app.json 扩展字段、/apps、/tools\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T17",
+  "title": "T17 长任务与审签接口",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T11"
+  ],
+  "wave": 5,
+  "source": "原 T18（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/jobs/（ADR 0007 持久长任务 + 步骤检查点）",
+    "mode": "直接用",
+    "change": "路径就是 /api/v1/jobs；只加字段投影"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（submit_review / decide_review，已有 self_review、stale_version）",
+    "mode": "直接用",
+    "change": "错误码大小写与 decision 取值映射"
+   },
+   {
+    "path": "core/server/haiknow_core/api_v1.py（/reviews 路由）",
+    "mode": "直接用",
+    "change": "不改"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 5 批｜来源：原 T18（拆分）\n\n### 目标\n转写、解析、技能运行走长任务；公文、台账写入、技能上架走审签。\n\n### 范围（要做什么）\n- /api/v1/jobs/{id} 直接暴露卫华长任务；Job 字段映射为规范的 progress/step/steps\n- /api/v1/reviews、/reviews/{id}/decisions：approve/reject 映射，SELF_REVIEW、STALE_VERSION 错误码对齐\n- 审签需该应用 approve 权限\n\n### 验收标准\n- [ ] 提交人审自己的返回 409 SELF_REVIEW\n- [ ] 确认旧版本返回 409 STALE_VERSION\n- [ ] 进程重启后进行中的任务继续执行\n\n### 涉及接口（接口规范 v1.3）\n§3.5\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/jobs/（ADR 0007 持久长任务 + 步骤检查点）` | 直接用 | 路径就是 /api/v1/jobs；只加字段投影 |\n| `core/server/haiknow_core/data.py（submit_review / decide_review，已有 self_review、stale_version）` | 直接用 | 错误码大小写与 decision 取值映射 |\n| `core/server/haiknow_core/api_v1.py（/reviews 路由）` | 直接用 | 不改 |\n\n### 依赖与并行\n- 依赖（须先合并）：T11\n- 被依赖：T18、T32、T35、T40、T42、T47\n- 同批可并行：T12、T15、T16、T20、T23、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-jobs-reviews`\n- HA：`ha task create --work <M1 的 work-id> --title \"T17 长任务与审签接口\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T18",
+  "title": "T18 待办、收件箱、团队动态、用量统计",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:adapt"
+  ],
+  "depends_on": [
+   "T17",
+   "T14"
+  ],
+  "wave": 6,
+  "source": "原 T18（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/api_v1.py + data.py（notifications、messages，ADR 0010）",
+    "mode": "改造",
+    "change": "收件箱 = reviews + 待办 + 消息的聚合视图"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/api.py（/admin/ai/usage）、main.py（/api/model/usage）",
+    "mode": "改造",
+    "change": "加按人维度并投影成规范格式"
+   },
+   {
+    "path": "—（todos、feed）",
+    "mode": "不复用",
+    "change": "新增两张表，迁移追加在 migrations.py 之后"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P0｜批次：第 6 批｜来源：原 T18（拆分）\n\n### 目标\n侧栏收件箱三个箱和角标、我的待办、动态、管理员用量页都有真数据。\n\n### 范围（要做什么）\n- /todos 列表与完成；/inbox?box=review|todo|done 与 counts；/feed\n- /admin/usage：按应用 / 模型 / 人统计\n- 角标数与列表条数一致\n\n### 验收标准\n- [ ] 三个箱的条数与角标一致\n- [ ] 完成待办后角标即时减少\n- [ ] 用量按三个维度可查\n\n### 涉及接口（接口规范 v1.3）\n§3.5 todos/inbox/feed/usage\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/api_v1.py + data.py（notifications、messages，ADR 0010）` | 改造 | 收件箱 = reviews + 待办 + 消息的聚合视图 |\n| `core/server/haiknow_core/aihub/api.py（/admin/ai/usage）、main.py（/api/model/usage）` | 改造 | 加按人维度并投影成规范格式 |\n| `—（todos、feed）` | 不复用 | 新增两张表，迁移追加在 migrations.py 之后 |\n\n### 依赖与并行\n- 依赖（须先合并）：T17、T14\n- 被依赖：T27、T33\n- 同批可并行：T13、T21、T22、T24、T25、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-inbox-todos-usage`\n- HA：`ha task create --work <M1 的 work-id> --title \"T18 待办、收件箱、团队动态、用量统计\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T19",
+  "title": "T19 部署演示环境（云服务器 + 反代 + 每晚重置）",
+  "milestone": "M1 平台底座（卫华 core 落地）",
+  "labels": [
+   "area:deploy",
+   "type:chore",
+   "priority:P1",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T10"
+  ],
+  "wave": 4,
+  "source": "原 T22",
+  "reuse": [
+   {
+    "path": "scripts/start.sh、docs/deploy/离线启动.md、scripts/pack-offline.sh",
+    "mode": "参考",
+    "change": "启动参数与数据目录约定沿用"
+   },
+   {
+    "path": "docs/decisions/0007-持久长任务与步骤检查点.md",
+    "mode": "参考",
+    "change": "明确只能单 worker 运行"
+   }
+  ],
+  "body": "> 里程碑：M1 平台底座（卫华 core 落地）｜优先级：P1｜批次：第 4 批｜来源：原 T22\n\n### 目标\n尽早上线，问题早暴露。\n\n### 范围（要做什么）\n- deploy/：Dockerfile、docker-compose（应用 + Playwright 运行环境）、Caddy 或 Nginx 反代与 HTTPS\n- .env.example（不含真实值）；合并 main 后一键更新\n- 单进程运行（卫华长任务要求）；每晚恢复演示数据快照\n\n### 验收标准\n- [ ] 公网地址可登录\n- [ ] 重启容器后数据与进行中的任务不丢\n- [ ] 仓库里没有任何真实 key 或服务器口令\n\n### 涉及接口（接口规范 v1.3）\n无\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `scripts/start.sh、docs/deploy/离线启动.md、scripts/pack-offline.sh` | 参考 | 启动参数与数据目录约定沿用 |\n| `docs/decisions/0007-持久长任务与步骤检查点.md` | 参考 | 明确只能单 worker 运行 |\n\n### 依赖与并行\n- 依赖（须先合并）：T10\n- 被依赖：T49\n- 同批可并行：T06、T07、T11、T14\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-deploy-demo`\n- HA：`ha task create --work <M1 的 work-id> --title \"T19 部署演示环境（云服务器 + 反代 + 每晚重置）\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T20",
+  "title": "T20 对话存储：会话、消息、卡片、面板状态落库",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T11"
+  ],
+  "wave": 5,
+  "source": "原 T15",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/migrations.py、store.py（锁与审计）",
+    "mode": "直接用",
+    "change": "追加迁移建 conversations / messages 表"
+   },
+   {
+    "path": "core/server/haiknow_core/builder/__init__.py（sessions / messages 接口形状）",
+    "mode": "参考",
+    "change": "会话与消息的接口划分照此设计"
+   },
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "卫华没有聊天主界面，会话模型新写"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 5 批｜来源：原 T15\n\n### 目标\n对话历史与右侧面板状态可恢复。\n\n### 范围（要做什么）\n- §3.3 会话增删查与消息读取；Message 存 role、content、cards[]、citations、model、toolCalls\n- Conversation 增加 panel 字段（与 T04 前端一致）\n- 按用户隔离；删除可撤销\n\n### 验收标准\n- [ ] 换浏览器登录同账号，历史与面板状态一致\n- [ ] 看不到别人的会话\n- [ ] 删除后可撤销\n\n### 涉及接口（接口规范 v1.3）\n§3.3\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/migrations.py、store.py（锁与审计）` | 直接用 | 追加迁移建 conversations / messages 表 |\n| `core/server/haiknow_core/builder/__init__.py（sessions / messages 接口形状）` | 参考 | 会话与消息的接口划分照此设计 |\n| — | 不复用 | 卫华没有聊天主界面，会话模型新写 |\n\n### 依赖与并行\n- 依赖（须先合并）：T11\n- 被依赖：T21、T22\n- 同批可并行：T12、T15、T16、T17、T23、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-conversation-store`\n- HA：`ha task create --work <M2 的 work-id> --title \"T20 对话存储：会话、消息、卡片、面板状态落库\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T21",
+  "title": "T21 对话编排：规则意图兜底 + 大模型工具调用 + 卡片",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:platform",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T15",
+   "T16",
+   "T20"
+  ],
+  "wave": 6,
+  "source": "原 T16",
+  "reuse": [
+   {
+    "path": "T15 扩展后的 aihub chat（tools + 流式）",
+    "mode": "直接用",
+    "change": "编排层只调网关"
+   },
+   {
+    "path": "T16 的 /tools 注册表",
+    "mode": "直接用",
+    "change": "按权限取可用工具"
+   },
+   {
+    "path": "core/server/haiknow_core/builder/agent.py（模型 + 平台工具的多轮循环）",
+    "mode": "参考",
+    "change": "循环与终止条件的写法"
+   },
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "意图规则表与卡片渲染新写"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 6 批｜来源：原 T16\n\n### 目标\n一句话进来，先规则、再模型，调对工具、回卡片、能深链。\n\n### 范围（要做什么）\n- POST /conversations/{id}/messages：意图规则表（覆盖 12 段演示话术）命中直接调工具，未命中交给模型 tool calling\n- 工具结果渲染成 §4.5 卡片，附 deepLink 参数；SSE 流式（文本 + 卡片事件）\n- 知识类问题统一走 kb.ask；工具失败给可读说明，不编造\n\n### 验收标准\n- [ ] 12 段演示话术的意图命中率 100%（规则表）\n- [ ] 模型 mock 下工具调用链可复现\n- [ ] 工具报错时回复里说明失败原因\n\n### 涉及接口（接口规范 v1.3）\n§3.3 messages、§4.5 卡片\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `T15 扩展后的 aihub chat（tools + 流式）` | 直接用 | 编排层只调网关 |\n| `T16 的 /tools 注册表` | 直接用 | 按权限取可用工具 |\n| `core/server/haiknow_core/builder/agent.py（模型 + 平台工具的多轮循环）` | 参考 | 循环与终止条件的写法 |\n| — | 不复用 | 意图规则表与卡片渲染新写 |\n\n### 依赖与并行\n- 依赖（须先合并）：T15、T16、T20\n- 被依赖：T27、T30、T44、T45\n- 同批可并行：T13、T18、T22、T24、T25、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-chat-orchestrator`\n- HA：`ha task create --work <M2 的 work-id> --title \"T21 对话编排：规则意图兜底 + 大模型工具调用 + 卡片\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T22",
+  "title": "T22 对话附件上传与自动分流",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T16",
+   "T20"
+  ],
+  "wave": 6,
+  "source": "原 T17",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/api_v1.py + data.py（POST /files、save_file）",
+    "mode": "直接用",
+    "change": "文件存储与权限沿用"
+   },
+   {
+    "path": "T16 manifest accepts",
+    "mode": "直接用",
+    "change": "分流规则来自各应用清单"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P1｜批次：第 6 批｜来源：原 T17\n\n### 目标\n拖一个文件进对话，系统建议交给哪个应用、要不要顺手入知识库。\n\n### 范围（要做什么）\n- §3.3 attachments：multipart 上传，支持 url / text\n- 按各应用 accepts（扩展名 + 文件名关键词）给 routes 建议；音频建议会议、政策文件建议入库\n- 文件记录归属对话\n\n### 验收标准\n- [ ] 上传录音得到“会议记录”建议，上传政策 PDF 得到“入政策库”建议\n- [ ] 附件只有本人可见\n\n### 涉及接口（接口规范 v1.3）\n§3.3 attachments\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/api_v1.py + data.py（POST /files、save_file）` | 直接用 | 文件存储与权限沿用 |\n| `T16 manifest accepts` | 直接用 | 分流规则来自各应用清单 |\n\n### 依赖与并行\n- 依赖（须先合并）：T16、T20\n- 被依赖：T27\n- 同批可并行：T13、T18、T21、T24、T25、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-chat-attachments`\n- HA：`ha task create --work <M2 的 work-id> --title \"T22 对话附件上传与自动分流\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T23",
+  "title": "T23 知识库：5 个空间、文档管理、种子导入",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:kb",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T11",
+   "T07"
+  ],
+  "wave": 5,
+  "source": "原 T19（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/knowledge/service.py",
+    "mode": "改造",
+    "change": "CATEGORIES 8 个工厂分类 → 5 个空间；空间授权映射到 visibility + roles；新增删除/撤销"
+   },
+   {
+    "path": "knowledge/service.py（versions、superseded 状态、references 引用反查）",
+    "mode": "直接用",
+    "change": "“来源已修订”直接基于 superseded + references"
+   },
+   {
+    "path": "core/server/haiknow_core/knowledge/seed.py",
+    "mode": "改造",
+    "change": "改为读 data/seed"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 5 批｜来源：原 T19（拆分）\n\n### 目标\n把卫华知识库改成经开区的 5 个空间，并灌入真实种子。\n\n### 范围（要做什么）\n- 空间：policy（全员）、template、minutes、rules（内部角色）、enterprise（sensitive，partner 始终不可见）\n- /kb/spaces、/kb/docs 列表/详情/修改、删除与撤销；两个兼容别名 /kb/libraries、/kb/files/{id}\n- 新版替代旧版时，引用旧版处标“来源已修订”\n- 启动种子：data/seed 的政策与知识库文档 + T07 真实补充数据\n\n### 验收标准\n- [ ] 5 个空间按角色可见\n- [ ] 替代旧版后，引用旧版的对话卡片显示“来源已修订”\n- [ ] 种子导入幂等，重复启动不重复\n\n### 涉及接口（接口规范 v1.3）\n§3.6 spaces/docs、§2.6\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/knowledge/service.py` | 改造 | CATEGORIES 8 个工厂分类 → 5 个空间；空间授权映射到 visibility + roles；新增删除/撤销 |\n| `knowledge/service.py（versions、superseded 状态、references 引用反查）` | 直接用 | “来源已修订”直接基于 superseded + references |\n| `core/server/haiknow_core/knowledge/seed.py` | 改造 | 改为读 data/seed |\n\n### 依赖与并行\n- 依赖（须先合并）：T11、T07\n- 被依赖：T24、T25\n- 同批可并行：T12、T15、T16、T17、T20、T34\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-kb-spaces-docs`\n- HA：`ha task create --work <M2 的 work-id> --title \"T23 知识库：5 个空间、文档管理、种子导入\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T24",
+  "title": "T24 知识库导入流水线：解析、切片、查重、网址导入",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:kb",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T23",
+   "T14"
+  ],
+  "wave": 6,
+  "source": "原 T19（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub/adapters.py（mineru_parse、parse_blocks）",
+    "mode": "直接用",
+    "change": "有 MinerU key 时走它；无 key 时本地解析兜底（新写）"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/reader.py（check_url 内网拦截、fetch_page、extract）",
+    "mode": "直接用",
+    "change": "网址导入直接调用"
+   },
+   {
+    "path": "apps/r16-quality-archive/api/domain.py（split_document）",
+    "mode": "改造",
+    "change": "按条款切片的思路改成政策文件的“第 X 条”切法"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 6 批｜来源：原 T19（拆分）\n\n### 目标\n文件、粘贴文本、网址三种来源都能入库，入库前可预览。\n\n### 范围（要做什么）\n- /kb/import/preview → 解析 + 切片 + 打标签 + 查重（不入库）；/import/commit 确认入库（new/version/skip）；/import 一步导入\n- /import/url：只读抓取公开页\n- 解析 PDF/DOCX/TXT/HTML；中文按条款/段落切片，保存文号、发文单位、日期、状态、来源 URL\n- 内容完全相同跳过；同文号或标题高度相似提示“作为新版本”\n\n### 验收标准\n- [ ] 同一 PDF 导两次第二次被跳过\n- [ ] 网址导入拒绝内网地址\n- [ ] 切片保留条款编号\n\n### 涉及接口（接口规范 v1.3）\n§3.6 import/*\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub/adapters.py（mineru_parse、parse_blocks）` | 直接用 | 有 MinerU key 时走它；无 key 时本地解析兜底（新写） |\n| `core/server/haiknow_core/aihub/reader.py（check_url 内网拦截、fetch_page、extract）` | 直接用 | 网址导入直接调用 |\n| `apps/r16-quality-archive/api/domain.py（split_document）` | 改造 | 按条款切片的思路改成政策文件的“第 X 条”切法 |\n\n### 依赖与并行\n- 依赖（须先合并）：T23、T14\n- 被依赖：T48\n- 同批可并行：T13、T18、T21、T22、T25、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-kb-import`\n- HA：`ha task create --work <M2 的 work-id> --title \"T24 知识库导入流水线：解析、切片、查重、网址导入\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T25",
+  "title": "T25 知识库检索：BM25、筛选与统计",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:kb",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T23"
+  ],
+  "wave": 6,
+  "source": "原 T20（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/knowledge/service.py（search 的 allowed() 权限过滤）",
+    "mode": "直接用",
+    "change": "权限过滤沿用"
+   },
+   {
+    "path": "knowledge/service.py（search 现为子串匹配）",
+    "mode": "不复用",
+    "change": "检索算法新写 BM25"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub（embedding 能力）",
+    "mode": "直接用",
+    "change": "向量开关打开时使用"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 6 批｜来源：原 T20（拆分）\n\n### 目标\n按相关度找到原文片段，能按空间、状态、时间筛。\n\n### 范围（要做什么）\n- /kb/search：中文分词 + BM25，按相关度/日期排序，facets；已失效文档降权并标注\n- 可选向量检索开关（默认关，用 aihub embedding）\n- /kb/stats、/kb/suggest\n\n### 验收标准\n- [ ] “算力券 封顶”能命中原文条款且排第一\n- [ ] partner 搜不到 enterprise 空间\n- [ ] facets 数与列表一致\n\n### 涉及接口（接口规范 v1.3）\n§3.6 search/stats/suggest\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/knowledge/service.py（search 的 allowed() 权限过滤）` | 直接用 | 权限过滤沿用 |\n| `knowledge/service.py（search 现为子串匹配）` | 不复用 | 检索算法新写 BM25 |\n| `core/server/haiknow_core/aihub（embedding 能力）` | 直接用 | 向量开关打开时使用 |\n\n### 依赖与并行\n- 依赖（须先合并）：T23\n- 被依赖：T26\n- 同批可并行：T13、T18、T21、T22、T24、T28、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-kb-search`\n- HA：`ha task create --work <M2 的 work-id> --title \"T25 知识库检索：BM25、筛选与统计\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T26",
+  "title": "T26 知识库问答：只基于片段作答、逐句带出处",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:kb",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:adapt"
+  ],
+  "depends_on": [
+   "T25",
+   "T15"
+  ],
+  "wave": 7,
+  "source": "原 T20（拆分）",
+  "reuse": [
+   {
+    "path": "apps/m04/api/router.py（check_evidence：引文须出现在来源原文）",
+    "mode": "改造",
+    "change": "抽成 kb 的引文校验函数"
+   },
+   {
+    "path": "apps/r16-quality-archive/api/domain.py（逐句出处、NOT_FOUND 处理）",
+    "mode": "参考",
+    "change": "“档案里没有找到”的诚实兜底写法"
+   },
+   {
+    "path": "apps/h03/api/rules.py（policy_preview：按有效条款核对）",
+    "mode": "参考",
+    "change": "失效条款的提示方式"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 7 批｜来源：原 T20（拆分）\n\n### 目标\n回答只摘原文，每句有出处；找不到就说找不到。\n\n### 范围（要做什么）\n- /kb/ask：检索 → 模型只基于片段作答 → citations；无命中返回 confidence:none，不调模型\n- 引文校验：引用原句必须在片段里出现，否则丢弃该句\n- 失效或已替代来源在引用上标注\n\n### 验收标准\n- [ ] 无命中问题返回 confidence:none 且网关无调用记录\n- [ ] 每个 [n] 都能定位到片段原文\n- [ ] 引用了失效文件时显示提示\n\n### 涉及接口（接口规范 v1.3）\n§3.6 ask、§2.6 Answer\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `apps/m04/api/router.py（check_evidence：引文须出现在来源原文）` | 改造 | 抽成 kb 的引文校验函数 |\n| `apps/r16-quality-archive/api/domain.py（逐句出处、NOT_FOUND 处理）` | 参考 | “档案里没有找到”的诚实兜底写法 |\n| `apps/h03/api/rules.py（policy_preview：按有效条款核对）` | 参考 | 失效条款的提示方式 |\n\n### 依赖与并行\n- 依赖（须先合并）：T25、T15\n- 被依赖：T27、T44\n- 同批可并行：T29、T31、T35、T37、T43、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-kb-ask`\n- HA：`ha task create --work <M2 的 work-id> --title \"T26 知识库问答：只基于片段作答、逐句带出处\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T27",
+  "title": "T27 前端平台层与知识库切到真后端",
+  "milestone": "M2 对话与知识库",
+  "labels": [
+   "area:web",
+   "type:feat",
+   "priority:P0",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T08",
+   "T12",
+   "T18",
+   "T21",
+   "T22",
+   "T26"
+  ],
+  "wave": 8,
+  "source": "原 T21",
+  "reuse": [
+   {
+    "path": "core/sdk/js/haiknow.js（请求封装、错误处理）",
+    "mode": "参考",
+    "change": "错误码到提示文案的处理方式"
+   },
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "前端仍是 v4"
+   }
+  ],
+  "body": "> 里程碑：M2 对话与知识库｜优先级：P0｜批次：第 8 批｜来源：原 T21\n\n### 目标\n平台层和知识库的界面走真后端。\n\n### 范围（要做什么）\n- api.modules 中 platform、kb 改为 http\n- 真登录页替换演示账号直登（演示环境保留“一键选账号”）\n- 401 跳登录、403 友好提示、网络错误重试；SSE 流式渲染对话\n\n### 验收标准\n- [ ] 契约测试 platform、kb 两模块对真后端通过\n- [ ] 冒烟在 http 模式通过\n- [ ] 断网时有可读提示\n\n### 涉及接口（接口规范 v1.3）\n§3.1–§3.6\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/js/haiknow.js（请求封装、错误处理）` | 参考 | 错误码到提示文案的处理方式 |\n| — | 不复用 | 前端仍是 v4 |\n\n### 依赖与并行\n- 依赖（须先合并）：T08、T12、T18、T21、T22、T26\n- 被依赖：T41\n- 同批可并行：T30、T32、T33、T38、T39、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-web-platform-http`\n- HA：`ha task create --work <M2 的 work-id> --title \"T27 前端平台层与知识库切到真后端\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T28",
+  "title": "T28 四个业务应用脚手架与种子加载",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:apps",
+   "type:chore",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T16",
+   "T05"
+  ],
+  "wave": 6,
+  "source": "原 T23",
+  "reuse": [
+   {
+    "path": "scripts/new_app.py、apps/_template",
+    "mode": "直接用",
+    "change": "生成目录"
+   },
+   {
+    "path": "scripts/check.py、scripts/ui_exemptions.json",
+    "mode": "改造",
+    "change": "加经开区豁免项"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 6 批｜来源：原 T23\n\n### 目标\n四个应用按卫华应用规范落位，后端各自从 data/seed 读种子。\n\n### 范围（要做什么）\n- new_app.py 生成 apps/policy、enterprise、meeting、document（id 与规范路径 /api/apps/<id> 一致）\n- app.json 填 tools/intents/accepts/routes（照搬 v4 清单）；每个应用空 router.py 与冒烟测试\n- check.py 的界面规则对 v4 前端设豁免（v4 不用卫华 UI 组件）\n\n### 验收标准\n- [ ] 4 个应用出现在 /api/v1/apps\n- [ ] check.py 与 pytest 全绿\n- [ ] make seed 可重置四个应用的数据\n\n### 涉及接口（接口规范 v1.3）\n§5\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `scripts/new_app.py、apps/_template` | 直接用 | 生成目录 |\n| `scripts/check.py、scripts/ui_exemptions.json` | 改造 | 加经开区豁免项 |\n\n### 依赖与并行\n- 依赖（须先合并）：T16、T05\n- 被依赖：T29、T31、T35、T37\n- 同批可并行：T13、T18、T21、T22、T24、T25、T42、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-apps-scaffold`\n- HA：`ha task create --work <M3 的 work-id> --title \"T28 四个业务应用脚手架与种子加载\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T29",
+  "title": "T29 政策兑现：事项库、画像匹配、额度试算",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:policy",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T28"
+  ],
+  "wave": 7,
+  "source": "原 T24",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c03.py（C03 对表计算：受限公式、计算留痕）",
+    "mode": "直接用",
+    "change": "比例与封顶用受限公式表达"
+   },
+   {
+    "path": "apps/h03/api/rules.py（按有效条款核对、冲突并列原文）",
+    "mode": "参考",
+    "change": "条件判定理由的写法"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 7 批｜来源：原 T24\n\n### 目标\n企业画像进来，逐条说清为什么符合 / 不符合，金额算得出过程。\n\n### 范围（要做什么）\n- §4.1 items（筛选 object、window）、items/{id}、match、calc\n- 条件判定：规则写在事项数据里（行业、规模、资质、金额阈值），每条给出通过/不通过理由\n- calc 输出过程文字，如“42 万 × 50% = 21 万，超过封顶 20 万”；只用 real:true 事项\n\n### 验收标准\n- [ ] 星河智驾示例匹配结果与人工核对表一致\n- [ ] 试算过程文字与金额一致\n- [ ] 事项都有 source.url\n\n### 涉及接口（接口规范 v1.3）\n§4.1\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c03.py（C03 对表计算：受限公式、计算留痕）` | 直接用 | 比例与封顶用受限公式表达 |\n| `apps/h03/api/rules.py（按有效条款核对、冲突并列原文）` | 参考 | 条件判定理由的写法 |\n\n### 依赖与并行\n- 依赖（须先合并）：T28\n- 被依赖：T30\n- 同批可并行：T26、T31、T35、T37、T43、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-policy-match-calc`\n- HA：`ha task create --work <M3 的 work-id> --title \"T29 政策兑现：事项库、画像匹配、额度试算\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T30",
+  "title": "T30 政策兑现：告知单、对话工具与卡片",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:policy",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T29",
+   "T21"
+  ],
+  "wave": 8,
+  "source": "原 T25",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c06.py（C06 资料汇编：槽位 + 模板 → HTML，查缺件）",
+    "mode": "直接用",
+    "change": "告知单模板用槽位填充"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（reviews）",
+    "mode": "直接用",
+    "change": "政策卡片对外发布需另一人确认"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T25\n\n### 目标\n匹配结果一键生成告知单，并能在对话里调用。\n\n### 范围（要做什么）\n- §4.1 notice：落款按责任部门生成，电话留空\n- 注册 policy.match、policy.notice 工具与 policy-match、policy-items 卡片\n- 告知单转公文：带 entId、itemIds、模板深链到公文\n\n### 验收标准\n- [ ] 对话里说“看看星河智驾能申请什么”出匹配卡片\n- [ ] 告知单落款为真实责任部门\n- [ ] 深链到公文后参数齐全\n\n### 涉及接口（接口规范 v1.3）\n§4.1 notice、§4.5\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c06.py（C06 资料汇编：槽位 + 模板 → HTML，查缺件）` | 直接用 | 告知单模板用槽位填充 |\n| `core/server/haiknow_core/data.py（reviews）` | 直接用 | 政策卡片对外发布需另一人确认 |\n\n### 依赖与并行\n- 依赖（须先合并）：T29、T21\n- 被依赖：T41\n- 同批可并行：T27、T32、T33、T38、T39、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-policy-notice-tools`\n- HA：`ha task create --work <M3 的 work-id> --title \"T30 政策兑现：告知单、对话工具与卡片\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T31",
+  "title": "T31 企业管理：一企一档台账、导入导出",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:enterprise",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T28",
+   "T13"
+  ],
+  "wave": 7,
+  "source": "原 T26",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/data.py（save_record / list_records / 版本）",
+    "mode": "直接用",
+    "change": "一家企业 = 一条带版本的记录"
+   },
+   {
+    "path": "apps/h01/api/rules.py（export_csv 的 safe() 防公式注入）",
+    "mode": "改造",
+    "change": "抽成通用 CSV 导出工具"
+   },
+   {
+    "path": "apps/m07/api（多台账汇总、数字回到来源行）",
+    "mode": "参考",
+    "change": "facets 统计口径"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 7 批｜来源：原 T26\n\n### 目标\n台账能查能改能导入导出，每次修改留前后值。\n\n### 范围（要做什么）\n- §4.2 companies 列表（筛选、排序、facets）/新建/详情/修改；import、export CSV\n- 详情含走访、诉求、文件、待确认建议、修改历史\n- partner 只读且敏感字段脱敏（T13）\n\n### 验收标准\n- [ ] 导入 CSV 后导出内容一致\n- [ ] 修改历史可看到前后值\n- [ ] 导出 CSV 防公式注入\n\n### 涉及接口（接口规范 v1.3）\n§4.2 companies/import/export\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/data.py（save_record / list_records / 版本）` | 直接用 | 一家企业 = 一条带版本的记录 |\n| `apps/h01/api/rules.py（export_csv 的 safe() 防公式注入）` | 改造 | 抽成通用 CSV 导出工具 |\n| `apps/m07/api（多台账汇总、数字回到来源行）` | 参考 | facets 统计口径 |\n\n### 依赖与并行\n- 依赖（须先合并）：T28、T13\n- 被依赖：T32、T33\n- 同批可并行：T26、T29、T35、T37、T43、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-enterprise-ledger`\n- HA：`ha task create --work <M3 的 work-id> --title \"T31 企业管理：一企一档台账、导入导出\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T32",
+  "title": "T32 企业管理：走访随记 → 更新建议 → 逐条确认",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:enterprise",
+   "area:ai",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T31",
+   "T15",
+   "T17"
+  ],
+  "wave": 8,
+  "source": "原 T27（拆分）",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c01.py（C01 采集填表：字段校验、缺项）",
+    "mode": "直接用",
+    "change": "提取结果按台账字段校验"
+   },
+   {
+    "path": "apps/m04/api/router.py（visit_sources、check_evidence）",
+    "mode": "改造",
+    "change": "走访原句出处校验"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（reviews）",
+    "mode": "直接用",
+    "change": "逐条确认"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T27（拆分）\n\n### 目标\n随手记一段走访，系统提取更新建议，人逐条确认后才写台账。\n\n### 范围（要做什么）\n- POST companies/{id}/visits：模型提取字段与诉求，每条建议附原句出处\n- proposals/{id}/decision：accept/reject，写入时记录版本\n- 注册 enterprise 工具（查企业、记走访）\n\n### 验收标准\n- [ ] 每条建议都能定位到随记原句\n- [ ] 拒绝的建议不写台账\n- [ ] 台账版本号随确认递增\n\n### 涉及接口（接口规范 v1.3）\n§4.2 visits/proposals\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c01.py（C01 采集填表：字段校验、缺项）` | 直接用 | 提取结果按台账字段校验 |\n| `apps/m04/api/router.py（visit_sources、check_evidence）` | 改造 | 走访原句出处校验 |\n| `core/server/haiknow_core/data.py（reviews）` | 直接用 | 逐条确认 |\n\n### 依赖与并行\n- 依赖（须先合并）：T31、T15、T17\n- 被依赖：T41\n- 同批可并行：T27、T30、T33、T38、T39、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-enterprise-visits`\n- HA：`ha task create --work <M3 的 work-id> --title \"T32 企业管理：走访随记 → 更新建议 → 逐条确认\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T33",
+  "title": "T33 企业管理：诉求闭环与到期提醒",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:enterprise",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T31",
+   "T18"
+  ],
+  "wave": 8,
+  "source": "原 T27（拆分）",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c04.py（C04 进度和提醒：逾期规则、提醒去重）",
+    "mode": "直接用",
+    "change": "节点状态与去重"
+   },
+   {
+    "path": "core/server/haiknow_core/schedules/（ADR 0011 定时调度）",
+    "mode": "直接用",
+    "change": "每日扫描到期"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（send_message，ADR 0010）",
+    "mode": "直接用",
+    "change": "提醒投递到收件箱"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T27（拆分）\n\n### 目标\n诉求有人跟、有进度、超期会提醒；资质到期会提醒。\n\n### 范围（要做什么）\n- issues 列表/新建/改状态（steps 自动追加）；alerts（资质到期、诉求超期）\n- 提醒进收件箱，同一事项不重复提醒\n\n### 验收标准\n- [ ] 超期诉求出现在 alerts 与收件箱\n- [ ] 改期后提醒重算\n- [ ] 同一事项一天只提醒一次\n\n### 涉及接口（接口规范 v1.3）\n§4.2 issues/alerts\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c04.py（C04 进度和提醒：逾期规则、提醒去重）` | 直接用 | 节点状态与去重 |\n| `core/server/haiknow_core/schedules/（ADR 0011 定时调度）` | 直接用 | 每日扫描到期 |\n| `core/server/haiknow_core/data.py（send_message，ADR 0010）` | 直接用 | 提醒投递到收件箱 |\n\n### 依赖与并行\n- 依赖（须先合并）：T31、T18\n- 被依赖：T36\n- 同批可并行：T27、T30、T32、T38、T39、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-enterprise-issues`\n- HA：`ha task create --work <M3 的 work-id> --title \"T33 企业管理：诉求闭环与到期提醒\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T34",
+  "title": "T34 转写适配器：国产语音转写 + 长音频分片",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:platform",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:adapt"
+  ],
+  "depends_on": [
+   "T14"
+  ],
+  "wave": 5,
+  "source": "原 T28（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub/gateway.py（transcribe 能力、20MB 上限、audio_mime）",
+    "mode": "改造",
+    "change": "新增 provider kind 与分片逻辑"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/adapters.py",
+    "mode": "改造",
+    "change": "新增国产转写适配器（OpenAI 兼容的 /audio/transcriptions 可直接走 kind=openai）"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 5 批｜来源：原 T28（拆分）\n\n### 目标\n会议录音能真转写，超过单次上限的音频自动分片。\n\n### 范围（要做什么）\n- 按选定服务商新增转写适配器（阿里 / 讯飞 / 火山 三选一，见待决问题）；无 key 时 mock\n- 长音频分片与拼接，保留时间戳与说话人标签；热词（经开区机构名、政策名）\n- key 只放环境变量\n\n### 验收标准\n- [ ] 一段 3–5 分钟演示录音转写成功并带时间戳\n- [ ] 超过 20MB 的音频自动分片\n- [ ] 无 key 时返回预置转写结果并标明\n\n### 涉及接口（接口规范 v1.3）\n§3.2 transcribe\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub/gateway.py（transcribe 能力、20MB 上限、audio_mime）` | 改造 | 新增 provider kind 与分片逻辑 |\n| `core/server/haiknow_core/aihub/adapters.py` | 改造 | 新增国产转写适配器（OpenAI 兼容的 /audio/transcriptions 可直接走 kind=openai） |\n\n### 依赖与并行\n- 依赖（须先合并）：T14\n- 被依赖：T35\n- 同批可并行：T12、T15、T16、T17、T20、T23\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-asr-adapter`\n- HA：`ha task create --work <M3 的 work-id> --title \"T34 转写适配器：国产语音转写 + 长音频分片\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T35",
+  "title": "T35 会议记录：上传与转写长任务",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:meeting",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T28",
+   "T34",
+   "T17"
+  ],
+  "wave": 7,
+  "source": "原 T28（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/jobs/（@operation、步骤检查点）",
+    "mode": "直接用",
+    "change": "分步执行与断点续跑"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（save_file / save_record）",
+    "mode": "直接用",
+    "change": "音频与会议记录存储"
+   },
+   {
+    "path": "core/sdk/js/preview/media.js（CAP-09 录音采集）",
+    "mode": "参考",
+    "change": "若要现场录音再接入；v4 已有上传"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 7 批｜来源：原 T28（拆分）\n\n### 目标\n上传录音后立即返回任务号，界面轮询进度。\n\n### 范围（要做什么）\n- §4.3 meetings 列表/新建（上传音频）、详情、transcribe（返回 job）\n- 转写作为长任务分步执行（分片 → 转写 → 合并），失败可重试\n- 备一段演示录音与已转写结果作兜底\n\n### 验收标准\n- [ ] 上传后界面看到进度，完成后显示逐字稿\n- [ ] 重启服务后任务继续\n- [ ] 失败可一键重试\n\n### 涉及接口（接口规范 v1.3）\n§4.3\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/jobs/（@operation、步骤检查点）` | 直接用 | 分步执行与断点续跑 |\n| `core/server/haiknow_core/data.py（save_file / save_record）` | 直接用 | 音频与会议记录存储 |\n| `core/sdk/js/preview/media.js（CAP-09 录音采集）` | 参考 | 若要现场录音再接入；v4 已有上传 |\n\n### 依赖与并行\n- 依赖（须先合并）：T28、T34、T17\n- 被依赖：T36\n- 同批可并行：T26、T29、T31、T37、T43、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-meeting-transcribe`\n- HA：`ha task create --work <M3 的 work-id> --title \"T35 会议记录：上传与转写长任务\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T36",
+  "title": "T36 会议记录：纪要、改发言人、待办派发、关联企业诉求",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:meeting",
+   "area:ai",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T35",
+   "T33"
+  ],
+  "wave": 9,
+  "source": "原 T29",
+  "reuse": [
+   {
+    "path": "apps/h01/api/rules.py（missing_task_owner：待办须有事项、负责人、期限）",
+    "mode": "改造",
+    "change": "规则搬进会议待办校验"
+   },
+   {
+    "path": "apps/m04/api/router.py（check_evidence）",
+    "mode": "改造",
+    "change": "纪要结论原句校验"
+   },
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c04.py",
+    "mode": "直接用",
+    "change": "待办提醒"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 9 批｜来源：原 T29\n\n### 目标\n纪要每条结论能回到逐字稿，待办有负责人和期限，能挂到企业诉求。\n\n### 范围（要做什么）\n- 纪要生成：每条结论附逐字稿时间戳出处\n- PATCH：改发言人、改待办、改单行、改纪要\n- todos/commit：负责人或期限缺失的跳过并说明；link：关联企业生成诉求；转公文草稿深链\n\n### 验收标准\n- [ ] 每条纪要结论可跳回原句\n- [ ] 缺负责人的待办被跳过并提示\n- [ ] 关联后企业详情出现新诉求\n\n### 涉及接口（接口规范 v1.3）\n§4.3 PATCH/todos/link\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `apps/h01/api/rules.py（missing_task_owner：待办须有事项、负责人、期限）` | 改造 | 规则搬进会议待办校验 |\n| `apps/m04/api/router.py（check_evidence）` | 改造 | 纪要结论原句校验 |\n| `core/sdk/haiknow_sdk/preview/components/c04.py` | 直接用 | 待办提醒 |\n\n### 依赖与并行\n- 依赖（须先合并）：T35、T33\n- 被依赖：T41\n- 同批可并行：无\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-meeting-minutes`\n- HA：`ha task create --work <M3 的 work-id> --title \"T36 会议记录：纪要、改发言人、待办派发、关联企业诉求\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T37",
+  "title": "T37 公文协作：模板、起草、版本、定稿锁定",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:document",
+   "area:ai",
+   "type:feat",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T28",
+   "T15"
+  ],
+  "wave": 7,
+  "source": "原 T30",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/data.py（记录版本）",
+    "mode": "直接用",
+    "change": "草稿 = 带版本记录"
+   },
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c06.py",
+    "mode": "直接用",
+    "change": "模板槽位填充、缺件可见"
+   },
+   {
+    "path": "apps/m06/api（合同助手：缺信息不编）",
+    "mode": "参考",
+    "change": "缺项提示写法"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 7 批｜来源：原 T30\n\n### 目标\n按模板起草，可引用知识库，每次保存是新版本，定稿后锁定。\n\n### 范围（要做什么）\n- §4.4 templates、documents、drafts 新建（模型按模板与输入起草，可引用知识库）、drafts/{id} 读取与保存新版本\n- 已定稿返回 409 LOCKED；引用的政策条款以角标保留出处\n- 缺信息时标“待补”，不编造\n\n### 验收标准\n- [ ] 同一草稿保存 3 次有 3 个版本\n- [ ] 定稿后修改返回 409 LOCKED\n- [ ] 引用角标可跳到知识库原文\n\n### 涉及接口（接口规范 v1.3）\n§4.4 templates/drafts\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/data.py（记录版本）` | 直接用 | 草稿 = 带版本记录 |\n| `core/sdk/haiknow_sdk/preview/components/c06.py` | 直接用 | 模板槽位填充、缺件可见 |\n| `apps/m06/api（合同助手：缺信息不编）` | 参考 | 缺项提示写法 |\n\n### 依赖与并行\n- 依赖（须先合并）：T28、T15\n- 被依赖：T38、T39、T40\n- 同批可并行：T26、T29、T31、T35、T43、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-document-draft`\n- HA：`ha task create --work <M3 的 work-id> --title \"T37 公文协作：模板、起草、版本、定稿锁定\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T38",
+  "title": "T38 公文协作：核查与一键修正",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:document",
+   "area:ai",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T37"
+  ],
+  "wave": 8,
+  "source": "原 T31（拆分）",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c02.py（C02 文档审查：Rule × Clause → 带原文定位的提示，judge 注入 ctx.ai.chat）",
+    "mode": "直接用",
+    "change": "核查规则按 Rule 写，模型检查作为 judge 注入"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T31（拆分）\n\n### 目标\n规则核查文种要素、日期、文号、引用是否失效，问题可一键修正。\n\n### 范围（要做什么）\n- check：规则核查 + 模型语言检查，分 error / warn，带原文定位\n- fix：按问题 id 修正，生成新版本\n- 核查规则写成数据，可增改\n\n### 验收标准\n- [ ] 引用已失效政策时报 error\n- [ ] fix 后生成新版本且问题消失\n- [ ] 每条问题能定位到原文段落\n\n### 涉及接口（接口规范 v1.3）\n§4.4 check/fix\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c02.py（C02 文档审查：Rule × Clause → 带原文定位的提示，judge 注入 ctx.ai.chat）` | 直接用 | 核查规则按 Rule 写，模型检查作为 judge 注入 |\n\n### 依赖与并行\n- 依赖（须先合并）：T37\n- 被依赖：T41\n- 同批可并行：T27、T30、T32、T33、T39、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-document-check`\n- HA：`ha task create --work <M3 的 work-id> --title \"T38 公文协作：核查与一键修正\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T39",
+  "title": "T39 公文协作：润色、两稿比对、批注",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:document",
+   "area:ai",
+   "type:feat",
+   "priority:P1",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T37"
+  ],
+  "wave": 8,
+  "source": "原 T31（拆分）",
+  "reuse": [
+   {
+    "path": "core/sdk/haiknow_sdk/preview/components/c07.py（C07 修改意见与审核状态）",
+    "mode": "参考",
+    "change": "批注状态流转"
+   },
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "diff 用 Python difflib 新写"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T31（拆分）\n\n### 目标\n润色先预览再采用；任意两版可比对；可逐段批注。\n\n### 范围（要做什么）\n- polish：返回预览与 diff，采用时再保存\n- compare：任意两版或两段文本 diff\n- comments：新增、回复、解决\n\n### 验收标准\n- [ ] 润色不采用则不产生新版本\n- [ ] 比对结果标出增删\n- [ ] 批注可解决并留痕\n\n### 涉及接口（接口规范 v1.3）\n§4.4 polish/compare/comments\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/sdk/haiknow_sdk/preview/components/c07.py（C07 修改意见与审核状态）` | 参考 | 批注状态流转 |\n| — | 不复用 | diff 用 Python difflib 新写 |\n\n### 依赖与并行\n- 依赖（须先合并）：T37\n- 被依赖：T41\n- 同批可并行：T27、T30、T32、T33、T38、T40、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-document-polish`\n- HA：`ha task create --work <M3 的 work-id> --title \"T39 公文协作：润色、两稿比对、批注\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T40",
+  "title": "T40 公文协作：送审签与导出 .docx",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:document",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T37",
+   "T17"
+  ],
+  "wave": 8,
+  "source": "原 T32",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/data.py（submit_review / decide_review）",
+    "mode": "直接用",
+    "change": "审签流程"
+   },
+   {
+    "path": "apps/h01/api/router.py（导出 .doc）",
+    "mode": "参考",
+    "change": "导出前须已确认版本的校验"
+   },
+   {
+    "path": "core/server/haiknow_core/latex/（official-notice 模板，输出 PDF）",
+    "mode": "不复用",
+    "change": "本期要 .docx，不用 LaTeX"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P1｜批次：第 8 批｜来源：原 T32\n\n### 目标\n有 error 不能送审；审签通过即锁定该版本；能导出 Word。\n\n### 范围（要做什么）\n- submit：生成审签，指定审签人；有 error 返回 422\n- 审签通过后定稿锁定该版本\n- export：python-docx 生成 .docx（标题、正文、落款基本版式；正式 GB/T 9704 版式不在本期）\n\n### 验收标准\n- [ ] 有 error 送审返回 422\n- [ ] 审签通过后再改返回 409\n- [ ] 导出的 .docx 能用 Word / WPS 打开\n\n### 涉及接口（接口规范 v1.3）\n§4.4 submit/export\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/data.py（submit_review / decide_review）` | 直接用 | 审签流程 |\n| `apps/h01/api/router.py（导出 .doc）` | 参考 | 导出前须已确认版本的校验 |\n| `core/server/haiknow_core/latex/（official-notice 模板，输出 PDF）` | 不复用 | 本期要 .docx，不用 LaTeX |\n\n### 依赖与并行\n- 依赖（须先合并）：T37、T17\n- 被依赖：T41\n- 同批可并行：T27、T30、T32、T33、T38、T39、T44\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-document-review-docx`\n- HA：`ha task create --work <M3 的 work-id> --title \"T40 公文协作：送审签与导出 .docx\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T41",
+  "title": "T41 四个应用前端切 http + 跨应用链路测试",
+  "milestone": "M3 四个业务应用",
+  "labels": [
+   "area:web",
+   "area:apps",
+   "type:test",
+   "priority:P0",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T27",
+   "T30",
+   "T32",
+   "T36",
+   "T38",
+   "T39",
+   "T40"
+  ],
+  "wave": 10,
+  "source": "原 T33",
+  "reuse": [
+   {
+    "path": "tests/ui/real_flow.py（Playwright 真实流程走查）",
+    "mode": "参考",
+    "change": "链路用例写法"
+   }
+  ],
+  "body": "> 里程碑：M3 四个业务应用｜优先级：P0｜批次：第 10 批｜来源：原 T33\n\n### 目标\n四个应用全部走真后端，跨应用链路自动化。\n\n### 范围（要做什么）\n- api.modules 四个应用改 http\n- 自动化：政策→告知单→公文；会议→关联企业诉求；政策提示→企业诉求；对话卡片→各应用深链\n- 修联调差异并同步改接口规范\n\n### 验收标准\n- [ ] 四个模块契约测试对真后端通过\n- [ ] 4 条链路用例进 CI\n- [ ] 接口规范与实现无差异\n\n### 涉及接口（接口规范 v1.3）\n§4、§7\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `tests/ui/real_flow.py（Playwright 真实流程走查）` | 参考 | 链路用例写法 |\n\n### 依赖与并行\n- 依赖（须先合并）：T27、T30、T32、T36、T38、T39、T40\n- 被依赖：T49\n- 同批可并行：无\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-apps-http-e2e`\n- HA：`ha task create --work <M3 的 work-id> --title \"T41 四个应用前端切 http + 跨应用链路测试\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T42",
+  "title": "T42 技能中心：增删改查、版本、复制改编、删除撤销",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:skills",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T17"
+  ],
+  "wave": 6,
+  "source": "原 T34（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/data.py（记录版本）",
+    "mode": "直接用",
+    "change": "一个技能 = 一条带版本记录"
+   },
+   {
+    "path": "core/server/haiknow_core/builder/workspace.py（policy_problems）",
+    "mode": "参考",
+    "change": "技能规格的合规检查思路"
+   },
+   {
+    "path": "builder 的代码生成与沙箱",
+    "mode": "不复用",
+    "change": "技能不生成代码"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 6 批｜来源：原 T34（拆分）\n\n### 目标\n业务人员能自己建技能（无代码，只声明步骤与工具）。\n\n### 范围（要做什么）\n- §3.7 skills 列表/详情/meta/新建/保存新版本/fork/restore/删除与撤销\n- SkillSpec 存为结构化数据（triggers、inputs、steps：tool / kb / computer / model），工具白名单\n\n### 验收标准\n- [ ] 已发布技能修改后生成新版本\n- [ ] fork 后来源可追溯\n- [ ] 删除可撤销\n\n### 涉及接口（接口规范 v1.3）\n§3.7\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/data.py（记录版本）` | 直接用 | 一个技能 = 一条带版本记录 |\n| `core/server/haiknow_core/builder/workspace.py（policy_problems）` | 参考 | 技能规格的合规检查思路 |\n| `builder 的代码生成与沙箱` | 不复用 | 技能不生成代码 |\n\n### 依赖与并行\n- 依赖（须先合并）：T17\n- 被依赖：T43、T44\n- 同批可并行：T13、T18、T21、T22、T24、T25、T28、T47\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-skills-crud`\n- HA：`ha task create --work <M4 的 work-id> --title \"T42 技能中心：增删改查、版本、复制改编、删除撤销\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T43",
+  "title": "T43 技能中心：发布、分享、上架审核、评分",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:skills",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T42"
+  ],
+  "wave": 7,
+  "source": "原 T34（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/data.py（reviews）",
+    "mode": "直接用",
+    "change": "上架审核"
+   },
+   {
+    "path": "core/server/haiknow_core/builder/published.py（门禁后才发布）",
+    "mode": "参考",
+    "change": "“过审才上架”的状态设计"
+   },
+   {
+    "path": "core/server/haiknow_core/rbac.py（audience 灰度受众）",
+    "mode": "参考",
+    "change": "分享范围判断"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 7 批｜来源：原 T34（拆分）\n\n### 目标\n全区公开必须审核；分享范围可控。\n\n### 范围（要做什么）\n- publish（scope=zone 生成上架审核）、share（private/people/dept/zone，use/edit）、review、rate\n- 审核人为管理员或审签领导\n\n### 验收标准\n- [ ] 全区公开未审核前别人看不到\n- [ ] 审核驳回带理由\n- [ ] 评分计入列表\n\n### 涉及接口（接口规范 v1.3）\n§3.7 publish/share/review/rate\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/data.py（reviews）` | 直接用 | 上架审核 |\n| `core/server/haiknow_core/builder/published.py（门禁后才发布）` | 参考 | “过审才上架”的状态设计 |\n| `core/server/haiknow_core/rbac.py（audience 灰度受众）` | 参考 | 分享范围判断 |\n\n### 依赖与并行\n- 依赖（须先合并）：T42\n- 被依赖：无\n- 同批可并行：T26、T29、T31、T35、T37、T45、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-skills-publish`\n- HA：`ha task create --work <M4 的 work-id> --title \"T43 技能中心：发布、分享、上架审核、评分\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T44",
+  "title": "T44 技能运行时与一句话起草",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:skills",
+   "area:ai",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T42",
+   "T26",
+   "T21"
+  ],
+  "wave": 8,
+  "source": "原 T35",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/jobs/",
+    "mode": "直接用",
+    "change": "运行即长任务"
+   },
+   {
+    "path": "core/server/haiknow_core/builder/agent.py（起草提示与约束）",
+    "mode": "参考",
+    "change": "一句话起草的提示写法"
+   },
+   {
+    "path": "builder/pi_runtime.py",
+    "mode": "不复用",
+    "change": "不引入 Node 子进程运行时"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 8 批｜来源：原 T35\n\n### 目标\n技能能跑：按步骤调工具 / 知识库 / 模型，结果带出处和缺项。\n\n### 范围（要做什么）\n- run / trial 作为长任务执行 kb、model、tool 步骤；结果含 citations、missing\n- 未声明工具 → 403 TOOL_NOT_ALLOWED\n- draft：一句话转 name/summary/spec/questions；match：按触发语找技能\n- manifest / promote 本期返回 501 并在规范标注\n\n### 验收标准\n- [ ] 调用未声明工具被拒\n- [ ] 试运行不保存草稿\n- [ ] 必填未填项在结论中标“待确认”\n\n### 涉及接口（接口规范 v1.3）\n§3.7 run/trial/jobs/draft/match\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/jobs/` | 直接用 | 运行即长任务 |\n| `core/server/haiknow_core/builder/agent.py（起草提示与约束）` | 参考 | 一句话起草的提示写法 |\n| `builder/pi_runtime.py` | 不复用 | 不引入 Node 子进程运行时 |\n\n### 依赖与并行\n- 依赖（须先合并）：T42、T26、T21\n- 被依赖：T49\n- 同批可并行：T27、T30、T32、T33、T38、T39、T40\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-skills-runtime`\n- HA：`ha task create --work <M4 的 work-id> --title \"T44 技能运行时与一句话起草\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T45",
+  "title": "T45 AI 操作员：意图目录、计划、执行回执",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:platform",
+   "type:feat",
+   "priority:P2",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T16",
+   "T21"
+  ],
+  "wave": 7,
+  "source": "原 T36",
+  "reuse": [
+   {
+    "path": "T16 manifest intents",
+    "mode": "直接用",
+    "change": "意图目录来源"
+   },
+   {
+    "path": "core/server/haiknow_core/store.py（audit）",
+    "mode": "直接用",
+    "change": "执行回执留痕"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P2｜批次：第 7 批｜来源：原 T36\n\n### 目标\n说一句话，系统在界面上一步步替你办，写操作必须确认。\n\n### 范围（要做什么）\n- §3.8 intents（按权限过滤）、plan（规则优先，模型补槽位）、runs（写审计 via=operator）、stop\n- 计划里的写步骤必须等用户确认\n\n### 验收标准\n- [ ] 无权应用的意图不返回\n- [ ] 写步骤未确认不执行\n- [ ] 审计里能看到 via=operator\n\n### 涉及接口（接口规范 v1.3）\n§3.8\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `T16 manifest intents` | 直接用 | 意图目录来源 |\n| `core/server/haiknow_core/store.py（audit）` | 直接用 | 执行回执留痕 |\n\n### 依赖与并行\n- 依赖（须先合并）：T16、T21\n- 被依赖：T49\n- 同批可并行：T26、T29、T31、T35、T37、T43、T48\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-operator`\n- HA：`ha task create --work <M4 的 work-id> --title \"T45 AI 操作员：意图目录、计划、执行回执\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T46",
+  "title": "T46 电脑操作：模拟政务站",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:computer",
+   "type:feat",
+   "priority:P1",
+   "reuse:none"
+  ],
+  "depends_on": [
+   "T01"
+  ],
+  "wave": 2,
+  "source": "原 T37（拆分）",
+  "reuse": [
+   {
+    "path": "—",
+    "mode": "不复用",
+    "change": "全新静态站点"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 2 批｜来源：原 T37（拆分）\n\n### 目标\n给电脑操作一个安全的演练靶场，可提前独立做。\n\n### 范围（要做什么）\n- deploy/mock-gov/：静态站点，含登录、申报表单、附件上传、提交确认、验证码页\n- 页面元素有稳定的 data-op 锚点；不收集任何真实信息\n\n### 验收标准\n- [ ] 本地 make mock-gov 可打开\n- [ ] 每个关键按钮都有 data-op 锚点\n- [ ] 提交页明确标注“模拟”\n\n### 涉及接口（接口规范 v1.3）\n§3.10\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| — | 不复用 | 全新静态站点 |\n\n### 依赖与并行\n- 依赖（须先合并）：T01\n- 被依赖：T47\n- 同批可并行：T02、T03、T09\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-mock-gov-site`\n- HA：`ha task create --work <M4 的 work-id> --title \"T46 电脑操作：模拟政务站\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T47",
+  "title": "T47 电脑操作：Playwright 运行器、runs 接口、提交前停下确认",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:computer",
+   "type:feat",
+   "priority:P1",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T46",
+   "T17"
+  ],
+  "wave": 6,
+  "source": "原 T37（拆分）",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/jobs/",
+    "mode": "直接用",
+    "change": "一次运行 = 一个长任务"
+   },
+   {
+    "path": "core/server/haiknow_core/data.py（reviews）",
+    "mode": "直接用",
+    "change": "提交前确认"
+   },
+   {
+    "path": "core/server/haiknow_core/aihub/reader.py（check_url 主机白名单）",
+    "mode": "参考",
+    "change": "系统白名单校验"
+   },
+   {
+    "path": "tests/ui/*.py、requirements-ui.txt（playwright==1.57.0）",
+    "mode": "参考",
+    "change": "Playwright 用法与版本对齐"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 6 批｜来源：原 T37（拆分）\n\n### 目标\n服务器端按步骤操作网页，逐步截图，遇到提交/签章/验证码停下。\n\n### 范围（要做什么）\n- §3.10 tasks、systems、match、runs、runs/{id}、confirm\n- Playwright 服务器端运行，逐步截图与日志；系统白名单\n- 提交、签章、验证码一律停下，进入待确认\n\n### 验收标准\n- [ ] 在模拟政务站跑通一条申报\n- [ ] 遇到提交步骤停下等确认\n- [ ] 访问白名单外地址被拒\n\n### 涉及接口（接口规范 v1.3）\n§3.10\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/jobs/` | 直接用 | 一次运行 = 一个长任务 |\n| `core/server/haiknow_core/data.py（reviews）` | 直接用 | 提交前确认 |\n| `core/server/haiknow_core/aihub/reader.py（check_url 主机白名单）` | 参考 | 系统白名单校验 |\n| `tests/ui/*.py、requirements-ui.txt（playwright==1.57.0）` | 参考 | Playwright 用法与版本对齐 |\n\n### 依赖与并行\n- 依赖（须先合并）：T46、T17\n- 被依赖：T48、T49\n- 同批可并行：T13、T18、T21、T22、T24、T25、T28、T42\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-computer-runner`\n- HA：`ha task create --work <M4 的 work-id> --title \"T47 电脑操作：Playwright 运行器、runs 接口、提交前停下确认\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T48",
+  "title": "T48 电脑操作：经开区官网只读下载最新通知并入库",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:computer",
+   "area:kb",
+   "type:feat",
+   "priority:P2",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T47",
+   "T24"
+  ],
+  "wave": 7,
+  "source": "原 T38",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub/reader.py（fetch_page、looks_blocked）",
+    "mode": "直接用",
+    "change": "只读抓取与被拦截识别"
+   },
+   {
+    "path": "T24 导入流水线",
+    "mode": "直接用",
+    "change": "入库"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P2｜批次：第 7 批｜来源：原 T38\n\n### 目标\n演示“让 AI 去官网拿最新通知并入库”，只读、可跳过。\n\n### 范围（要做什么）\n- 任务模板：打开官网通知栏目 → 找最新 N 条 → 下载正文/附件 → 调 /kb/import\n- 限速与重试，遵守网站规则；失败可跳过，不影响主演示\n\n### 验收标准\n- [ ] 拉到最新 3 条通知并入库\n- [ ] 官网不可达时演示照常继续\n\n### 涉及接口（接口规范 v1.3）\n§3.10、§3.6 import\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub/reader.py（fetch_page、looks_blocked）` | 直接用 | 只读抓取与被拦截识别 |\n| `T24 导入流水线` | 直接用 | 入库 |\n\n### 依赖与并行\n- 依赖（须先合并）：T47、T24\n- 被依赖：无\n- 同批可并行：T26、T29、T31、T35、T37、T43、T45\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-official-site-import`\n- HA：`ha task create --work <M4 的 work-id> --title \"T48 电脑操作：经开区官网只读下载最新通知并入库\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T49",
+  "title": "T49 演示稳定性：一键重置、兜底开关、12 段演示在真后端跑通",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:platform",
+   "area:web",
+   "type:test",
+   "priority:P0",
+   "reuse:direct"
+  ],
+  "depends_on": [
+   "T41",
+   "T44",
+   "T45",
+   "T47",
+   "T19"
+  ],
+  "wave": 11,
+  "source": "原 T39",
+  "reuse": [
+   {
+    "path": "core/server/haiknow_core/aihub（kind=mock provider）",
+    "mode": "直接用",
+    "change": "CI 与兜底"
+   },
+   {
+    "path": "core/server/haiknow_core/migrations.py（一致性备份）",
+    "mode": "参考",
+    "change": "快照与恢复"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P0｜批次：第 11 批｜来源：原 T39\n\n### 目标\n演示当天不翻车。\n\n### 范围（要做什么）\n- POST /demo/reset 恢复快照\n- 开关：规则意图优先、模型失败回退到预置结果、单模块回落 mock\n- CI 跑 12 段演示（http 模式，模型用 mock）；演示环境用真模型跑一遍记录耗时\n\n### 验收标准\n- [ ] CI 中 12 段全部通过\n- [ ] 断开模型 key 演示仍能走完并标明使用了预置结果\n- [ ] reset 后数据与初始快照一致\n\n### 涉及接口（接口规范 v1.3）\n§3.11、§6\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `core/server/haiknow_core/aihub（kind=mock provider）` | 直接用 | CI 与兜底 |\n| `core/server/haiknow_core/migrations.py（一致性备份）` | 参考 | 快照与恢复 |\n\n### 依赖与并行\n- 依赖（须先合并）：T41、T44、T45、T47、T19\n- 被依赖：T50\n- 同批可并行：无\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-demo-stability`\n- HA：`ha task create --work <M4 的 work-id> --title \"T49 演示稳定性：一键重置、兜底开关、12 段演示在真后端跑通\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ },
+ {
+  "id": "T50",
+  "title": "T50 小白走查、浅深色两宽度回归、演示彩排",
+  "milestone": "M4 技能·电脑操作·联调演示",
+  "labels": [
+   "area:qa",
+   "type:test",
+   "priority:P1",
+   "reuse:reference"
+  ],
+  "depends_on": [
+   "T49"
+  ],
+  "wave": 12,
+  "source": "原 T40",
+  "reuse": [
+   {
+    "path": "tests/ui/real_flow.py",
+    "mode": "参考",
+    "change": "走查脚本组织方式"
+   }
+  ],
+  "body": "> 里程碑：M4 技能·电脑操作·联调演示｜优先级：P1｜批次：第 12 批｜来源：原 T40\n\n### 目标\n交付前用小白视角在公网环境完整走一遍。\n\n### 范围（要做什么）\n- 按 requirements §7 演示脚本逐步操作，记录卡点\n- 浅色/深色 × 1440/1280 截图回归\n- 问题逐条建 Issue；写一页试用记录\n\n### 验收标准\n- [ ] 四种组合截图无布局问题\n- [ ] 阻断级问题全部关闭\n- [ ] 试用记录放进 docs/\n\n### 涉及接口（接口规范 v1.3）\n全部\n\n### 卫华复用（haiknow-app-platform @4d744e0）\n| 卫华路径 | 方式 | 要改什么 |\n|---|---|---|\n| `tests/ui/real_flow.py` | 参考 | 走查脚本组织方式 |\n\n### 依赖与并行\n- 依赖（须先合并）：T49\n- 被依赖：无\n- 同批可并行：无\n\n### 交给 Codex worker\n- 粒度：一个 worker 约一个工作日内完成；超出时在 PR 里说明并拆后续 Issue\n- 分支：`feat/<issue号>-walkthrough`\n- HA：`ha task create --work <M4 的 work-id> --title \"T50 小白走查、浅深色两宽度回归、演示彩排\"`\n- PR 描述写 `Refs #<issue号>`，逐条勾选验收标准，附测试输出；改界面附 1440 与 1280 两张截图\n"
+ }
+]

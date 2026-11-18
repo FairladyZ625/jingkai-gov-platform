@@ -1,0 +1,145 @@
+/* ==== 应用通用框架 2.0（multica 风格；由 apps/_shared/frame.css.tpl 生成，改模板后运行 node apps/_shared/build-css.js） ==== */
+/* .app-enterprise 本身不加样式：抽屉/弹窗里也会复用 .app-<id> 前缀。.ap 是容器（container: ap），窄面板（对话分栏）下自动收紧 */
+.app-enterprise .ap{max-width:880px;margin:0 auto;padding:var(--s6) clamp(16px,4.5%,40px) 0;min-height:100%;display:flex;flex-direction:column;container:ap/inline-size}
+.app-enterprise .ap-h{display:flex;align-items:center;gap:var(--s3);min-height:40px}
+.app-enterprise .ap-h h2{font-size:var(--fs-xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);line-height:1.25}
+.app-enterprise .ap-sum{font-size:var(--fs-sm);color:var(--text-3);margin-top:2px;line-height:1.4}
+.app-enterprise .ap-tabs{margin:var(--s4) 0 var(--s6)}
+.app-enterprise .ap-body{flex:1;display:flex;flex-direction:column;min-width:0}
+.app-enterprise .wiz-steps{margin-bottom:var(--s6)}
+.app-enterprise .wiz-step[data-step]{cursor:pointer}
+.app-enterprise .wiz-step[data-step]:hover{color:var(--text)}
+.app-enterprise .wiz-body{max-width:none;min-width:0}
+.app-enterprise .wiz-foot{margin-top:auto;padding-top:var(--s3);padding-bottom:var(--s4)}
+.app-enterprise .wiz-body{padding-bottom:var(--s6)}
+.app-enterprise .q{font-size:var(--fs-lg);font-weight:var(--fw-b);letter-spacing:var(--track-tight);line-height:1.35;margin-bottom:4px}
+.app-enterprise .q-sub{font-size:var(--fs-sm);color:var(--text-3);margin-bottom:var(--s5);line-height:1.5}
+.app-enterprise .stack{display:flex;flex-direction:column;gap:var(--s4)}
+.app-enterprise.stack{display:flex;flex-direction:column;gap:var(--s5)}
+.app-enterprise.stack .sec{margin:0 0 var(--s2)}
+.app-enterprise.stack>div>.meta:first-child{margin-bottom:2px}
+.app-enterprise .meta{font-size:var(--fs-xs);color:var(--text-3);line-height:1.5}
+.app-enterprise .big{font-size:var(--fs-2xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);font-variant-numeric:tabular-nums;line-height:1.1}
+/* 指标卡：数字黑色，颜色只在标签前的小圆点 */
+.app-enterprise .kpis{display:grid;grid-template-columns:repeat(var(--n,3),minmax(0,1fr));gap:var(--s3)}
+.app-enterprise .kpi-c{display:flex;flex-direction:column;gap:6px;padding:var(--s4);border:1px solid var(--border-strong);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow-1);cursor:pointer;text-align:left;font:inherit;color:inherit;transition:border-color var(--dur),background var(--dur)}
+.app-enterprise .kpi-c:hover{border-color:var(--border-hover)}
+.app-enterprise .kpi-c .v{font-size:var(--fs-2xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);color:var(--text);font-variant-numeric:tabular-nums;line-height:1}
+.app-enterprise .kpi-c .l{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--text-2);line-height:1.3}
+.app-enterprise .kpi-c .l::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tf,var(--text-3));flex:none}
+.app-enterprise .kpi-c.on{border-color:var(--accent-line);box-shadow:0 0 0 1px var(--accent-line)}
+.app-enterprise .pick{position:relative}
+.app-enterprise .dd{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;padding:4px;border-radius:var(--r-lg);background:var(--surface-3);border:1px solid var(--border);box-shadow:var(--shadow-menu);max-height:340px;overflow:auto}
+.app-enterprise .dd .mi{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 10px;border-radius:6px;cursor:pointer}
+.app-enterprise .dd .mi:hover,.app-enterprise .dd .mi.on{background:var(--hover)}
+/* 首字母头像：白底细边，字用类别色 */
+.app-enterprise .ini{width:32px;height:32px;border-radius:var(--r-md);display:grid;place-items:center;font-weight:var(--fw-b);font-size:var(--fs-sm);flex:none;background:var(--surface);color:var(--tf,var(--text-2));border:1px solid var(--border-strong);box-shadow:var(--shadow-1)}
+.app-enterprise .ini .ico{width:16px;height:16px}
+.app-enterprise .ini.lg{width:40px;height:40px;font-size:var(--fs-lg);border-radius:var(--r-lg)}
+.app-enterprise .ini.sm{width:24px;height:24px;font-size:11px;border-radius:50%;box-shadow:none}
+.app-enterprise .chips{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.app-enterprise .chip-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-md);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2);font-size:var(--fs-sm);cursor:pointer;box-shadow:var(--shadow-1);white-space:nowrap;transition:border-color var(--dur),background var(--dur)}
+.app-enterprise .chip-btn:hover{border-color:var(--border-hover);color:var(--text)}
+.app-enterprise .chip-btn.on{background:var(--active);border-color:var(--border-hover);color:var(--text);font-weight:var(--fw-m);box-shadow:none}
+.app-enterprise .ck{width:18px;height:18px;border-radius:50%;display:inline-grid;place-items:center;flex:none;font-size:11px;font-weight:var(--fw-b);background:var(--tg);color:var(--tf);border:1px solid var(--tb)}
+.app-enterprise .ck-row{display:flex;align-items:flex-start;gap:10px;padding:5px 0;font-size:var(--fs-sm);line-height:1.5}
+.app-enterprise .ck-row .ck{margin-top:1px}
+.app-enterprise .times{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s2)}
+.app-enterprise .times>div{padding:var(--s2) var(--s3);border-radius:var(--r-md);background:var(--canvas);border:1px solid var(--border);font-size:var(--fs-sm)}
+.app-enterprise .times b{display:block;font-size:var(--fs-xs);color:var(--text-3);font-weight:var(--fw-m)}
+.app-enterprise .fold{border-top:1px solid var(--border);margin-top:var(--s3);padding-top:var(--s3)}
+.app-enterprise .link{color:var(--accent);cursor:pointer;font-size:var(--fs-sm);background:none;border:0;padding:0;display:inline-flex;align-items:center;gap:4px}
+.app-enterprise .link:hover{text-decoration:underline;text-underline-offset:2px}
+.app-enterprise .link .ico{width:13px;height:13px}
+.app-enterprise .quote{padding:var(--s3) var(--s4);border-left:2px solid var(--border-hover);background:var(--canvas);border-radius:0 var(--r-md) var(--r-md) 0;font-size:var(--fs-sm);line-height:1.8;color:var(--text)}
+.app-enterprise .lock-note{display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--text-2)}
+.app-enterprise .err-box{padding:var(--s6);text-align:center;color:var(--text-2)}
+.app-enterprise .skel-list{display:flex;flex-direction:column;gap:var(--s3)}
+.app-enterprise .skel-list .skel{height:60px;border-radius:var(--r-lg)}
+.app-enterprise .sec{display:flex;align-items:center;gap:var(--s2);font-size:var(--fs-xs);font-weight:var(--fw-m);color:var(--text-3);margin:var(--s6) 0 var(--s2);line-height:20px}
+.app-enterprise .row-click{cursor:pointer}
+.app-enterprise .num{font-variant-numeric:tabular-nums}
+.app-enterprise .muted-tag{color:var(--text-3)}
+.app-enterprise .cb{width:15px;height:15px;accent-color:var(--primary);flex:none;cursor:pointer}
+.app-enterprise tr.click{cursor:pointer}
+/* 窄面板（对话分栏 ≤ 640px）：向导只显示当前步文字，指标卡收紧 */
+@container ap (max-width:640px){
+  .app-enterprise .wiz-step:not(.on){font-size:0;gap:0}
+  .app-enterprise .wiz-step:not(.on) .n{font-size:11px}
+  .app-enterprise .kpis{gap:var(--s2)}
+  .app-enterprise .kpi-c{padding:var(--s3)}
+  .app-enterprise .kpi-c .v{font-size:var(--fs-xl)}
+  .app-enterprise .times{grid-template-columns:1fr}
+}
+
+/* 列表两行：标题 .t + 元信息 .s */
+.app-enterprise .li .t{font-size:var(--fs-md);font-weight:var(--fw-m);color:var(--text);line-height:1.45;min-width:0}
+.app-enterprise .li .s{font-size:var(--fs-xs);color:var(--text-3);line-height:1.5;margin-top:1px;min-width:0}
+.app-enterprise .li .s .link{font-size:inherit}
+
+/* ==== 2.2 multica 对齐：分组标题条、卡片列表改发丝线行、字重 ≤500 ==== */
+.app-enterprise .q{font-weight:var(--fw-m)}
+.app-enterprise .kpi-c .v{font-weight:var(--fw-n)}
+.app-enterprise .kpi-c.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.app-enterprise .ini{font-weight:var(--fw-m)}
+.app-enterprise .ck{font-weight:var(--fw-m)}
+.app-enterprise .chip-btn{border-radius:var(--r-pill)}
+.app-enterprise .sec{height:32px;margin:var(--s5) 0 var(--s1);padding:0 var(--s3);border-radius:var(--r-md);background:var(--fill);color:var(--text-2);font-size:var(--fs-sm)}
+
+/* ==== 以下为本应用专属样式 ==== */
+.app-enterprise .ent-head{margin-bottom:var(--s4)}
+.app-enterprise .ent-hd{align-items:center}
+.app-enterprise .ent-hd-tags{justify-content:flex-end;gap:var(--s2)}
+.app-enterprise .ent-brief .card-h{margin-bottom:var(--s4)}
+.app-enterprise .ent-kv4{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4) var(--s6);font-size:var(--fs-sm)}
+.app-enterprise .ent-kv4 .span2{grid-column:span 2}
+.app-enterprise .ent-kv{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:var(--s3);align-items:start;padding:10px 0;border-bottom:1px solid var(--border);font-size:var(--fs-sm)}
+.app-enterprise .ent-kv>:first-child{color:var(--text-3)}
+.app-enterprise .ent-kv:last-child{border-bottom:0}
+.app-enterprise .ent-notes{min-height:160px}
+.app-enterprise .ent-prop.done{opacity:.72}
+.app-enterprise .ent-chg{display:flex;align-items:center;flex-wrap:wrap;gap:var(--s2);margin:2px 0 4px;font-size:var(--fs-md)}
+.app-enterprise .ent-chg .old{color:var(--text-3);text-decoration:line-through}
+.app-enterprise .ent-chg .new{font-size:var(--fs-lg);font-weight:var(--fw-m)}
+.app-enterprise .ent-iss{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:var(--s4);align-items:start}
+.app-enterprise .ent-iss-l{max-height:460px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.app-enterprise .ent-iss-l .li{align-items:flex-start}
+.app-enterprise .ent-iss-l .li .tag{margin-top:1px}
+.app-enterprise .ent-tbl{max-height:calc(100vh - 300px)}
+.app-enterprise .tbl .link{color:var(--text);font-weight:var(--fw-m)}
+.app-enterprise .tbl .link:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+.app-enterprise .tbl input[type=checkbox]{vertical-align:middle;accent-color:var(--primary)}
+.app-enterprise .ent-stale{color:var(--warn)}
+.app-enterprise .ent-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--s3);align-items:start}
+.app-enterprise .ent-col{padding:var(--s3);border-radius:var(--r-lg);background:var(--canvas);border:1px solid var(--border);min-height:160px;display:flex;flex-direction:column;gap:var(--s2)}
+.app-enterprise .ent-bcard{font-size:var(--fs-sm)}
+.app-enterprise .sdot.h-amber{background:var(--warn)}
+@container ap (max-width:640px){
+  .app-enterprise .ent-iss{grid-template-columns:1fr}
+  .app-enterprise .ent-iss-l{max-height:none}
+  .app-enterprise .ent-kv4{grid-template-columns:1fr}
+  .app-enterprise .ent-kv4 .span2{grid-column:auto}
+  .app-enterprise .ent-hd{flex-wrap:wrap}
+  .app-enterprise .ent-hd-tags{flex-basis:100%;justify-content:flex-start;padding-left:52px}
+}
+@container ap (max-width:460px){.app-enterprise .ent-board{grid-template-columns:1fr}}
+
+/* ==== parity：对齐 multica（安静的内联统计 / 状态圈 / 分组条 / 发丝线行） ==== */
+.app-enterprise .x-ring{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--tf,var(--text-3));flex:none;box-sizing:border-box}
+.app-enterprise .x-stats{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 var(--s1)}
+.app-enterprise .x-stats .kpi-c{flex-direction:row;align-items:center;gap:6px;height:28px;padding:0 10px;border:0;border-radius:var(--r-md);background:none;box-shadow:none}
+.app-enterprise .x-stats .kpi-c:hover{background:var(--hover)}
+.app-enterprise .x-stats .kpi-c.on{background:var(--active);box-shadow:none;border:0}
+.app-enterprise .x-stats .kpi-c .v{order:2;font-size:var(--fs-sm);font-weight:var(--fw-m);letter-spacing:0;line-height:1;color:var(--text)}
+.app-enterprise .x-stats .kpi-c .l{order:1;font-size:var(--fs-sm);color:var(--text-2);gap:8px}
+.app-enterprise .x-stats .kpi-c .l::before{width:12px;height:12px;box-sizing:border-box;background:none;border:1.5px solid var(--tf,var(--text-3))}
+.app-enterprise .sect .x-ring{margin-right:2px}
+.app-enterprise .rows>.card{box-shadow:none}
+.app-enterprise .ent-head{padding:0 0 var(--s4);border-bottom:1px solid var(--border);margin-bottom:var(--s5)}
+.app-enterprise .ent-brief{border:0;box-shadow:none;background:var(--fill-2)}
+.app-enterprise .ent-colh{display:flex;align-items:center;gap:8px;height:28px;padding:0 4px;margin-bottom:var(--s1);font-size:var(--fs-sm);font-weight:var(--fw-m)}
+.app-enterprise .ent-col{border:0;background:var(--fill-2);padding:var(--s2)}
+.app-enterprise .ent-bcard{box-shadow:none}
+.app-enterprise .ent-iss-l .li.on{background:var(--active)}
+.app-enterprise .ent-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,1fr);grid-template-columns:none;overflow-x:auto;padding-bottom:var(--s2)}
+@container ap (max-width:460px){.app-enterprise .ent-board{grid-auto-flow:row;grid-auto-columns:auto}}
