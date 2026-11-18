@@ -17,6 +17,7 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from haiknow_core.main import create_app
+from haiknow_sdk import DataError
 from jkq import jobs_api, reviews_api
 
 
@@ -44,10 +45,11 @@ def transcribe(job, body):
         if previous is None:
             job.context.kv.put('transcribe_key', key)
             job.progress(1, 2)
-            while True:
-                job.check_cancelled()
-                time.sleep(.02)
-        assert previous == key
+        else:
+            assert previous == key
+        while not job.context.kv.get('release_transcribe', False):
+            job.check_cancelled()
+            time.sleep(.02)
         return ref
 
     transcript = job.step('转写', transcribe_audio)
@@ -58,7 +60,7 @@ def transcribe(job, body):
 def fake_current_user(request: Request):
     user = request.app.state.platform.rbac.users.get(request.headers.get('x-test-user'))
     if user is None:
-        raise HTTPException(401, '未登录')
+        raise HTTPException(401, '未登录', headers={'WWW-Authenticate': 'Bearer'})
     return user
 
 
@@ -163,7 +165,7 @@ def test_review_rejects_self_stale_unauthorized_and_invalid_decisions(client):
     review = submit_review(client, 'samplereviewer')
     assert_error(decide(client, review, uid='sampleobserver'), 403, 'FORBIDDEN')
     assert_error(decide(client, review, uid='sampleextra'), 403, 'FORBIDDEN')
-    assert_error(decide(client, review, decision='confirm'), 422, 'INVALID_REQUEST')
+    assert_error(decide(client, review, decision='unknown'), 422, 'INVALID_REQUEST')
     assert_error(decide(client, review, version=True), 422, 'INVALID_REQUEST')
     assert_error(decide(client, {'id': 'missing'}), 404, 'NOT_FOUND')
     assert_error(decide(client, review, version=2), 409, 'STALE_VERSION')
@@ -189,6 +191,75 @@ def test_simultaneous_decisions_have_one_winner(client):
     assert sum(event['action'] in {'v1.review.confirm', 'v1.review.return'} for event in audit) == 1
 
 
+@pytest.mark.parametrize(('verb', 'status'), [('confirm', 'confirmed'), ('return', 'needs_info')])
+def test_sdk_review_lists_and_decisions_keep_core_contract(client, verb, status):
+    review = submit_review(client, 'samplereviewer')
+    path = f"{REVIEWS}/{review['id']}/decisions"
+    submitted = f'{REVIEWS}?app=sample-app&mine=submitted'
+    assigned = f'{REVIEWS}?app=sample-app&assignee=me'
+
+    assert client.get(submitted).json() == {'items': [{
+        **review, 'review': 'platform', 'project': 'sample-project', 'decisions': [],
+    }]}
+    assert client.post('/api/auth/login', json={'user_id': 'samplereviewer'}).status_code == 200
+    assert client.get(assigned).json()['items'][0]['id'] == review['id']
+    moved = client.post(path, json={'decision': 'reassign', 'version': 1, 'assignee': 'sampleextra'})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()['assignee'] == 'sampleextra'
+    assert moved.json()['decision']['decision'] == 'reassign'
+    assert client.get(assigned).json() == {'items': []}
+    denied = client.post(path, json={'decision': verb, 'version': 1})
+    assert denied.status_code == 403 and denied.json()['error']['code'] == 'forbidden'
+
+    assert client.post('/api/auth/login', json={'user_id': 'sampleextra'}).status_code == 200
+    item = client.get(assigned).json()['items'][0]
+    assert item['review'] == 'platform' and item['decisions'] == [moved.json()['decision']]
+    decided = client.post(path, json={'decision': verb, 'version': 1, 'comment': 'SDK 意见'})
+    assert decided.status_code == 200, decided.text
+    assert decided.json()['status'] == status
+    assert decided.json()['decision']['comment'] == 'SDK 意见'
+    assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
+    history = client.get(submitted).json()['items'][0]
+    assert history['status'] == status
+    assert history['decisions'] == [moved.json()['decision'], decided.json()['decision']]
+
+
+def test_sdk_app_managed_review_keeps_mode_and_rejects_generic_decision(client):
+    review = submit_review(client, 'samplereviewer', app='sample-library')
+    platform = client.app.state.platform
+    # 模拟既有待办在应用切换为自管模式后的兼容行为。
+    platform.apps['sample-library'].manifest['review'] = 'app'
+    assert client.post('/api/auth/login', json={'user_id': 'samplereviewer'}).status_code == 200
+    pending = client.get(f'{REVIEWS}?app=sample-library&assignee=me').json()['items'][0]
+    assert pending['id'] == review['id'] and pending['review'] == 'app' and pending['decisions'] == []
+    response = client.post(f"{REVIEWS}/{review['id']}/decisions", json={'decision': 'confirm', 'version': 1})
+    assert response.status_code == 409
+    assert response.json()['error']['appId'] == 'sample-library'
+    error = assert_error(decide(client, review), 409, 'INVALID_STATE')
+    assert error['details']['appId'] == 'sample-library'
+    assert client.get(f'{REVIEWS}?app=sample-library&assignee=me').json()['items'][0]['decisions'] == []
+
+
+def test_jingkai_routes_normalize_auth_errors_and_preserve_challenge(client):
+    path = f'{REVIEWS}/missing/decisions'
+    for response in [client.get(f'{JOBS}/missing'), client.get(REVIEWS),
+                     client.post(path, json={'decision': 'approve', 'version': 1})]:
+        assert_error(response, 401, 'UNAUTHENTICATED')
+        assert response.headers['www-authenticate'] == 'Bearer'
+    sdk_response = client.get(f'{JOBS}/missing?app=sample-app')
+    assert sdk_response.status_code == 401 and sdk_response.json()['error']['code'] == 'unauthenticated'
+
+
+@pytest.mark.parametrize('body', ['{"decision":', '[]', '{"decision":"approve"}'])
+def test_jingkai_decision_rejects_invalid_json_shapes_and_fields(client, body):
+    response = client.post(
+        f'{REVIEWS}/missing/decisions', content=body,
+        headers={**as_user('samplereviewer'), 'content-type': 'application/json'},
+    )
+    error = assert_error(response, 422, 'INVALID_REQUEST')
+    assert error['details']['fields']
+
+
 def test_job_missing_and_queued(client):
     client.app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', None)
     assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
@@ -210,13 +281,58 @@ def test_job_missing_and_queued(client):
     assert 'post' in schema[REVIEWS] and 'get' in schema[REVIEWS]
 
 
+def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
+    def fail(_execution, _body):
+        raise DataError('invalid_request', '样例任务失败')
+
+    client.app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
+    with client:
+        assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
+        response = client.post(JOBS, json={
+            'appId': 'sample-app', 'project': 'sample-project', 'operation': 'transcribe',
+            'input': {}, 'idempotencyKey': 'failure-example',
+        })
+        assert response.status_code == 202, response.text
+        path = f"{JOBS}/{response.json()['id']}"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            sdk = client.get(f'{path}?app=sample-app')
+            assert sdk.status_code == 200, sdk.text
+            raw = sdk.json()
+            if raw['status'] == 'failed':
+                break
+            time.sleep(.02)
+        assert raw['status'] == 'failed' and raw['result'] is None
+        assert raw['error']['code'] == 'invalid_request'
+        assert raw['error']['message'] == '样例任务失败'
+        view = client.get(path, headers=as_user('sampleoperator')).json()['job']
+        assert view['status'] == 'failed' and view['progress'] == 0
+
+
+def test_progress_is_monotone_for_consecutive_checkpoints():
+    steps = []
+    job = {'id': 'example', 'operation': 'transcribe', 'input': {}, 'status': 'running', 'steps': steps}
+    progress = [jobs_api.job_view(job)['progress']]
+    for name in ('收件', '转写', '生成纪要'):
+        step = {'name': name, 'status': 'running', 'progress': None}
+        steps.append(step)
+        progress.append(jobs_api.job_view(job)['progress'])
+        step['progress'] = {'current': 2, 'total': 2}
+        progress.append(jobs_api.job_view(job)['progress'])
+        step['status'] = 'done'
+        progress.append(jobs_api.job_view(job)['progress'])
+    assert progress == [0, 0, 0, 50, 50, 50, 66, 66, 66, 75]
+    assert jobs_api.job_view({**job, 'status': 'failed'})['progress'] == 75
+    assert jobs_api.job_view({**job, 'status': 'done'})['progress'] == 100
+
+
 def run_job_process(mode, checkpoint):
     app = install(create_app(ROOT))
     with TestClient(app) as client:
         user = 'sampleoperator'
         headers = as_user(user)
+        assert client.post('/api/auth/login', json={'user_id': user}).status_code == 200
         if mode == 'first':
-            assert client.post('/api/auth/login', json={'user_id': user}).status_code == 200
             response = client.post(JOBS, json={
                 'appId': 'sample-app', 'project': 'sample-project', 'operation': 'transcribe',
                 'input': {'ref': 'meeting-example'}, 'idempotencyKey': 'restart-test',
@@ -224,26 +340,43 @@ def run_job_process(mode, checkpoint):
             assert response.status_code == 202, response.text
             job_id = response.json()['id']
         else:
-            job_id = json.loads(checkpoint.read_text())['id']
+            before = json.loads(checkpoint.read_text())
+            job_id = before['id']
 
+        path = f'{JOBS}/{job_id}'
+        store = app.state.platform.store
+        resumed_step = False
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            response = client.get(f'{JOBS}/{job_id}', headers=headers)
+            sdk = client.get(f'{path}?app=sample-app')
+            assert sdk.status_code == 200, sdk.text
+            raw = sdk.json()
+            response = client.get(path, headers=headers)
             assert response.status_code == 200, response.text
             job = response.json()['job']
-            if mode == 'first' and job['step'] == 1 and job['progress'] == 50:
+            if len(raw['steps']) == 2 and raw['status'] == 'running':
+                transcribing = raw['steps'][1]
+                if mode == 'resume' and not resumed_step and transcribing['progress'] is None:
+                    assert job == before
+                    store.kv_put('sample-app', 'release_transcribe', True)
+                    resumed_step = True
+            if mode == 'first' and len(raw['steps']) == 2 and raw['steps'][1]['progress'] == {
+                'current': 1, 'total': 2,
+            }:
                 pending = checkpoint.with_suffix('.pending')
                 pending.write_text(json.dumps(job))
                 pending.replace(checkpoint)
                 time.sleep(20)  # 等待父进程发送 SIGKILL。
                 raise AssertionError('父进程未在第二步终止子进程')
             if mode == 'resume' and job['status'] == 'done':
-                store = app.state.platform.store
+                assert resumed_step
                 assert store.kv_get('sample-app', 'received') == 1
                 assert store.kv_get('sample-app', 'transcribe_key') == f'{job_id}:转写'
                 assert sum(event['action'] == 'job.recover' for event in store.audit_list()) == 1
-                raw = app.state.platform.jobs.get(app.state.platform.rbac.users[user], job_id)
+                raw = client.get(f'{path}?app=sample-app').json()
                 assert raw['attempt'] == 1 and raw['result'] == {'ref': 'meeting-example'}
+                assert raw['status'] == 'done' and raw['error'] is None
+                assert client.get(f'{path}?app=sample-library').status_code == 404
                 print(json.dumps(job))
                 return
             time.sleep(.02)

@@ -10,7 +10,7 @@ from haiknow_core.data import one, parse
 from haiknow_core.stability import AppUnavailable
 from haiknow_sdk import DataError
 
-from .jobs_api import api_error, replace_core_route
+from .jobs_api import replace_core_route
 
 
 DECISIONS = {'approve': 'confirm', 'reject': 'return'}
@@ -30,7 +30,7 @@ def review_view(review):
     }
 
 
-def list_pending(service, user, app_id):
+def list_pending(service, user):
     with service.store._lock:
         db = service.store._db
         rows = db.execute("select document from v1_reviews order by rowid desc").fetchall()
@@ -38,7 +38,7 @@ def list_pending(service, user, app_id):
         for (raw,) in rows:
             review = json.loads(raw)
             app = review['appId']
-            if review['status'] != 'pending' or (app_id is not None and app != app_id):
+            if review['status'] != 'pending':
                 continue
             if review['assignee'] != user.id and 'approve' not in service.rbac.actions(user, app):
                 continue
@@ -86,27 +86,34 @@ def decide(service, user, review_id, body):
         except DataError as error:
             if (error.code == 'invalid_state' and review['status'] in STATUSES
                     and service.apps[review['appId']].manifest.get('review') != 'app'):
-                return api_error(DataError('invalid_state', '此待办已处理'), code='ALREADY_DECIDED')
+                raise DataError('already_decided', '此待办已处理') from error
             raise
     item = review_view(result)
     item['decision'] = {**result['decision'], 'decision': payload['decision']}
     return {'item': item}
 
 
+async def sdk_review_list(request):
+    return any(key in request.query_params for key in ('app', 'assignee', 'mine'))
+
+
+async def sdk_decision(request):
+    # FastAPI 复用 Request 缓存的请求体。无法解析的输入交给框架验证。
+    try:
+        body = await request.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get('decision') in ('confirm', 'return', 'reassign')
+
+
 def install(app, current_user):
     service = app.state.platform.data
 
-    def reviews(app: str | None = None, user=Depends(current_user)):
-        try:
-            return list_pending(service, user, app)
-        except DataError as error:
-            return api_error(error)
+    def reviews(user=Depends(current_user)):
+        return list_pending(service, user)
 
     def decide_review(rid: str, body: dict, user=Depends(current_user)):
-        try:
-            return decide(service, user, rid, body)
-        except DataError as error:
-            return api_error(error, status=409 if error.code == 'self_review' else None)
+        return decide(service, user, rid, body)
 
-    replace_core_route(app.router, '/api/v1/reviews', 'GET', reviews)
-    replace_core_route(app.router, '/api/v1/reviews/{rid}/decisions', 'POST', decide_review)
+    replace_core_route(app, '/api/v1/reviews', 'GET', reviews, sdk_review_list)
+    replace_core_route(app, '/api/v1/reviews/{rid}/decisions', 'POST', decide_review, sdk_decision)
