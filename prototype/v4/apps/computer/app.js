@@ -15,15 +15,15 @@
       perms: { view: '查看操作记录', operate: '发起电脑操作任务', approve: '—', admin: '管理系统授权' },
       tools: [{ name: 'computer.start', desc: '让 AI 去某个系统完成任务（提交前停下）', params: { task: 'apply|stats|notice|status', ent: 'string' } }],
       intents: [
-        { id: 'computer.apply', examples: ['帮我把星河智驾的申报表填了', '去政策兑现平台帮灵犀大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
+        { id: 'computer.apply', examples: ['帮我把纸鹿二号智驾的申报表填了', '去政策兑现平台帮折页五号大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
         { id: 'computer.stats', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
         { id: 'computer.notice', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
-        { id: 'computer.status', examples: ['查一下星河智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
+        { id: 'computer.status', examples: ['查一下纸鹿二号智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
         { id: 'computer.run', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
       ],
-      starters: ['帮我把星河智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
+      starters: ['帮我把纸鹿二号智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
       demo: [
-        { title: 'AI 代填申报表（停在提交前）', say: '帮我把星河智驾的申报表填了' },
+        { title: 'AI 代填申报表（停在提交前）', say: '帮我把纸鹿二号智驾的申报表填了' },
         { title: '下载官网通知并入库', say: '去官网把最新的申报通知下载下来存到知识库' },
       ],
     },
@@ -64,7 +64,7 @@
         bindHome();
       }
       function viewTasks() {
-        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮星河智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
+        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮纸鹿二号智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
           <div class="sect">常用任务</div><div class="grid g2 cu-tasks">${st.tasks.map((t) => `<div class="card hoverable cu-task" data-task="${t.id}" data-op="computer.task.${t.id}"><div class="row gap3"><span class="app-ico h-amber">${icon(t.icon)}</span><div class="grow"><div class="cu-name">${esc(t.title)}</div><div class="t-3 t-xs clip">${esc((st.systems.find((s) => s.id === t.system) || {}).name || '')}</div></div>${icon('chevron-right')}</div>
             <div class="t-2 t-sm">${esc(t.desc)}</div><div class="row cu-stop">${icon('hand')}<span>${esc(t.stop)}</span></div></div>`).join('')}</div>`;
       }
@@ -108,17 +108,57 @@
 
       /* ---------- 播放：AI 一步步操作 ---------- */
       async function start(task, params, run) {
-        let r; try { r = (await API.start(Object.assign({ task }, params || {}))).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
-        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: [], status: 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
+        const body = Object.assign({ task }, params || {});
+        if (body.ent === '') delete body.ent;
+        let r; try { r = (await API.start(body)).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
+        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: r.shots || [], status: r.status || 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
         const me = P; st.view = 'run'; render();
-        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; await API.report(r.id, { status: 'failed', log: '失败：' + (e.message || e) }); } else if (me.status !== 'stopped' && me.status !== 'draft') { me.status = 'stopped'; await API.report(r.id, { status: 'stopped', log: '已停止', who: ctx.user.name }); } }
+        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } else if (me.status !== 'stopped' && me.status !== 'draft' && me.status !== 'done') { me.status = 'stopped'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } }
         if (P === me && st.view === 'run') renderRun(); load().catch(() => {});
         return me;
       }
       const stepsOf = () => P.run.steps;
       let GEN = 0;
       async function hold() { if (P && P.gen !== GEN) throw 'STOP'; while (P.paused || P.manual) { await sleepRaw(150); if (P.stopped) throw 'STOP'; } if (P.stopped || !alive) throw 'STOP'; if (P.chatRun && P.chatRun.stopped) { P.stopped = true; throw 'STOP'; } }
+      async function playServer() {
+        const labels = { otp: '验证码核验', sign: '签章', pay: '付款', submit: '提交' };
+        while (P && !P.stopped) {
+          const item = (await API.run(P.run.id)).item;
+          P.run = item;
+          P.shots = item.shots || [];
+          P.step = item.step || 0;
+          P.status = item.status;
+          if (item.status === 'waiting' && item.pending) {
+            const kind = item.pending.kind;
+            const label = labels[kind] || kind;
+            const opts = ['确认并继续', '停止'];
+            P.waitKind = kind === 'otp' ? 'otp' : 'gate';
+            P.waitMsg = 'AI 已停在「' + label + '」前，请确认后再继续。';
+            P.waitOpts = opts;
+            hideCursor();
+            if (st.view === 'run') renderRun();
+            let ans;
+            if (P.chatRun) ans = await P.chatRun.ask(P.waitMsg, opts);
+            else ans = await new Promise((res) => (P.resolveWait = res));
+            P.resolveWait = null;
+            P.waitMsg = '';
+            if (P.stopped) { try { await API.confirm(item.id, { decision: 'decline' }); } catch (_) {} throw 'STOP'; }
+            const ok = ans === opts[0];
+            const res = await API.confirm(item.id, ok ? { decision: 'approve', kind } : { decision: 'decline' });
+            P.run = res.item;
+            P.status = res.item.status;
+            if (!ok) { P.status = res.item.status || 'stopped'; throw 'STOP'; }
+          } else if (['done', 'stopped', 'failed'].includes(item.status)) {
+            if (st.view === 'run') renderRun();
+            return;
+          } else {
+            if (st.view === 'run') renderRun();
+            await sleep(400);
+          }
+        }
+      }
       async function play() {
+        if (!(P.run.steps && P.run.steps.length)) return playServer();
         const steps = stepsOf();
         for (let i = P.step; i < steps.length; i++) {
           P.step = i; const s = steps[i];
@@ -285,7 +325,7 @@
         if (!canOp()) { run.fail('当前账号没有“电脑操作”权限'); return; }
         const eid = entOf(slots.ent, slots.text);
         const t = st.tasks.find((x) => x.id === task);
-        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把星河智驾的申报表填了”'); return; }
+        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把纸鹿二号智驾的申报表填了”'); return; }
         openSetup(task, { ent: eid }); await run.step(0);
         if (t.needsEnt) await run.select('[data-op="computer.ent"]', eid);
         await run.click('[data-op="computer.start"]');

@@ -25,6 +25,18 @@ class WebMount(Mount):
         return super().matches(scope)
 
 
+def install_platform(app: FastAPI) -> None:
+    """安装需要包住 core 路由或挂平台存储的模块，每个模块一行。"""
+    from haiknow_core.main import current_user  # 登录依赖只在这里指定
+
+    from . import jobs_api, reviews_api
+    from .conversations import routes as conversations
+
+    app.state.conversations = conversations.install(app, app.state.platform, current_user)
+    jobs_api.install(app, current_user)
+    reviews_api.install(app, current_user)
+
+
 def create_app() -> FastAPI:
     required_environment()
     root = Path(os.environ.get("HAIKNOW_ROOT") or REPO_ROOT).resolve()
@@ -33,11 +45,14 @@ def create_app() -> FastAPI:
         seed = load_project_seed(Path(os.environ["HAIKNOW_CONFIG_DIR"]))
         from haiknow_core.main import create_app as create_core_app
 
+        from .auth import install as install_auth
         from .routers import register_routes
 
         app = create_core_app(root)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
+        install_auth(app)
+        install_platform(app)
 
     app.title = "北京经开区共享智能体工作站"
     install_error_handlers(app)

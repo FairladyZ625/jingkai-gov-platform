@@ -1,0 +1,225 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "enterprise",
+  "name": "企业管理",
+  "summary": "走访前看懂企业，走访后更新台账",
+  "sector": "other",
+  "kind": "module",
+  "scenes": [],
+  "owner": "summerchaserwwz",
+  "actions": [
+    "view",
+    "operate",
+    "approve"
+  ],
+  "defaultRoles": {
+    "admin": [
+      "view",
+      "operate",
+      "approve"
+    ],
+    "leader": [
+      "view",
+      "operate",
+      "approve"
+    ],
+    "member": [
+      "view",
+      "operate"
+    ],
+    "partner": [
+      "view"
+    ]
+  },
+  "needsExternalData": false,
+  "status": "prototype",
+  "tools": [
+    {
+      "name": "enterprise.search",
+      "desc": "按名称/标签查企业",
+      "params": {
+        "q": "string"
+      }
+    },
+    {
+      "name": "enterprise.get",
+      "desc": "一企一档 + 30 秒速览",
+      "params": {
+        "id": "string"
+      }
+    },
+    {
+      "name": "enterprise.propose_update",
+      "desc": "从走访记录提取台账更新建议（不直接写）",
+      "params": {
+        "id": "string",
+        "notes": "string"
+      }
+    },
+    {
+      "name": "enterprise.alerts",
+      "desc": "资质到期 / 久未走访 / 诉求临期",
+      "params": {}
+    }
+  ],
+  "intents": [
+    {
+      "id": "enterprise.find",
+      "action": "find",
+      "examples": [
+        "查一下星河智驾",
+        "打开书香里文化的一企一档",
+        "星河智驾走访前摘要"
+      ],
+      "keywords": [
+        "查一下",
+        "一企一档",
+        "档案",
+        "摘要",
+        "企业情况"
+      ],
+      "slots": {
+        "ent": "enterprise"
+      },
+      "plan": [
+        "打开企业管理",
+        "找到企业",
+        "打开一企一档",
+        "生成 30 秒速览"
+      ]
+    },
+    {
+      "id": "enterprise.visit",
+      "action": "visit",
+      "examples": [
+        "给书香里加一条走访记录",
+        "记一次走访",
+        "整理书香里的走访"
+      ],
+      "keywords": [
+        "走访",
+        "记录走访",
+        "拜访"
+      ],
+      "slots": {
+        "ent": "enterprise"
+      },
+      "plan": [
+        "打开一企一档",
+        "填写走访记录",
+        "AI 提取更新建议",
+        "等你确认写入"
+      ]
+    },
+    {
+      "id": "enterprise.filter",
+      "action": "filter",
+      "examples": [
+        "打开企业台账筛选高新企业",
+        "台账里只看人工智能企业",
+        "列出所有人工智能企业"
+      ],
+      "keywords": [
+        "台账",
+        "筛选",
+        "列出",
+        "只看"
+      ],
+      "plan": [
+        "打开台账",
+        "按条件筛选",
+        "报出数量"
+      ]
+    },
+    {
+      "id": "enterprise.alerts",
+      "action": "alerts",
+      "examples": [
+        "资质快到期的企业有哪些",
+        "哪些企业很久没走访了",
+        "超过 90 天没走访的重点企业",
+        "哪些企业好久没去了",
+        "有哪些企业很久没去看了"
+      ],
+      "keywords": [
+        "到期",
+        "没走访",
+        "久未",
+        "提醒",
+        "预警",
+        "好久没去",
+        "很久没去",
+        "没去过",
+        "多久没去",
+        "没去看",
+        "好久没走访"
+      ],
+      "plan": [
+        "打开企业管理",
+        "查看提醒",
+        "列出企业"
+      ]
+    },
+    {
+      "id": "enterprise.issues",
+      "action": "issues",
+      "examples": [
+        "看看企业诉求办理进度",
+        "打开诉求看板"
+      ],
+      "keywords": [
+        "诉求",
+        "看板",
+        "办理进度"
+      ],
+      "plan": [
+        "打开诉求看板",
+        "汇总各状态"
+      ]
+    },
+    {
+      "id": "enterprise.export",
+      "action": "export",
+      "examples": [
+        "导出企业台账",
+        "把有提醒的企业导出 Excel"
+      ],
+      "keywords": [
+        "导出",
+        "Excel",
+        "CSV"
+      ],
+      "plan": [
+        "打开台账",
+        "筛选",
+        "导出 CSV"
+      ]
+    }
+  ],
+  "accepts": [
+    {
+      "kind": "企业资料",
+      "ext": [
+        "xlsx",
+        "xls",
+        "csv",
+        "pdf",
+        "doc",
+        "docx",
+        "txt",
+        "jpg",
+        "png"
+      ],
+      "match": "企业|台账|走访|名单|营业执照|公司|有限"
+    }
+  ],
+  "routes": [
+    "flow",
+    "detail",
+    "visit",
+    "issues",
+    "list",
+    "board"
+  ]
+}

@@ -28,7 +28,7 @@ window.JK_TAGS = {
   /* 企业标签 */
   entTag: { '高新技术企业': 'violet', '高新': 'violet', '专精特新': 'cyan', '小巨人': 'cyan', '重点企业': 'indigo', '规上企业': 'teal', '上市企业': 'orange', '独角兽': 'pink', '外资': 'amber', '初创': 'green' },
   /* 知识库空间 */
-  kbSpace: { '企业档案': 'green', '政策库': 'indigo', '公文范文': 'orange', '会议纪要': 'violet', '部门制度': 'teal', '政策文件': 'indigo', '公文范本': 'orange', '企业档案': 'teal', '内部制度': 'gray', '培训资料': 'cyan', '统计数据': 'blue', '我的资料': 'pink' },
+  kbSpace: { '企业档案': 'green', '政策库': 'indigo', '申报通知': 'orange', '会议纪要': 'violet', '机构职责': 'teal', '政策文件': 'indigo', '公文范本': 'orange', '企业档案': 'teal', '内部制度': 'gray', '培训资料': 'cyan', '统计数据': 'blue', '我的资料': 'pink' },
   kbStatus: { '现行有效': 'green', '即将到期': 'amber', '已失效': 'gray', '已更新': 'violet', '申报中': 'blue', '已截止': 'gray', '未找到依据': 'gray', '示例': 'gray', '解析中': 'blue', '待确认': 'amber', '重复': 'gray', '新版本': 'blue', '已入库': 'green', '模拟解析': 'amber' },
   kbKind: { '企业档案': 'green', '政策文件': 'indigo', '政策解读': 'cyan', '通知范文': 'orange', '信息简报': 'blue', '工作报告': 'violet', '会议纪要': 'violet', '机构职责': 'teal', '内部制度': 'gray', '上传资料': 'pink' },
   /* 技能分类 */
