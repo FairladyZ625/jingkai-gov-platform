@@ -7,9 +7,12 @@ from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
 from .ledger import router as ledger_router
+from .reminders import register
 
 router = APIRouter()
 router.include_router(ledger_router)
+# 诉求、提醒查询及每日扫描任务；任务与调度声明合入本入口模块。
+register(router, globals())
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
