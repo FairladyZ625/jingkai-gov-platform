@@ -8,9 +8,11 @@ from starlette.exceptions import HTTPException
 
 from haiknow_sdk import DataError
 
+from .error_codes import public_error_code
+
 
 def data_error_response(error, *, status=None, headers=None):
-    payload = {**error.error, 'code': error.code.upper()}
+    payload = {**error.error, 'code': public_error_code(error.code)}
     return JSONResponse({'error': payload}, status_code=status or error.status, headers=headers)
 
 

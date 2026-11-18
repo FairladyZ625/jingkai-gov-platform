@@ -1,6 +1,6 @@
 // HAiKnow 平台 SDK（浏览器端）。应用前端只能 import 本目录（/sdk/...）和自己 web/ 下的文件。
 // 外壳调用应用的 mount(el, ctx)；ctx 由 createContext 生成。
-import { appErrorMessage, defineErrors, loadAppErrors } from './preview/errors.js';
+import { PLATFORM_ERROR_MESSAGES, appErrorMessage, defineErrors, loadAppErrors } from './preview/errors.js';
 
 export const SDK_VERSION = '2.0.0';
 
@@ -32,92 +32,108 @@ export const v1 = {
   notifications: () => http('/api/v1/notifications'),
 };
 
+// SDK 1 应用逐字比较旧平台码。公开 http 和应用自定义码沿用传输层拼写。
+const legacyPlatformCodes = new Set(Object.keys(PLATFORM_ERROR_MESSAGES).map(code => code.toLowerCase()));
+
+async function sdk1Http(path, opts) {
+  try {
+    return await http(path, opts);
+  } catch (error) {
+    if (typeof error?.code === 'string') {
+      const legacyCode = error.code.toLowerCase();
+      if (legacyPlatformCodes.has(legacyCode)) error.code = legacyCode;
+    }
+    throw error;
+  }
+}
+
 export function createContext(app, user, toast) {
+  const request = app.sdk === '1' || app.sdk === undefined ? sdk1Http : http;
   const base = `/api/apps/${app.id}`;
   return {
     app,
     user,
     can: (action) => app.actions.includes(action),
-    api: (path, opts) => http(base + path, opts),
+    api: (path, opts) => request(base + path, opts),
     upload: (path, file, field = 'file') => {
       const fd = new FormData();
       fd.append(field, file);
-      return http(base + path, { method: 'POST', body: fd });
+      return request(base + path, { method: 'POST', body: fd });
     },
     url: (path) => base + path,
     records: {
-      save: (body, id) => http(`/api/v1/apps/${app.id}/records${id ? `/${encodeURIComponent(id)}` : ''}`, { method: id ? 'PUT' : 'POST', json: body }),
-      get: (id, version) => http(`/api/v1/apps/${app.id}/records/${encodeURIComponent(id)}${version == null ? '' : `/versions/${version}`}`),
-      list: (filters = {}) => http(`/api/v1/apps/${app.id}/records?${new URLSearchParams(filters)}`),
+      save: (body, id) => request(`/api/v1/apps/${app.id}/records${id ? `/${encodeURIComponent(id)}` : ''}`, { method: id ? 'PUT' : 'POST', json: body }),
+      get: (id, version) => request(`/api/v1/apps/${app.id}/records/${encodeURIComponent(id)}${version == null ? '' : `/versions/${version}`}`),
+      list: (filters = {}) => request(`/api/v1/apps/${app.id}/records?${new URLSearchParams(filters)}`),
     },
     dataFiles: {
       save: (file, project, purpose) => {
         const fd = new FormData();
         for (const [key, value] of Object.entries({ file, project, purpose, app: app.id })) fd.append(key, value);
-        return http('/api/v1/files', { method: 'POST', body: fd });
+        return request('/api/v1/files', { method: 'POST', body: fd });
       },
-      get: (id) => http(`/api/v1/files/${encodeURIComponent(id)}`),
+      get: (id) => request(`/api/v1/files/${encodeURIComponent(id)}`),
       url: (id) => `/api/v1/files/${encodeURIComponent(id)}/content`,
     },
     reviews: {
-      submit: (recordId, version, assignee) => http('/api/v1/reviews', { json: { appId: app.id, recordId, version, assignee } }),
-      decide: (id, body) => http(`/api/v1/reviews/${encodeURIComponent(id)}/decisions`, { json: body }),
-      list: (filters = { assignee: 'me' }) => http(`/api/v1/reviews?${new URLSearchParams({ ...filters, app: app.id })}`),
+      submit: (recordId, version, assignee) => request('/api/v1/reviews', { json: { appId: app.id, recordId, version, assignee } }),
+      decide: (id, body) => request(`/api/v1/reviews/${encodeURIComponent(id)}/decisions`, { json: body }),
+      list: (filters = { assignee: 'me' }) => request(`/api/v1/reviews?${new URLSearchParams({ ...filters, app: app.id })}`),
     },
     artifacts: {
-      find: (filters = {}) => http(`/api/v1/artifacts?${new URLSearchParams(filters)}`),
+      find: (filters = {}) => request(`/api/v1/artifacts?${new URLSearchParams(filters)}`),
     },
     notifications: {
-      list: () => http(`/api/v1/notifications?${new URLSearchParams({ app: app.id })}`),
-      read: (id) => http(`/api/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+      list: () => request(`/api/v1/notifications?${new URLSearchParams({ app: app.id })}`),
+      read: (id) => request(`/api/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
     },
     preview: {
       datasets: {
-        list: async () => (await import('./preview/datasets.js')).list(http, app.id),
-        query: async (id, options = {}) => (await import('./preview/datasets.js')).query(http, app.id, id, options),
+        list: async () => (await import('./preview/datasets.js')).list(request, app.id),
+        query: async (id, options = {}) => (await import('./preview/datasets.js')).query(request, app.id, id, options),
       },
       members: {
-        list: async (project, action = 'approve') => (await import('./preview/members.js')).list(http, app.id, project, action),
+        list: async (project, action = 'approve') => (await import('./preview/members.js')).list(request, app.id, project, action),
       },
       messages: {
-        send: async (body) => (await import('./preview/messages.js')).send(http, app.id, body),
-        inbox: async () => (await import('./preview/messages.js')).inbox(http),
-        get: async (id) => (await import('./preview/messages.js')).get(http, id),
-        read: async (id) => (await import('./preview/messages.js')).read(http, id),
-        acknowledge: async (id) => (await import('./preview/messages.js')).acknowledge(http, id),
-        sent: async () => (await import('./preview/messages.js')).sent(http, app.id),
+        send: async (body) => (await import('./preview/messages.js')).send(request, app.id, body),
+        inbox: async () => (await import('./preview/messages.js')).inbox(request),
+        get: async (id) => (await import('./preview/messages.js')).get(request, id),
+        read: async (id) => (await import('./preview/messages.js')).read(request, id),
+        acknowledge: async (id) => (await import('./preview/messages.js')).acknowledge(request, id),
+        sent: async () => (await import('./preview/messages.js')).sent(request, app.id),
       },
       schedules: {
-        list: async () => (await import('./preview/schedules.js')).list(http, app.id),
-        enable: async (name, project) => (await import('./preview/schedules.js')).enable(http, app.id, name, project),
-        pause: async (name, project) => (await import('./preview/schedules.js')).pause(http, app.id, name, project),
-        resume: async (name, project) => (await import('./preview/schedules.js')).resume(http, app.id, name, project),
-        run: async (name, project) => (await import('./preview/schedules.js')).run(http, app.id, name, project),
+        list: async () => (await import('./preview/schedules.js')).list(request, app.id),
+        enable: async (name, project) => (await import('./preview/schedules.js')).enable(request, app.id, name, project),
+        pause: async (name, project) => (await import('./preview/schedules.js')).pause(request, app.id, name, project),
+        resume: async (name, project) => (await import('./preview/schedules.js')).resume(request, app.id, name, project),
+        run: async (name, project) => (await import('./preview/schedules.js')).run(request, app.id, name, project),
       },
       aiTools: {
-        embedding: async (text, options = {}) => (await import('./preview/ai-tools.js')).embedding(http, app.id, text, options),
-        parse: async (fileId, options = {}) => (await import('./preview/ai-tools.js')).parse(http, app.id, fileId, options),
-        search: async (query, options = {}) => (await import('./preview/ai-tools.js')).search(http, app.id, query, options),
-        fetch: async (url, options = {}) => (await import('./preview/ai-tools.js')).fetchPage(http, app.id, url, options),
-        vision: async (fileId, instruction, options = {}) => (await import('./preview/ai-tools.js')).vision(http, app.id, fileId, instruction, options),
-        transcribe: async (fileId, options = {}) => (await import('./preview/ai-tools.js')).transcribe(http, app.id, fileId, options),
+        embedding: async (text, options = {}) => (await import('./preview/ai-tools.js')).embedding(request, app.id, text, options),
+        parse: async (fileId, options = {}) => (await import('./preview/ai-tools.js')).parse(request, app.id, fileId, options),
+        search: async (query, options = {}) => (await import('./preview/ai-tools.js')).search(request, app.id, query, options),
+        fetch: async (url, options = {}) => (await import('./preview/ai-tools.js')).fetchPage(request, app.id, url, options),
+        vision: async (fileId, instruction, options = {}) => (await import('./preview/ai-tools.js')).vision(request, app.id, fileId, instruction, options),
+        transcribe: async (fileId, options = {}) => (await import('./preview/ai-tools.js')).transcribe(request, app.id, fileId, options),
       },
       crossProject: {
-        records: async (subject, filters = {}) => (await import('./preview/cross-project.js')).records(http, app.id, subject, filters),
-        get: async (id, version) => (await import('./preview/cross-project.js')).get(http, app.id, id, version),
-        readFile: async (id) => (await import('./preview/cross-project.js')).readFile(http, app.id, id),
+        records: async (subject, filters = {}) => (await import('./preview/cross-project.js')).records(request, app.id, subject, filters),
+        get: async (id, version) => (await import('./preview/cross-project.js')).get(request, app.id, id, version),
+        readFile: async (id) => (await import('./preview/cross-project.js')).readFile(request, app.id, id),
       },
       knowledge: {
-        categories: async () => (await import('./preview/knowledge.js')).categories(http),
-        list: async (options = {}) => (await import('./preview/knowledge.js')).list(http, app.id, options),
-        get: async (id) => (await import('./preview/knowledge.js')).get(http, id),
-        upload: async (file, options = {}) => (await import('./preview/knowledge.js')).upload(http, app.id, file, options),
-        addVersion: async (id, file, options = {}) => (await import('./preview/knowledge.js')).addVersion(http, id, file, options),
-        update: async (id, patch) => (await import('./preview/knowledge.js')).update(http, id, patch),
-        submit: async (id, version) => (await import('./preview/knowledge.js')).submit(http, id, version),
-        publish: async (id, version) => (await import('./preview/knowledge.js')).publish(http, id, version),
-        references: async (id) => (await import('./preview/knowledge.js')).references(http, id),
-        recordFiles: async (appId, recordId, version) => (await import('./preview/knowledge.js')).recordFiles(http, appId, recordId, version),
+        categories: async () => (await import('./preview/knowledge.js')).categories(request),
+        list: async (options = {}) => (await import('./preview/knowledge.js')).list(request, app.id, options),
+        get: async (id) => (await import('./preview/knowledge.js')).get(request, id),
+        upload: async (file, options = {}) => (await import('./preview/knowledge.js')).upload(request, app.id, file, options),
+        addVersion: async (id, file, options = {}) => (await import('./preview/knowledge.js')).addVersion(request, id, file, options),
+        update: async (id, patch) => (await import('./preview/knowledge.js')).update(request, id, patch),
+        submit: async (id, version) => (await import('./preview/knowledge.js')).submit(request, id, version),
+        publish: async (id, version) => (await import('./preview/knowledge.js')).publish(request, id, version),
+        references: async (id) => (await import('./preview/knowledge.js')).references(request, id),
+        recordFiles: async (appId, recordId, version) => (await import('./preview/knowledge.js')).recordFiles(request, appId, recordId, version),
         url: (id, version) => `/api/v1/knowledge/entries/${encodeURIComponent(id)}/versions/${version}/content`,
       },
       errors: {
@@ -126,21 +142,21 @@ export function createContext(app, user, toast) {
         message: (error) => appErrorMessage(app.id, error),
       },
       latex: {
-        templates: async () => (await import('./preview/latex.js')).templates(http),
-        render: async (body) => (await import('./preview/latex.js')).render(http, app.id, body),
+        templates: async () => (await import('./preview/latex.js')).templates(request),
+        render: async (body) => (await import('./preview/latex.js')).render(request, app.id, body),
       },
       media: {
-        capture: async (options = {}) => (await import('./preview/media.js')).capture(http, app.id, options),
-        upload: async (file, options = {}) => (await import('./preview/media.js')).upload(http, app.id, file, options),
+        capture: async (options = {}) => (await import('./preview/media.js')).capture(request, app.id, options),
+        upload: async (file, options = {}) => (await import('./preview/media.js')).upload(request, app.id, file, options),
       },
       cad: {
-        status: async () => (await import('./preview/cad.js')).status(http),
-        parse: async (entryId, options = {}) => (await import('./preview/cad.js')).parse(http, app.id, entryId, options),
+        status: async () => (await import('./preview/cad.js')).status(request),
+        parse: async (entryId, options = {}) => (await import('./preview/cad.js')).parse(request, app.id, entryId, options),
       },
       feishu: {
-        messages: async (filters = {}) => (await import('./preview/feishu.js')).messages(http, app.id, filters),
-        message: async (id) => (await import('./preview/feishu.js')).message(http, app.id, id),
-        status: async () => (await import('./preview/feishu.js')).status(http, app.id),
+        messages: async (filters = {}) => (await import('./preview/feishu.js')).messages(request, app.id, filters),
+        message: async (id) => (await import('./preview/feishu.js')).message(request, app.id, id),
+        status: async () => (await import('./preview/feishu.js')).status(request, app.id),
       },
     },
     toast,

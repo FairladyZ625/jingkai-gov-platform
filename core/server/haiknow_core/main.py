@@ -283,6 +283,7 @@ def create_app(root: Path | None = None) -> FastAPI:
         m = e.manifest
         v = {
             "id": m["id"],
+            "sdk": m.get("sdk", "1"),
             "name": m["name"],
             "sector": m["sector"],
             "kind": m["kind"],

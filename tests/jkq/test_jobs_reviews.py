@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -281,15 +282,29 @@ def test_job_missing_and_queued(client):
     assert 'post' in schema[REVIEWS] and 'get' in schema[REVIEWS]
 
 
-def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
+@pytest.mark.parametrize(('code', 'expected'), [
+    ('invalid_request', 'INVALID_REQUEST'),
+    ('loan_period_invalid', 'loan_period_invalid'),
+])
+def test_sdk_job_failure_retains_flat_error_and_jingkai_view(
+    isolated_platform, jkq_accounts, monkeypatch, code, expected,
+):
     def fail(_execution, _body):
-        raise DataError('invalid_request', '样例任务失败')
+        raise DataError(code, '样例任务失败', retryable=True, fields=['period'])
 
-    client.app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
-    with client:
-        assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
+    monkeypatch.setenv('HAIKNOW_SECRET', secrets.token_hex(16))
+    config, _ = isolated_platform
+    (config / 'projects.yaml').write_bytes((ROOT / 'config/projects.yaml').read_bytes())
+    (config / 'users.yaml').write_text(json.dumps({'users': [
+        {'id': 'sampleoperator', 'name': '样例办理员', 'roles': ['sampleoperator'], 'projects': ['jkq']},
+    ]}), encoding='utf-8')
+    create, login = jkq_accounts
+    app = create()
+    app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
+    with TestClient(app) as client:
+        login(client, 'sampleoperator')
         response = client.post(JOBS, json={
-            'appId': 'sample-app', 'project': 'sample-project', 'operation': 'transcribe',
+            'appId': 'sample-app', 'project': 'jkq', 'operation': 'transcribe',
             'input': {}, 'idempotencyKey': 'failure-example',
         })
         assert response.status_code == 202, response.text
@@ -303,9 +318,11 @@ def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
                 break
             time.sleep(.02)
         assert raw['status'] == 'failed' and raw['result'] is None
-        assert raw['error']['code'] == 'INVALID_REQUEST'
-        assert raw['error']['message'] == '样例任务失败'
-        view = client.get(path, headers=as_user('sampleoperator')).json()['job']
+        assert raw['error'] == {
+            'code': expected, 'message': '样例任务失败', 'retryable': True,
+            'fields': ['period'], 'jobId': raw['id'],
+        }
+        view = client.get(path).json()['job']
         assert view['status'] == 'failed' and view['progress'] == 0
 
 

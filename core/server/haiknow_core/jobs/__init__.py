@@ -4,13 +4,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends
 
+from ..error_codes import public_error_code
 from .service import JobService, SubmitBody
 
 
 def _job_response(job):
-    # 旧任务也可能携带小写错误码，在 HTTP 出口统一转换。
-    if job.get('error'):
-        return {**job, 'error': {**job['error'], 'code': job['error']['code'].upper()}}
+    # 旧任务的快照在 HTTP 读出时规范平台码，持久化文档保留原值。
+    error = job.get('error')
+    if error:
+        return {**job, 'error': {**error, 'code': public_error_code(error['code'])}}
     return job
 
 

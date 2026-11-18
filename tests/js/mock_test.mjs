@@ -1,5 +1,6 @@
 // 浏览器假数据服务的场景测试；由 js-tests 作业直接调起，本机 node tests/js/mock_test.mjs。
 import assert from 'node:assert/strict';
+import { createContext, http } from '../../core/sdk/js/haiknow.js';
 import { installMock, toCsv } from '../../core/sdk/js/mock/index.js';
 
 const BASE = 'http://mock.local';
@@ -133,6 +134,20 @@ await withMock('conflict', async () => {
   assert.equal((await retry.json()).version, 3);
 });
 
+await withMock('conflict', async () => {
+  const record = await create();
+  const path = `/records/${record.id}`;
+  const options = { method: 'PUT', json: { baseVersion: 1, title: '并发修改' } };
+  const legacy = createContext({ id: 'demo-flow', sdk: '1' }, {}, () => {});
+  const implicit = createContext({ id: 'demo-flow' }, {}, () => {});
+  const current = createContext({ id: 'demo-flow', sdk: '2' }, {}, () => {});
+  await assert.rejects(legacy.api(path, options),
+    error => error.code === 'version_conflict' && error.status === 409 && error.currentVersion === 2);
+  await assert.rejects(implicit.api(path, options), { code: 'version_conflict' });
+  await assert.rejects(current.api(path, options), { code: 'VERSION_CONFLICT' });
+  await assert.rejects(http(app(path), options), { code: 'VERSION_CONFLICT' });
+});
+
 await withMock('slow', async () => {
   const started = Date.now();
   assert.equal((await call('/records')).status, 200);
@@ -183,4 +198,4 @@ assert.equal(
   '\ufeff字段,内容\nworkpiece,W-1\nundercut,0.2\n状态,confirmed\n提交人,sampleoperator\n确认人,samplereviewer\n',
 );
 
-console.log('mock ok: normal / custom fields / forbidden / failure / conflict / slow / self_review / shared-state / csv');
+console.log('mock ok: normal / custom fields / forbidden / failure / conflict / SDK 1 and 2 / slow / self_review / shared-state / csv');
