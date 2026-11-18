@@ -304,7 +304,11 @@
         issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `旧事项 ${policyId} 已下线，请在新建文稿时重新选择有效的政策事项，并核对原文。` });
       } else {
         const current = policyItem(p);
-        const same = (i, expected) => normalizePolicyText(stripPolishClosing(d.paragraphs[i])) === normalizePolicyText(expected);
+        const same = (i, expected) => {
+          const text = d.paragraphs[i];
+          const target = normalizePolicyText(expected);
+          return normalizePolicyText(text) === target || normalizePolicyText(stripPolishClosing(text)) === target;
+        };
         const valid = d.templateId === 'T10' ? same(1, replyPolicyBasis(current))
           : d.templateId !== 'T03' || (
             normalizePolicyText(d.paragraphs[0]).includes(normalizePolicyText(p.example ? exampleLabel : documentBasis(current))) &&

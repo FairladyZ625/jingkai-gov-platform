@@ -369,6 +369,21 @@ for (const [templateId, policy, protectedParagraphs] of [
   });
 }
 
+test('精简润色保留 RP-042 政策原文中的「进行」', async () => {
+  const { api } = boot();
+  const { item: draft } = await api.post(documentRoute + '/drafts', {
+    templateId: 'T10', inputs: { policy: 'RP-042', ent: 'E001', issue: '咨询申报时间' },
+  });
+  const resource = documentRoute + '/drafts/' + draft.id;
+  const quote = latest(draft).paragraphs[1];
+  assert.match(quote, /进行/);
+  const { preview, changed } = await api.post(resource + '/polish', { style: 'concise' });
+  assert.equal(changed, true);
+  assert.equal(preview.paragraphs[1], quote);
+  await api.put(resource, { content: preview });
+  assert.equal((await api.post(resource + '/submit', {})).item.status, '审签中');
+});
+
 test('基线生成的 PI-08 旧金额和依据阻止送审，按 RP-006 修订后可送审及定稿', async () => {
   const { api, draft, resource } = bootWithLegacyPolicy('PI-08');
   const { issues } = await api.post(resource + '/check', {});

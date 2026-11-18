@@ -288,6 +288,7 @@ async function checkPolishedApproval(page) {
     await op(panel, 'document.tpl-' + templateId).click();
     await op(panel, 'document.sample').click();
     await op(panel, 'document.in-policy').selectOption(policy);
+    if (templateId === 'T03') await op(panel, 'document.in-contact').fill('请填写');
     await op(panel, 'document.gen').click();
     await op(panel, 'document.paper').waitFor();
     await op(panel, 'document.panel-polish').click();
