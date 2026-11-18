@@ -24,3 +24,9 @@
 **/__pycache__
 **/*.key
 **/*.pem
+!deploy/
+!deploy/entrypoint.py
+!deploy/healthcheck.py
+!deploy/hold/
+!deploy/hold/jkq-hold/
+!deploy/hold/jkq-hold/**

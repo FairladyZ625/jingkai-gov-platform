@@ -1,0 +1,16 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "jkq-hold",
+  "name": "演示续跑",
+  "summary": "启动后保持运行，容器重启后完成且已完成步骤不重复",
+  "sector": "other",
+  "kind": "module",
+  "owner": "北京经开区",
+  "actions": ["view", "operate"],
+  "defaultRoles": {
+    "admin": ["view", "operate"],
+    "leader": ["view", "operate"]
+  },
+  "status": "usable"
+}
