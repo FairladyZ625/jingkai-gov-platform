@@ -35,7 +35,7 @@ def login(c, username, password):
 
 @pytest.mark.parametrize("title", TITLES, ids=TITLES)
 def test_segment(server, title):
-    url, password = server
+    url, password = server.url, server.password
     with httpx.Client(base_url=url, trust_env=False) as c:
         me = login(c, "wangmin", password)
         if title in DEPENDENCIES:
@@ -155,9 +155,10 @@ def test_segment(server, title):
         elif title == "管理后台":
             admin = login(c, "admin", password)
             assert "admin" in admin["grants"]["*"]
-            assert data(c.get("/api/v1/admin/users"))["users"]
+            assert any(user["username"] == "admin" for user in data(c.get("/api/v1/admin/users"))["items"])
+            assert data(c.get("/api/v1/admin/grants"))["grants"]
             assert data(c.get("/api/v1/models"))["items"]
-            assert data(c.get("/api/audit"))["items"]
+            assert data(c.get("/api/v1/audit"))["items"]
         elif title == "浅色主题":
             for theme in ("light", "dark"):
                 data(c.patch("/api/v1/me/prefs", json={"theme": theme}))
@@ -167,15 +168,18 @@ def test_segment(server, title):
 
 
 def test_reset_checks_real_session_before_host(server):
-    url, password = server
+    url, password = server.url, server.password
     path = "/api/v1/demo/reset"
     with httpx.Client(base_url=url, trust_env=False) as c:
-        assert c.post(path).status_code == 401
+        anonymous = c.post(path)
+        assert (anonymous.status_code, anonymous.json()["error"]["code"]) == (401, "UNAUTHENTICATED")
         login(c, "hejun", password)
-        assert c.post(path).status_code == 403
+        denied = c.post(path)
+        assert (denied.status_code, denied.json()["error"]["code"]) == (403, "FORBIDDEN")
         try:
             data(c.put("/api/v1/me/role", json={"role": "admin"}))
-            assert c.post(path).status_code == 403
+            denied = c.post(path)
+            assert (denied.status_code, denied.json()["error"]["code"]) == (403, "FORBIDDEN")
         finally:
             data(c.put("/api/v1/me/role", json={"role": "partner"}))
         login(c, "admin", password)
