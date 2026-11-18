@@ -8,6 +8,8 @@
   const Op = window.JKOp;
   const S = { me: null, role: null, grants: {}, models: [], model: 'auto', convs: [], cur: null, open: [], active: null, mounted: {}, inbox: [], todos: [], layout: 'home' };
   const root = () => $('#root');
+  let conversationEpoch = 0;
+  let switchingAccount = false;
 
   /* ---------------- 工具 ---------------- */
   const can = (app, action) => { const g = S.grants || {}; const acts = [...(g['*'] || []), ...(g[app] || [])]; return acts.includes('admin') || acts.includes(action || 'view'); };
@@ -32,10 +34,15 @@
     if (!u) return renderLogin();
     await afterLogin();
   }
-  async function afterLogin() {
-    const r = await API.me.get(); S.me = r.user; S.role = r.role; S.grants = r.grants || {};
-    try { const m = await API.models.list(); S.models = m.items || []; S.model = m.current || 'auto'; } catch (e) {}
-    loadConvs(); S.cur = null; S.open = []; S.active = null; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
+  async function afterLogin(finishPreviousAccount) {
+    const profile = await API.me.get();
+    const models = await API.models.list().catch(() => null);
+    // 视角切换的任务卡属于发起账号。新会话校验通过后，再切换本地存储键。
+    finishPreviousAccount?.();
+    conversationEpoch++;
+    S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
+    loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
     renderShell(); Op.loadDict(); refreshInbox();
   }
 
@@ -63,13 +70,23 @@
     $('#lf').onsubmit = (e) => { e.preventDefault(); go(e.target.u.value.trim(), e.target.p.value); };
     $$('.ql').forEach((b) => (b.onclick = () => go(b.dataset.u, b.dataset.p)));
   }
-  async function switchUser(username) {
+  async function switchUser(username, run) {
     const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a) return;
-    if (Op.running) Op.running.stop(true);
-    await API.auth.logout().catch(() => {}); await API.auth.login({ username: a.username, password: a.password }); await afterLogin();
-    toast(`已切换为 ${a.name}（${a.role}）`);
+    if (switchingAccount) return;
+    switchingAccount = true;
+    try {
+      if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
+      rememberActivePanel();
+      await API.auth.logout().catch(() => {});
+      await API.auth.login({ username: a.username, password: a.password });
+      // 登录和权限刷新都成功才完成原任务。
+      await afterLogin(() => { if (run) run.done(); });
+      toast(`已切换为 ${a.name}（${a.role}）`);
+    } finally {
+      switchingAccount = false;
+    }
   }
-  async function logout() { await API.auth.logout().catch(() => {}); S.me = null; renderLogin(); }
+  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; renderLogin(); }
 
   /* ---------------- 外壳骨架 ---------------- */
   function renderShell() {
@@ -125,8 +142,8 @@
   function bindShell() {
     $('#side-sc').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
-      if (b.dataset.app) { const id = b.dataset.app; const had = S.mounted[id]; if (S.active === id && had && had.ctl.go) { try { had.ctl.go('home', {}); } catch (e) {} return; } return openApp(id).then(() => { if (had && had.ctl && had.ctl.go && !(Op.running)) { try { had.ctl.go('home', {}); } catch (e) {} } }); }
-      const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); S.convs = S.convs.filter((c) => c.id !== id); if (S.cur === id) S.cur = null; saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
+      if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
+      const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
       if (b.dataset.conv) return openConv(b.dataset.conv);
       const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(); else if (n) openBuiltin(n);
     };
@@ -137,8 +154,8 @@
     $('#btn-demo').onclick = () => window.JKDemo && JKDemo.start();
     $('#btn-max').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-chat-toggle').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
-    $('#btn-pclose').onclick = () => closePanel();
-    $('#ptabs').onclick = (e) => { const x = e.target.closest('.x'); const t = e.target.closest('.ptab'); if (!t) return; if (x) return closeTab(t.dataset.id); activate(t.dataset.id); };
+    $('#btn-pclose').onclick = () => { if (switchingAccount) return; Op.running?.stop(true); rememberPanel(); closePanel(); };
+    $('#ptabs').onclick = (e) => { const x = e.target.closest('.x'); const t = e.target.closest('.ptab'); if (!t) return; if (x) return closeTab(t.dataset.id); snapshotPanel(S.mounted[S.active]); activate(t.dataset.id); rememberActivePanel(); };
     // 拖文件
     const cc = $('#chatcol'); let dc = 0;
     cc.addEventListener('dragenter', (e) => { if ([...(e.dataTransfer.types || [])].includes('Files')) { dc++; cc.classList.add('dragging'); e.preventDefault(); } });
@@ -146,7 +163,7 @@
     cc.addEventListener('dragleave', () => { dc = Math.max(0, dc - 1); if (!dc) cc.classList.remove('dragging'); });
     cc.addEventListener('drop', (e) => { e.preventDefault(); dc = 0; cc.classList.remove('dragging'); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) readFile(f).then(handleFile); });
   }
-  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); cmdk(); } if (e.key === 'Escape' && Op.running && !$('.modal')) Op.running.stop(); }); }
+  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); cmdk(); } if (e.key === 'Escape' && !switchingAccount && Op.running && !$('.modal')) Op.running.stop(); }); }
   function meMenu(anchor) {
     const items = [{ head: `${S.me.name} · ${roleName()}` }, { v: 'settings', icon: 'user', label: '个人设置' }];
     if (isAdmin()) items.push({ v: 'admin', icon: 'shield', label: '管理后台' });
@@ -157,33 +174,121 @@
   async function reset() { await API.demo.reset(); localStorage.removeItem(storeKey()); try { await API.auth.login({ username: S.me.username, password: (CFG.demoAccounts.find((a) => a.username === S.me.username) || { password: 'jk123456' }).password }); } catch (e) { return renderLogin(); } JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置'); }
 
   /* ---------------- 布局与面板 ---------------- */
+  const shellRoutedApps = ['policy', 'enterprise', 'meeting', 'document'];
+  const detailViews = { meeting: 'meeting.minutes', document: 'document.paper' };
+  async function waitForApp(ctl) {
+    if (typeof ctl.ready !== 'function') return true;
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve(ctl.ready()).then(() => true),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(false), 3000); }),
+      ]);
+    } catch (e) {
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function mountApp(id, params) {
+    const view = h(`<div class="pview" data-view="${id}"><div class="app-root app-${id}"></div></div>`);
+    $('#pbody').appendChild(view);
+    const el = view.firstElementChild; const ctx = makeCtx(id, el, params);
+    const slot = S.mounted[id] = { view, el, ctx, ctl: null, panel: { app: id, route: 'home', params: {} } };
+    if (id === 'document') {
+      slot.edits = {};
+      el.addEventListener('click', (e) => {
+        const template = e.target.closest('[data-tpl]');
+        if (template && !template.disabled) slot.templateId = template.dataset.tpl;
+        if (e.target.closest('[data-act="discard"], [data-ver]')) slot.edits = {};
+      });
+      el.addEventListener('focusout', (e) => {
+        if (e.target.dataset.ed != null) slot.edits[e.target.dataset.ed] = e.target.value.trim();
+      });
+    }
+    if (id === 'policy') {
+      el.addEventListener('click', (e) => {
+        const choice = e.target.closest('[data-ent], [data-act="clear"]');
+        if (choice) slot.entId = choice.dataset.ent;
+        if (e.target.closest('[data-act="showAll"]')) slot.expandedPicks = true;
+      });
+      el.addEventListener('change', (e) => {
+        const itemId = e.target.dataset.pick;
+        if (!itemId || !slot.pickedIds) return;
+        if (e.target.checked) slot.pickedIds.add(itemId);
+        else slot.pickedIds.delete(itemId);
+        slot.selectionChanged = true;
+      });
+    }
+    try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
+    return slot;
+  }
   function setLayout(l) { S.layout = l; const m = $('#main'); if (!m) return; m.classList.toggle('split', l === 'split'); m.classList.toggle('max', l === 'max'); $('#btn-max').innerHTML = icon(l === 'max' ? 'minimize' : 'maximize'); renderChatBody(); }
-  async function openApp(id, route, params) {
+  async function openApp(id, route, params, restoring = false) {
     if (!JK.registry[id]) { toast('该应用还没有启用', { type: 'warn' }); return; }
     if (!can(id, 'view')) { toast(`你的角色没有「${mf(id).name}」的使用权限`, { type: 'err' }); return; }
+    const pending = S.mounted[id];
+    if (pending?.restoring) {
+      await pending.restoring;
+      if (S.mounted[id] !== pending) return;
+    }
+    snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
     S.lru = [...(S.lru || []).filter((x) => x !== id), id];
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
     let slot = S.mounted[id]; const fresh = !slot;
-    if (!slot) {
-      const view = h(`<div class="pview" data-view="${id}"><div class="app-root app-${id}"></div></div>`); $('#pbody').appendChild(view);
-      const el = view.firstElementChild; const ctx = makeCtx(id, el, params || {});
-      slot = S.mounted[id] = { view, el, ctx, ctl: null };
-      try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
-    } else if (route || (params && Object.keys(params).length)) { slot.ctx.params = params || {}; try { slot.ctl.go && slot.ctl.go(route || 'home', params || {}); } catch (e) { console.error(e); } }
-    if (route && slot.ctl && slot.ctl.go && !slot._went) { slot._went = true; }
+    const args = { ...params };
+    if (!slot) slot = mountApp(id, args);
+    const hasParams = Object.keys(args).length > 0;
+    // 这四个应用的 mount 只初始化首屏，其余应用保留已有的 ctx.params 初始化。
+    const shouldGo = fresh ? shellRoutedApps.includes(id) && route && (route !== 'home' || hasParams) : route || Object.keys(args).some((key) => key !== 'via');
+    const navigation = slot.navigation = {};
+    if (args.via !== 'operator') {
+      // 恢复历史时打开电脑操作首页，避免重复启动操作。
+      if (id === 'computer' && route === 'run') slot.panel = { app: id, route: 'home', params: {} };
+      else if (route || hasParams || fresh) slot.panel = { app: id, route: route || 'home', params: args };
+      if (id === 'document' && args.templateId) slot.templateId = args.templateId;
+      if (id === 'policy' && args.entId) slot.entId = args.entId;
+      rememberPanel(slot.panel);
+    }
     activate(id); if (S.layout !== 'max') setLayout('split');
-    if (slot.ctl && typeof slot.ctl.ready === 'function') { try { await slot.ctl.ready(); } catch (e) {} } // 可选：应用异步首屏就绪后再交给 action
-    await sleep(fresh ? 160 : 30); return slot;
+    const ready = await waitForApp(slot.ctl);
+    if (S.mounted[id] !== slot || slot.navigation !== navigation) return;
+    if (!ready) {
+      console.warn(`「${mf(id).name}」等待就绪超过 3 秒，已显示首页`);
+      if (hasParams || !fresh) {
+        const active = S.active;
+        unmountApp(id);
+        slot = mountApp(id, {});
+        activate(active);
+      }
+      if (S.active === id && args.via !== 'operator') rememberPanel(slot.panel);
+      return slot;
+    }
+    if (shouldGo && slot.ctl.go) {
+      slot.ctx.params = args;
+      try {
+        if (restoring) {
+          slot.restoring = restoreApp(slot, route, args);
+          await slot.restoring;
+        } else await slot.ctl.go(route || 'home', args);
+      } catch (e) { console.error(e); }
+      finally { delete slot.restoring; }
+    }
+    await sleep(fresh ? 160 : 30);
+    return slot;
   }
   function openBuiltin(id, tab) {
     if (id === 'admin' && !isAdmin()) { toast('需要管理员权限', { type: 'err' }); return; }
+    snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
     S.lru = [...(S.lru || []).filter((x) => x !== id), id];
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
-    let slot = S.mounted[id]; const fresh = !slot;
+    let slot = S.mounted[id];
     if (!slot) { const view = h(`<div class="pview" data-view="${id}"><div class="app-root pad"></div></div>`); $('#pbody').appendChild(view); slot = S.mounted[id] = { view, el: view.firstElementChild, builtin: true, ctl: {} }; }
     slot.tab = tab || slot.tab; renderBuiltin(id);
+    slot.panel = { app: id, route: slot.tab || 'home', params: {} };
+    rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
     return sleep(30);
   }
@@ -194,16 +299,144 @@
     const pt = $('#ptabs'); pt.classList.toggle('many', S.open.length > 4); const on = pt.querySelector('.ptab.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     renderSide();
   }
-  function closeTab(id) {
+  function unmountApp(id) {
     const slot = S.mounted[id]; if (slot) { try { slot.ctl && slot.ctl.unmount && slot.ctl.unmount(); } catch (e) {} slot.view.remove(); delete S.mounted[id]; }
-    S.open = S.open.filter((x) => x !== id); if (!S.open.length) return closePanel(); if (S.active === id) activate(S.open[S.open.length - 1]); else activate(S.active);
   }
-  function closePanel() { S.open.slice().forEach((x) => { const slot = S.mounted[x]; if (slot) { try { slot.ctl.unmount && slot.ctl.unmount(); } catch (e) {} slot.view.remove(); } }); S.open = []; S.mounted = {}; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
+  function closeTab(id) {
+    const wasActive = S.active === id;
+    unmountApp(id);
+    S.open = S.open.filter((x) => x !== id);
+    if (!S.open.length) { rememberPanel(); return closePanel(); }
+    activate(wasActive ? S.open[S.open.length - 1] : S.active);
+    if (wasActive) rememberActivePanel();
+  }
+  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
+
+  // 通过应用现有控件恢复私有状态，复用其校验和保存逻辑。
+  async function restoreApp(slot, route, params) {
+    const { app } = slot.panel;
+    const query = (selector) => slot.el.querySelector(selector);
+    const current = () => S.mounted[app] === slot;
+    const find = async (selector) => {
+      const deadline = Date.now() + 3000;
+      while (current()) {
+        const el = query(selector);
+        if (el || Date.now() >= deadline) return el;
+        await sleep(40);
+      }
+    };
+    const change = (selector, value, event = 'change') => {
+      const field = query(selector);
+      if (!field || !current()) return;
+      if (field.type === 'checkbox') field.checked = value;
+      else field.value = value;
+      field.dispatchEvent(new Event(event, { bubbles: true }));
+    };
+    const click = (selector) => { if (current()) query(selector)?.click(); };
+    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.filter || params.expanded)));
+    await slot.ctl.go(matchedRoute ? 'match' : route, params);
+
+    if (matchedRoute && await find('.pol-kpis')) {
+      if (Array.isArray(params.pickedIds)) {
+        const selected = new Set(params.pickedIds);
+        const changed = [...new Set([...slot.pickedIds, ...selected])].filter((id) => slot.pickedIds.has(id) !== selected.has(id));
+        const pick = (id) => `[data-pick="${CSS.escape(id)}"]`;
+        if (params.expanded || changed.some((id) => !query(pick(id)))) click('[data-op="policy.show-all"]');
+        changed.forEach((id) => change(pick(id), selected.has(id)));
+      } else if (params.expanded) click('[data-op="policy.show-all"]');
+      if (route === 'match' && params.filter) click(`[data-filter="${CSS.escape(params.filter)}"]`);
+      if (route === 'estimate' || route === 'notice') click('[data-op="policy.next"]');
+      if (route === 'notice') click('[data-op="policy.to-notice"]');
+    }
+    if (app === 'policy' && route === 'notice' && typeof params.notice === 'string' && await find('#pn')) {
+      change('#pn', params.notice, 'input');
+    }
+
+    if (app === 'document' && params.edits && await find('[data-pe="title"]')) {
+      for (const [field, value] of Object.entries(params.edits)) {
+        if (!current()) return;
+        const key = CSS.escape(field);
+        click(`[data-pe="${key}"]`);
+        const editor = query(`[data-ed="${key}"]`);
+        if (editor) {
+          change(`[data-ed="${key}"]`, value, 'input');
+          editor.blur();
+        }
+      }
+    }
+    if (app === 'document' && route === 'list' && params.q && await find('#dlq')) change('#dlq', params.q, 'input');
+
+    if (app === 'enterprise' && route === 'list' && await find('#lq')) {
+      // 等待上一筛选渲染完再操作依赖它的排序控件。
+      await slot.listRequest;
+      if (params.industry) { change('#lind', params.industry); await slot.listRequest; }
+      if (params.alert) { change('#lal', true); await slot.listRequest; }
+      if (params.sort && await find('#lsort')) { change('#lsort', params.sort); await slot.listRequest; }
+      if (params.q) change('#lq', params.q, 'input');
+    }
+  }
 
   /* ---------------- ctx（注入应用） ---------------- */
   function makeCtx(id, el, params) {
     const ui = { tag: (l, g, o) => tag(l, g, o), hue: JK.hue, icon: (n, s) => icon(n, s), appIcon: (a, s) => appIcon(a, s), toast, modal: JK.modal, drawer: JK.drawer, confirm: JK.confirm, menu: JK.menu, empty: JK.empty, steps: JK.steps, esc, md, download: JK.download, fmtMoney: JK.fmtMoney, fmtDate: JK.fmtDate };
     const api = Object.assign(Object.create(window.JKApi), { get: (p, q) => H.get(p, q), post: H.post, put: H.put, patch: H.patch, del: H.del, request: H.request });
+    const mounted = () => S.mounted[id]?.el === el ? S.mounted[id] : null;
+    // 详情控制器把 ID 留在应用内部。就地记录详情请求返回的 ID，保存时再核对实际页面。
+    if (id === 'meeting') {
+      api.meeting = { ...API.meeting, get: async (...args) => {
+        const detail = !!el.querySelector('#ms');
+        const result = await API.meeting.get(...args);
+        const slot = mounted();
+        if (detail && slot) slot.recordId = result.item.id;
+        return result;
+      } };
+    }
+    if (id === 'document') {
+      api.document = { ...API.document };
+      for (const action of ['get', 'draft', 'save']) api.document[action] = async (...args) => {
+        const result = await API.document[action](...args);
+        const slot = mounted();
+        if (slot) {
+          slot.recordId = result.item.id;
+          slot.draftContent = result.item.versions?.at(-1)?.content;
+          slot.edits = {};
+        }
+        return result;
+      };
+    }
+    // 应用可在操作员词典就绪之前自行解析企业，使用实际查询的 ID 恢复。
+    if (id === 'policy') api.policy = { ...API.policy, match: async (params) => {
+      const result = await API.policy.match(params);
+      const slot = mounted();
+      if (slot) {
+        slot.entId = params.entId;
+        // 核对页只渲染部分事项，完整初选来自本次匹配的实际结果。
+        const results = result.results || [];
+        const defaults = results.filter((item) => item.level === 'ok' && !item.ended);
+        slot.pickedIds = new Set((defaults.length ? defaults : results.filter((item) => item.level !== 'no').slice(0, 2)).map((item) => item.id));
+        slot.selectionChanged = false;
+        slot.expandedPicks = false;
+      }
+      return result;
+    } };
+    if (id === 'enterprise') api.enterprise = {
+      ...API.enterprise,
+      get: async (entId) => {
+        const result = await API.enterprise.get(entId);
+        const slot = mounted();
+        if (slot) slot.entId = entId;
+        return result;
+      },
+      list: (query) => {
+        const result = API.enterprise.list(query);
+        const slot = mounted();
+        if (query?.sort && slot) {
+          slot.listSort = query.sort;
+          slot.listRequest = result;
+        }
+        return result;
+      },
+    };
     const kb = {
       search: (q, o = {}) => (JK.services.kb && JK.services.kb.search ? JK.services.kb.search(q, o) : API.kb.search({ q, lib: o.space || o.lib, filters: o.filters })),
       ask: (q, o = {}) => (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(q, o) : API.kb.ask({ q, lib: o.space || o.lib })),
@@ -216,17 +449,111 @@
       get user() { return { id: S.me.id, name: S.me.name, role: S.me.role, roleName: roleName(), dept: S.me.dept, title: S.me.title, username: S.me.username }; },
       perms: { can: (action, app) => can(app || id, action), mask: maskVal, get isPartner() { return !!(S.role && S.role.mask); } },
       theme: { get: theme, on: (f) => JK.bus.on('theme', f) },
-      nav: { open: (a, r, p) => (a === 'inbox' || a === 'admin' ? openBuiltin(a, r) : openApp(a, r, p)), go: (r, p) => { const s = S.mounted[id]; s && s.ctl.go && s.ctl.go(r, p); }, back: () => {}, chat: (text) => send(text) },
+      nav: { open: (a, r, p) => { if (mounted()) return a === 'inbox' || a === 'admin' ? openBuiltin(a, r) : openApp(a, r, p); }, go: (r, p) => mounted()?.ctl?.go?.(r, p), back: () => {}, chat: (text) => { if (mounted()) return send(text); } },
       operator: { isRunning: () => !!Op.running },
-      chat: { post: (card) => postAI(typeof card === 'string' ? { text: card } : card), say: (t) => postAI({ text: t }) },
+      chat: { post: (card) => { if (mounted()) return postAI(typeof card === 'string' ? { text: card } : card); }, say: (t) => { if (mounted()) return postAI({ text: t }); } },
       audit: (action, detail) => H.post('/api/v1/audit', { app: mf(id).name, action: detail ? `${action} · ${detail}` : action }).catch(() => {}),
     };
   }
 
   /* ---------------- 对话 ---------------- */
   function conv() { return S.convs.find((c) => c.id === S.cur); }
-  function newChat() { S.cur = null; if (Op.running) Op.running.stop(true); renderSide(); renderChatBody(); setTimeout(() => { const t = $('#chatcol textarea'); t && t.focus(); }, 30); }
-  function openConv(id) { S.cur = id; renderSide(); renderChatBody(); }
+  function rememberPanel(panel) {
+    const c = conv(); if (!c || c.panel === panel) return;
+    if (panel) c.panel = panel;
+    else delete c.panel;
+    saveConvs();
+  }
+  function snapshotPanel(slot) {
+    if (!slot) return;
+    if (slot.restoring) return slot.panel;
+    const { app, route, params } = slot.panel;
+    const query = (selector) => slot.el.querySelector(selector);
+    const tab = query('.ap-tabs .tab.on')?.dataset.tab;
+    const step = query('.wiz-step.on')?.dataset.op;
+    const show = (nextRoute, nextParams = {}) => {
+      if (route !== nextRoute || JSON.stringify(params) !== JSON.stringify(nextParams)) slot.panel = { app, route: nextRoute, params: nextParams };
+      return slot.panel;
+    };
+    if (app === 'document' && tab === 'list') {
+      const q = query('#dlq')?.value;
+      return show('list', q ? { q } : {});
+    }
+    if (slot.recordId && detailViews[app] && query(`[data-op="${detailViews[app]}"]`)) {
+      const detail = app === 'document' && slot.el.querySelector('.dc-diff') ? 'compare' : 'detail';
+      const next = { id: slot.recordId };
+      if (app === 'document' && query('[data-op="document.save"]')) {
+        const edits = { ...slot.edits };
+        const active = query('[data-ed]');
+        if (active) edits[active.dataset.ed] = active.value.trim();
+        const content = slot.draftContent;
+        const changed = Object.entries(edits).filter(([field, value]) => value !== (field === 'title' ? content?.title : content?.paragraphs?.[field]));
+        if (changed.length) next.edits = Object.fromEntries(changed);
+      }
+      return show(detail, next);
+    }
+    if (app === 'document' && step === 'document.step-0') return show('new');
+    if (app === 'document' && slot.templateId) {
+      const fields = [...slot.el.querySelectorAll('#ds [data-in]')];
+      if (fields.length && (route !== 'new' || params.templateId !== slot.templateId || fields.some((field) => field.value !== (params.inputs?.[field.dataset.in] ?? '')))) {
+        const inputs = Object.fromEntries(fields.map((field) => [field.dataset.in, field.value]));
+        return show('new', { ...(route === 'new' ? params : {}), templateId: slot.templateId, inputs });
+      }
+    }
+    if (app === 'policy') {
+      if (tab === 'items' && route !== 'detail') {
+        const q = query('[data-op="policy.items-q"]')?.value;
+        const object = query('[data-obj].on')?.dataset.obj;
+        return show('items', { ...(q && { q }), ...(object && { object }) });
+      }
+      if (tab === 'docs') return show('docs');
+      if (step === 'policy.step-0') return show('home', slot.entId && query('.pol-prof') ? { entId: slot.entId } : {});
+      if (slot.entId && slot.pickedIds) {
+        const policyRoute = { 'policy.step-1': 'match', 'policy.step-2': 'estimate', 'policy.step-3': 'notice' }[step];
+        if (policyRoute) {
+          const next = { entId: slot.entId };
+          const notice = query('#pn');
+          if (slot.selectionChanged || policyRoute !== 'match') next.pickedIds = [...slot.pickedIds];
+          if (notice) next.notice = notice.value;
+          const filter = query('[data-filter].on')?.dataset.filter;
+          if (filter) next.filter = filter;
+          if (slot.expandedPicks) next.expanded = true;
+          return show(policyRoute, next);
+        }
+      }
+    }
+    if (app === 'enterprise' && tab === 'list') {
+      const q = query('#lq')?.value;
+      const tag = query('#ltag')?.value;
+      const industry = query('#lind')?.value;
+      const alert = query('#lal')?.checked;
+      const sort = slot.listSort;
+      return show('list', { ...(q && { q }), ...(tag && { tag }), ...(industry && { industry }), ...(alert && { alert: 1 }), ...(sort && sort !== 'lastVisit' && { sort }) });
+    }
+    if (app === 'enterprise' && tab === 'board') return show('board');
+    if (app === 'enterprise' && slot.entId && query('[data-op="enterprise.profile"]')) {
+      return show('profile', { entId: slot.entId });
+    }
+    return slot.panel;
+  }
+  function rememberActivePanel() { rememberPanel(snapshotPanel(S.mounted[S.active])); }
+  function switchConversation(id) {
+    if (switchingAccount) return;
+    conversationEpoch++;
+    rememberActivePanel();
+    if (Op.running) Op.running.stop(true);
+    S.cur = id;
+    // go('home') 会保留部分应用的企业和向导状态，关闭挂载才能完整复位。
+    closePanel();
+    const panel = conv()?.panel;
+    if (panel && JK.BUILTIN[panel.app]) return openBuiltin(panel.app, panel.route === 'home' ? undefined : panel.route);
+    if (panel) return openApp(panel.app, panel.route, panel.params, true);
+  }
+  function newChat() {
+    switchConversation(null);
+    setTimeout(() => { const t = $('#chatcol textarea'); t && t.focus(); }, 30);
+  }
+  function openConv(id) { if (id !== S.cur) return switchConversation(id); }
   function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [] }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
   function renderChat() { renderChatBody(); }
   function renderChatBody() {
@@ -342,7 +669,7 @@
       el.querySelector('.pnotes').innerHTML = (m.notes || []).slice(-2).map((n) => `<div class="t-3 t-xs" style="padding-left:30px">${esc(n)}</div>`).join('');
       const st = el.querySelector('.pstate');
       st.innerHTML = m.state === 'run' ? `<button class="btn sm ghost" data-stop title="Esc">${icon('hand')}我来接手</button>` : m.state === 'done' ? tag('已完成') : m.state === 'fail' ? tag('失败') : m.state === 'stopped' ? tag('已停下', null, { hue: 'gray' }) : '';
-      const sb = st.querySelector('[data-stop]'); if (sb) sb.onclick = () => m._card && m._card.onStop && m._card.onStop();
+      const sb = st.querySelector('[data-stop]'); if (sb) sb.onclick = () => { if (!switchingAccount) m._card?.onStop?.(); };
       const pl = el.querySelector('.plan'); const fin = m.state && m.state !== 'run';
       if (fin && m._open === undefined) pl.classList.add('folded'); else if (!fin) pl.classList.remove('folded');
       let pc = el.querySelector('.pcount'); if (!pc) { pc = h('<span class="pcount"></span>'); el.querySelector('.ptitle').after(pc); }
@@ -372,8 +699,10 @@
 
   /* 发送：理解 → 操作 / 确认 / 回答 */
   async function send(text, opt = {}) {
+    if (switchingAccount) return;
     text = String(text || '').trim(); if (!text) return;
     if (!opt.silentUser) push({ role: 'user', text });
+    const epoch = conversationEpoch;
     const u = Op.understand(text); const b = u.best;
     if (!u.slots.ent && !opt.noFuzzy) { const fz = Op.fuzzyEnt(text); if (fz) {
       const fixed = text.replace(fz.span, fz.ent.short);
@@ -384,6 +713,7 @@
       return; } }
     // 技能触发语
     let sk = null; try { sk = JK.services.skills && JK.services.skills.match ? await JK.services.skills.match(text) : null; } catch (e) {}
+    if (epoch !== conversationEpoch || switchingAccount) return;
     if (sk && sk.skill && (!b || sk.score >= b.score)) return runIntent({ app: 'skills', action: 'run', title: '运行技能：' + sk.skill.name, plan: ['打开技能中心', '准备输入', '运行技能', '整理结果'] }, { ...u.slots, skillId: sk.skill.id }, text);
     if (b && b.score >= 2.6) return runIntent(b.intent, b.slots, text);
     if (b && b.score >= 1.5 && Op.demo) return runIntent(b.intent, b.slots, text);
@@ -397,11 +727,27 @@
     return answer(text);
   }
   async function runIntent(intent, slots, text, file) {
+    if (switchingAccount) return;
     const app = intent.app;
     if (intent.needsAdmin && !isAdmin()) return postAI({ text: '这件事需要**管理员**来做。你可以在头像菜单里切换到管理员视角（演示）。' });
     if (app && !intent.platform && JK.registry[app] && !can(app, 'view')) return postAI({ text: `你的角色（${roleName()}）没有「${mf(app).name}」的使用权限。需要的话请管理员在“角色与授权”里开通。` });
     if (app && !intent.platform && !JK.registry[app]) return postAI({ text: `「${app}」应用还没有启用。` });
-    await Op.start({ intent, slots, text, file, appId: intent.platform ? 'shell' : app });
+    ensureConv(text || intent.title || '新对话');
+    const epoch = conversationEpoch;
+    return Op.start({
+      intent, slots, text, file, appId: intent.platform ? 'shell' : app,
+      isCurrent: () => epoch === conversationEpoch,
+      onDone: () => { if (app && !intent.platform && S.active === app) rememberIntentPanel(app, intent, slots); },
+    });
+  }
+  function rememberIntentPanel(app, intent, slots) {
+    const slot = S.mounted[app]; if (!slot) return;
+    const saved = snapshotPanel(slot);
+    const { action } = intent;
+    const save = (route, params = {}) => { slot.panel = { app, route, params }; rememberPanel(slot.panel); };
+    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { itemId: slots.policy.id });
+    if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
+    rememberPanel(saved);
   }
   function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: c.n || i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
   async function answer(text) {
@@ -452,7 +798,7 @@
     if (!can(cand.app, 'operate')) return postAI({ text: `这是一份${a.kind || '文件'}，需要「${m.name}」的操作权限，你的角色暂时没有。` });
     postAI({ text: `这是一份**${a.kind || '文件'}**，${a.say || `我交给「${m.name}」处理`}。` });
     const intent = { app: cand.app, action: 'intake', title: `处理：${file.name.length > 18 ? file.name.slice(0, 18) + '…' : file.name}`, plan: a.plan || ['识别文件', `打开${m.short || m.name}`, '处理内容', '等你确认'] };
-    await Op.start({ intent, slots: Op.understand(file.name + ' ' + (file.text || '').slice(0, 200)).slots, text: text || '', file, appId: cand.app });
+    return runIntent(intent, Op.understand(file.name + ' ' + (file.text || '').slice(0, 200)).slots, text || '', file);
   }
 
   /* ---------------- ⌘K ---------------- */
@@ -516,8 +862,8 @@
   /* ---------------- 对外（操作员钩子、管理后台、演示） ---------------- */
   const shellApi = { S, can, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };
   Object.assign(Op.hooks, {
-    postPlan, postAI, openApp: (id, r, p) => openApp(id, r, p), appCtl: (id) => S.mounted[id] && S.mounted[id].ctl, appEl: (id) => S.mounted[id] && S.mounted[id].el,
-    openBuiltin, inboxCount: () => S.inbox.length, setModel, setTheme, switchUser: async (u) => { await switchUser(u); }, helpText, helpNext,
+    postPlan, postAI, openApp, appCtl: (id) => S.mounted[id] && S.mounted[id].ctl, appEl: (id) => S.mounted[id] && S.mounted[id].el,
+    openBuiltin, inboxCount: () => S.inbox.length, setModel, setTheme, switchUser: (u) => switchUser(u, Op.running), helpText, helpNext,
     startDemo: () => window.JKDemo && JKDemo.start(), reset,
   });
   window.JKShell = shellApi;

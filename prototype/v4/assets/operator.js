@@ -90,36 +90,46 @@
   };
 
   /* ---------- 运行（任务清单 + run API） ---------- */
-  Op.start = async function ({ intent, slots, text, file, plan, appId, title }) {
+  let latestRequest = 0;
+  Op.start = async function ({ intent, slots, text, file, plan, appId, title, isCurrent = () => true, onDone }) {
+    if (!isCurrent()) return;
+    const request = ++latestRequest;
     if (Op.running) { Op.running.stop(true); await sleep(50); }
+    if (!isCurrent() || request !== latestRequest) return;
     const steps = plan || intent.plan || ['理解需求', '执行', '完成'];
     const card = Op.hooks.postPlan({ title: title || intent.title || steps[0], appId: appId || intent.app, steps });
-    const run = makeRun(card, steps, appId || intent.app);
+    const run = makeRun(card, steps, appId || intent.app, isCurrent, onDone);
+    const hooks = { ...Op.hooks };
+    // 平台意图同样可以在 await 之后打开面板，导航要核对这个 run 的归属。
+    for (const name of ['openApp', 'openBuiltin', 'switchUser', 'reset']) {
+      hooks[name] = (...args) => { run.check(); return Op.hooks[name](...args); };
+    }
     Op.running = run; document.body.classList.add('op-on');
     try {
       await run.step(0);
-      if (run.appId && run.appId !== 'shell') await Op.hooks.openApp(run.appId, intent.route, { ...(intent.params || {}), via: 'operator' });
+      if (run.appId && run.appId !== 'shell') await hooks.openApp(run.appId, intent.route, { ...(intent.params || {}), via: 'operator' });
+      run.check();
       const ctl = run.appId && Op.hooks.appCtl(run.appId);
       const actName = intent.action;
-      if (intent.run) await intent.run({ ...slots, text, file }, run, Op.hooks);
+      if (intent.run) await intent.run({ ...slots, text, file }, run, hooks);
       else if (ctl && ctl.actions && typeof ctl.actions[actName] === 'function') await ctl.actions[actName]({ ...slots, text, file }, run);
       else if (ctl && ctl.go) { await run.step(steps.length - 1); ctl.go(intent.route || 'home', { ...slots, text }); run.done(`已打开「${(JK.registry[run.appId] || {}).manifest.name}」`); }
       if (!run.finished) run.done();
     } catch (e) {
-      if (e && e.stop) { run.markStopped(); }
+      if (e?.stop || run.stopped || !isCurrent()) { run.markStopped(); }
       else { console.warn(e); run.fail((e && e.message) || '执行出错'); }
     } finally {
-      if (Op.running === run) Op.running = null; hideCursor(); document.body.classList.remove('op-on');
+      if (Op.running === run) { Op.running = null; hideCursor(); document.body.classList.remove('op-on'); }
     }
   };
 
-  function makeRun(card, steps, appId) {
+  function makeRun(card, steps, appId, isCurrent, onDone) {
     let cur = -1; const root = () => (appId && Op.hooks.appEl(appId)) || document;
     const r = {
       appId, stopped: false, finished: false,
-      check() { if (r.stopped) throw new Stop(); },
+      check() { if (r.stopped || !isCurrent()) throw new Stop(); },
       stop(silent) { r.stopped = true; r.silent = !!silent; if (r._askRes) r._askRes(null); },
-      async step(i) { r.check(); for (let k = 0; k < steps.length; k++) card.set(k, k < i ? 'done' : k === i ? 'run' : 'todo'); cur = i; await sleep(220 / Op.speed); },
+      async step(i) { r.check(); for (let k = 0; k < steps.length; k++) card.set(k, k < i ? 'done' : k === i ? 'run' : 'todo'); cur = i; await r.sleep(220); },
       async find(sel, timeout = 5000) {
         const t0 = Date.now();
         for (;;) { r.check(); const el = typeof sel === 'string' ? (root().querySelector(sel) || document.querySelector(sel)) : sel; if (el && el.getClientRects().length) return el; if (Date.now() - t0 > timeout) throw new Error('界面上没找到：' + sel); await sleep(80); }
@@ -138,7 +148,7 @@
         const rc = el.getBoundingClientRect(); const rp = h(`<div class="op-click" style="left:${rc.left + Math.min(rc.width / 2, 40)}px;top:${rc.top + rc.height / 2}px"></div>`); document.body.appendChild(rp); setTimeout(() => rp.remove(), 600);
         el.click(); await sleep(260 / Op.speed); return el;
       },
-      async select(sel, value) { const el = await r.find(sel); await moveTo(el); el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); await sleep(200 / Op.speed); return el; },
+      async select(sel, value) { const el = await r.find(sel); await moveTo(el); r.check(); el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); await sleep(200 / Op.speed); return el; },
       async wait(cond, timeout = 8000) { const t0 = Date.now(); for (;;) { r.check(); let ok = false; try { ok = typeof cond === 'string' ? !!(root().querySelector(cond) || document.querySelector(cond)) : await cond(); } catch (e) {} if (ok) return ok; if (Date.now() - t0 > timeout) throw new Error('等待超时'); await sleep(100); } },
       sleep: (ms) => sleep(ms / Op.speed).then(() => r.check()),
       say(text) { card.note(text); },
@@ -148,9 +158,9 @@
         if (Op.demo) setTimeout(() => card.pick(options[0]), 1400 / Op.speed);
         const ans = await p; r._askRes = null; r.check(); if (cur >= 0) card.set(cur, 'run'); return ans;
       },
-      done(summary, next, extra) { if (r.finished) return; r.finished = true; for (let k = 0; k < steps.length; k++) card.set(k, 'done'); card.finish('done'); const sens = appId === 'enterprise' ? { model: 'Qwen3-32B（本地）', routeNote: '涉及企业台账，已自动走本地模型，数据不出局' } : {}; if (summary || next) Op.hooks.postAI({ text: summary || '已完成。', next: next || [], ...sens, ...(extra || {}) }); JK.bus.emit('op:done', { appId }); },
-      fail(msg) { if (r.finished) return; r.finished = true; if (cur >= 0) card.set(cur, 'fail'); card.finish('fail'); Op.hooks.postAI({ text: `没能完成：${msg}。你可以在右侧自己接着操作。` }); JK.bus.emit('op:done', { appId, fail: true }); },
-      markStopped() { if (r.finished) return; r.finished = true; card.finish('stopped'); if (!r.silent) Op.hooks.postAI({ text: '已停下，右侧保持当前进度，你可以自己接着操作。' }); JK.bus.emit('op:done', { appId, stopped: true }); },
+      done(summary, next, extra) { if (r.finished) return; r.check(); onDone?.(); r.finished = true; for (let k = 0; k < steps.length; k++) card.set(k, 'done'); card.finish('done'); const sens = appId === 'enterprise' ? { model: 'Qwen3-32B（本地）', routeNote: '涉及企业台账，已自动走本地模型，数据不出局' } : {}; if (summary || next) Op.hooks.postAI({ text: summary || '已完成。', next: next || [], ...sens, ...(extra || {}) }); JK.bus.emit('op:done', { appId }); },
+      fail(msg) { if (r.finished) return; if (r.stopped || !isCurrent()) return r.markStopped(); r.finished = true; if (cur >= 0) card.set(cur, 'fail'); card.finish('fail'); Op.hooks.postAI({ text: `没能完成：${msg}。你可以在右侧自己接着操作。` }); JK.bus.emit('op:done', { appId, fail: true }); },
+      markStopped() { if (r.finished) return; r.finished = true; card.finish('stopped'); if (!r.silent && isCurrent()) Op.hooks.postAI({ text: '已停下，右侧保持当前进度，你可以自己接着操作。' }); JK.bus.emit('op:done', { appId, stopped: true }); },
     };
     card.onStop = () => r.stop();
     return r;

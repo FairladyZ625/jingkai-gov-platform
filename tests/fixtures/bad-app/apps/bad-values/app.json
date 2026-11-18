@@ -1,0 +1,9 @@
+{
+  "contract": 2,
+  "id": "bad-values",
+  "name": "取值非法的清单",
+  "sector": "space",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

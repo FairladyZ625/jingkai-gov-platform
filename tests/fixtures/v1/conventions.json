@@ -1,0 +1,5 @@
+{
+  "states": {"draft":"草稿","needs_info":"待补充","pending":"待确认","confirmed":"已确认","recheck":"需重新核对"},
+  "errors": {"unauthenticated":401,"not_found":404,"forbidden":403,"self_review":403,"stale_version":409,"version_conflict":409,"invalid_state":409,"invalid_reference":422,"invalid_request":422,"method_not_allowed":405,"internal_error":500},
+  "errorFields": ["code","message","retryable"]
+}

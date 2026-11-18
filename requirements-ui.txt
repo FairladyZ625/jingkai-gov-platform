@@ -1,0 +1,4 @@
+-r requirements.txt
+# 只给 CI 的真实界面走查用；本机开发依赖系统 Chrome，不必装这个文件。
+# 版本与 .gitlab-ci.yml 的浏览器缓存键、npmmirror 上的 Chromium 修订对齐。
+playwright==1.57.0
