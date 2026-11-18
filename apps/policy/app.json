@@ -14,16 +14,21 @@
     "approve"
   ],
   "defaultRoles": {
-    "sampleoperator": [
-      "view",
-      "operate"
-    ],
-    "samplereviewer": [
+    "admin": [
       "view",
       "operate",
       "approve"
     ],
-    "sampleobserver": [
+    "leader": [
+      "view",
+      "operate",
+      "approve"
+    ],
+    "member": [
+      "view",
+      "operate"
+    ],
+    "partner": [
       "view"
     ]
   },
