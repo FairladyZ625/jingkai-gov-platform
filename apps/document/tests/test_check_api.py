@@ -150,14 +150,18 @@ def test_fix_does_not_overwrite_concurrent_version(document, monkeypatch):
     assert latest["content"]["docNo"] == INPUTS["docNo"]
 
 
+def core_submit(client, body):
+    # 通用 POST /api/v1/reviews 已拒绝公文（须经核查后走公文送审接口）；这里直接走数据底座造出定稿状态。
+    platform = client.app.state.platform
+    return platform.data.submit_review(platform.directory.user("sampleadmin"), body)
+
+
 def test_finalized_draft_can_be_checked_but_not_fixed(document):
     client, _ = document
     url, original = create(client)
-    response = client.post("/api/v1/reviews", json={
+    review = core_submit(client, {
         "appId": "document", "recordId": original["id"], "version": 1, "assignee": "samplereviewer",
-    })
-    assert response.status_code == 201, response.text
-    review = response.json()["id"]
+    })["id"]
     login(client, "samplereviewer")
     response = client.post(f"/api/v1/reviews/{review}/decisions", json={"version": 1, "decision": "confirm"})
     assert response.status_code == 200, response.text
@@ -168,14 +172,12 @@ def test_finalized_draft_can_be_checked_but_not_fixed(document):
     assert payload(client.get(url))["item"]["versions"] == original["versions"]
 
 
-
 def test_approval_between_check_and_save_blocks_revision(document, monkeypatch):
     client, _ = document
     url, original = create(client)
-    review = client.post("/api/v1/reviews", json={
+    review = core_submit(client, {
         "appId": "document", "recordId": original["id"], "version": 1, "assignee": "samplereviewer",
     })
-    assert review.status_code == 201, review.text
     ids = [issue["id"] for issue in payload(client.post(f"{url}/check"))["issues"] if "fix" in issue]
     assert ids
     platform = client.app.state.platform
@@ -183,7 +185,7 @@ def test_approval_between_check_and_save_blocks_revision(document, monkeypatch):
     save = Records.save
 
     def finalize_before_save(records, *, id=None, **body):
-        platform.data.decide_review(reviewer, review.json()["id"], {"version": 1, "decision": "confirm"})
+        platform.data.decide_review(reviewer, review["id"], {"version": 1, "decision": "confirm"})
         return save(records, id=id, **body)
 
     monkeypatch.setattr(Records, "save", finalize_before_save)
