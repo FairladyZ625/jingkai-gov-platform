@@ -69,7 +69,11 @@ class ModelEnvironment:
 
     def provider(self):
         if self.mode == 'mock':
-            return None
+            if not self.explicit:
+                return None
+            # 显式 mock：本机模拟，不出站，可承接任何分类。
+            return dict(id=ENVIRONMENT_PROVIDER, kind='mock', enabled=True, base_url='',
+                        models=[self.model or 'mock'], api_key='', allow_outbound='confidential')
         kind = {'local': 'local', 'codex-cli': 'codex-cli'}.get(self.mode, 'openai')
         return dict(id=ENVIRONMENT_PROVIDER, kind=kind, enabled=self.ready(),
                     base_url=self.base_url if kind != 'codex-cli' else '',
