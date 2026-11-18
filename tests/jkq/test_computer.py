@@ -255,7 +255,7 @@ def test_api_permissions_and_task_discovery():
                               headers={"x-fixture-user": "admin"})
         assert system.json()["item"]["allowed"] is False
         assert client.post(PREFIX + "/runs", json={"task": "apply"}).status_code == 403
-        assert client.post(PREFIX + "/runs", json={"task": "notice"}).status_code == 404
+        assert client.post(PREFIX + "/runs", json={"task": "status"}).status_code == 404
 
 
 def test_install_uses_core_session_and_audit(request):

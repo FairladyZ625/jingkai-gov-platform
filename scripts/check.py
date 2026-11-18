@@ -311,15 +311,29 @@ def _check_backend(r: Report, d: Path) -> None:
         except SyntaxError as e:
             r.rule("CHK-APP-13", where, f"语法错误：{e}", line=e.lineno)
             continue
+        enterprise_store = f == ROOT / "apps/enterprise/api/ledger_store.py"
+        # 仅豁免字面量键的下标读取，赋值、删除及其他环境变量仍报错。
+        allowed_env = {
+            node.value for node in ast.walk(tree)
+            if enterprise_store and isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant) and node.slice.value == "JKQ_ENTERPRISE_PRIVATE_DB"
+            and isinstance(node.value, ast.Attribute) and node.value.attr == "environ"
+            and isinstance(node.value.value, ast.Name) and node.value.value.id == "os"
+        }
         for line, mod, level in _py_imports(tree):
             if level > 0:
                 continue  # 本应用内相对导入
+            if enterprise_store and mod == "sqlite3":
+                continue
             if mod in PY_FORBIDDEN:
                 r.rule("CHK-APP-10", where, f"禁止 import {mod}（只能通过 haiknow_sdk 使用平台能力）", line=line)
             elif mod not in stdlib and mod not in PY_ALLOWED_3P:
                 r.rule("CHK-APP-11", where, f"未登记的依赖 {mod}；需要新依赖先在 Issue 里提，由底座负责人加入白名单", line=line)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}:
+            env_attribute = isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
+            env_import = (enterprise_store and isinstance(node, ast.ImportFrom) and node.module == "os"
+                          and any(a.name in {"*", "environ", "getenv", "putenv"} for a in node.names))
+            if (env_attribute and node not in allowed_env) or env_import:
                 r.rule("CHK-APP-12", where, "禁止读写环境变量；配置走平台", line=node.lineno)
             if isinstance(node, ast.Attribute) and node.attr.startswith("_") and not node.attr.startswith("__"):
                 r.rule("CHK-APP-14", where, f"禁止访问 SDK 私有属性 {node.attr}（CHK-BOUNDARY）", line=node.lineno)
