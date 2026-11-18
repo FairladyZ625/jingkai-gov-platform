@@ -228,10 +228,15 @@ def install(app, *, demo=None, clock=time.time):
             used = db.execute("select count(*) from users where status='active' and (demo=0 or ?)", (demo,)).fetchone()[0]
             settings = directory.settings()
             seats = db.execute("select value from settings where key='seats'").fetchone()
+            extra = {'isAdmin': 'admin' in platform.rbac.actions(user, '*')}
+            models = getattr(request.app.state, 'jkq_models', None)
+            if models is not None:  # 与 jkq.models 的 /me 默认模型保持一致
+                extra['defaultModel'] = models.current(user.id)
+                settings = {**settings, 'defaultModel': extra['defaultModel']}
             return dict(
                 **session_document(user),
                 org=dict(**directory.company(), seats=json.loads(seats[0]) if seats else None, used=used),
-                settings=settings, prefs=_prefs(db, user),
+                settings=settings, prefs=_prefs(db, user), **extra,
             )
 
     @router.post('/api/auth/password', include_in_schema=False)
