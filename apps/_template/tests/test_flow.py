@@ -57,7 +57,7 @@ def test_unconfirmed_record_cannot_be_exported(client_for):
     denied = sampleoperator.get(f"{BASE}/records/{record['id']}/export")
     assert denied.status_code == 409
     assert denied.json()["error"] == {
-        "code": "invalid_state",
+        "code": "INVALID_STATE",
         "message": "记录确认后才能导出",
         "retryable": False,
     }

@@ -91,7 +91,7 @@ def test_python_sdk_scopes_and_cross_app_flow(make_client, tmp_path):
     assert c.get(a + '/notifications').json()['items'] == []
     assert c.post(a + '/read/' + note['id']).status_code == 404
     assert c.post(b + '/read/' + note['id']).json()['read'] is True
-    assert c.post(a + '/save', json={'id': source['id'], 'baseVersion': 1, 'data': {}}).json()['error']['code'] == 'version_conflict'
+    assert c.post(a + '/save', json={'id': source['id'], 'baseVersion': 1, 'data': {}}).json()['error']['code'] == 'VERSION_CONFLICT'
     assert len(c.get(b + '/records').json()['items']) == 1
     login(c, 'sampleobserver')
     assert c.post(b + '/save', json={'project': 'sample-project', 'type': 'report', 'data': {}}).status_code == 403
@@ -166,8 +166,8 @@ await sdk.v1.notifications();
 // 原应用 API 和 v1 方法共存。
 await ctx.api('/records');
 assert.equal(calls.at(-1).path, '/api/apps/app-b/records');
-globalThis.fetch = async () => ({ ok: false, status: 409, headers: { get: () => 'application/json' }, json: async () => ({ error: { code: 'version_conflict', message: '记录已有新版本', retryable: false, currentVersion: 2 } }) });
-await assert.rejects(() => ctx.records.save({}), e => e.status === 409 && e.code === 'version_conflict' && e.currentVersion === 2 && e.message === '记录已有新版本' && e.retryable === false);
+globalThis.fetch = async () => ({ ok: false, status: 409, headers: { get: () => 'application/json' }, json: async () => ({ error: { code: 'VERSION_CONFLICT', message: '记录已有新版本', retryable: false, currentVersion: 2 } }) });
+await assert.rejects(() => ctx.records.save({}), e => e.status === 409 && e.code === 'VERSION_CONFLICT' && e.currentVersion === 2 && e.message === '记录已有新版本' && e.retryable === false);
 console.log('浏览器 SDK 路由、应用绑定、兼容调用与错误字段通过');
 '''
     with tempfile.TemporaryDirectory(prefix='haiknow-sdk-') as temporary:

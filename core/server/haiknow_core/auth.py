@@ -64,7 +64,7 @@ def install(app, plat, current_user):
 
     @app.exception_handler(IdentityError)
     async def identity_error(request, error):
-        return JSONResponse({'error': error.error}, status_code=error.status)
+        return JSONResponse({'error': {**error.error, 'code': error.error['code'].upper()}}, status_code=error.status)
 
     @router.get('/state')
     def state():

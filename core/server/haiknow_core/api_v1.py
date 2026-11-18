@@ -9,20 +9,25 @@ from starlette.exceptions import HTTPException
 from haiknow_sdk import DataError
 
 
+def data_error_response(error, *, status=None, headers=None):
+    payload = {**error.error, 'code': error.code.upper()}
+    return JSONResponse({'error': payload}, status_code=status or error.status, headers=headers)
+
+
 def install(app, platform, current_user):
     service = platform.data
     router = APIRouter(prefix='/api/v1')
 
     @app.exception_handler(DataError)
     async def data_error(request, e):
-        return JSONResponse({'error': e.error}, status_code=e.status)
+        return data_error_response(e)
 
     @app.exception_handler(Exception)
     async def internal_error(request, e):
         if request.url.path.startswith('/api/v1/'):
             logging.getLogger('haiknow').exception('v1 请求失败')
             error = DataError('internal_error', '平台处理失败，请联系管理员')
-            return JSONResponse({'error': error.error}, status_code=500)
+            return data_error_response(error, status=500)
         raise e
 
     @app.exception_handler(HTTPException)
@@ -31,14 +36,14 @@ def install(app, platform, current_user):
             code = {401: 'unauthenticated', 403: 'forbidden', 404: 'not_found', 405: 'method_not_allowed'}.get(e.status_code, 'invalid_request')
             message = {401: '请先登录', 403: '没有执行此操作的权限', 404: '资源不存在', 405: '此资源不支持该操作'}.get(e.status_code, '请求不正确')
             error = DataError(code, message)
-            return JSONResponse({'error': error.error}, status_code=error.status, headers=e.headers)
+            return data_error_response(error, headers=e.headers)
         return JSONResponse({'detail': e.detail}, status_code=e.status_code, headers=e.headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, e):
         if request.url.path.startswith('/api/v1/'):
             error = DataError('invalid_request', '请求字段缺失或类型不正确')
-            return JSONResponse({'error': error.error}, status_code=422)
+            return data_error_response(error, status=422)
         from fastapi.exception_handlers import request_validation_exception_handler
         return await request_validation_exception_handler(request, e)
 

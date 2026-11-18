@@ -1,10 +1,16 @@
 // 错误展示的唯一入口：错误对象 → 中文提示，界面不出现原始错误码。
 // 码表每条占一行（`  code: '中文',`），scripts/check.py 的 CHK-ERR-04 按这个格式解析并与
-// docs/specs/平台接口v1.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
+// prototype/v4/接口规范.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
 
 export const PLATFORM_ERROR_MESSAGES = {
   unauthenticated: '登录已失效，请重新登录',
   invalid_credentials: '用户名或口令不正确',
+  invalid_box: '收件箱分类无效',
+  unsupported_type: '文件类型不受支持',
+  model_disabled: '该模型已停用',
+  tool_not_found: '工具不存在',
+  duplicate: '名称已存在，请换一个',
+  check_failed: '送审前核查未通过',
   locked: '登录失败次数过多，请稍后再试',
   forbidden: '没有执行此操作的权限',
   self_review: '提交人不能确认自己的记录',

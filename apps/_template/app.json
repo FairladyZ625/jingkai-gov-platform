@@ -1,6 +1,6 @@
 {
   "contract": 1,
-  "sdk": "1",
+  "sdk": "2",
   "id": "__APP_ID__",
   "name": "__APP_NAME__",
   "summary": "保存一条记录 → 提交确认 → 导出，一条能跑通的审批链路",

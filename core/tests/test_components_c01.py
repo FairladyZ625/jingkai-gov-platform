@@ -133,7 +133,7 @@ def test_error_body_is_v1_envelope():
     schema = make_schema()
     body = c01.error_body(schema.draft({}).errors)
 
-    assert body["error"]["code"] == "invalid_request"
+    assert body["error"]["code"] == "INVALID_REQUEST"
     assert body["error"]["retryable"] is False
     assert [item["field"] for item in body["error"]["issues"]] == ["batch", "qty", "result"]
 

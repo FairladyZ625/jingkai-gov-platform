@@ -46,7 +46,7 @@ class AppUnavailable(Exception):
 
 
 def unavailable_response(error: AppUnavailable, request_id: str | None = None):
-    return JSONResponse({'error': {'code': 'app_unavailable', 'app': error.app_id,
+    return JSONResponse({'error': {'code': 'APP_UNAVAILABLE', 'app': error.app_id,
                                   'message': error.reason, 'requestId': request_id or uuid.uuid4().hex,
                                   'retryable': bool(error.retry_after)}}, status_code=503,
                         headers={'Retry-After': str(error.retry_after)} if error.retry_after else None)
@@ -99,7 +99,7 @@ class AppIsolation:
             entry.circuit.record(True)
             log.exception('应用 %s 请求失败 requestId=%s', app_id, request_id)
             if not started:
-                response = JSONResponse({'error': {'code': 'app_error', 'app': app_id,
+                response = JSONResponse({'error': {'code': 'APP_ERROR', 'app': app_id,
                     'requestId': request_id, 'message': '应用处理失败，请重试或联系负责人', 'retryable': True}}, status_code=500)
                 await response(scope, receive, track)
             elif not completed:

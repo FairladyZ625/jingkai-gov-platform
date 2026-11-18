@@ -204,4 +204,4 @@ def test_every_admin_route_denies_non_admin(make_client):
     ]:
         r = c.request(method, '/api/admin/' + path, **({'json': body} if body is not None else {}))
         assert r.status_code == 403, (method, path, r.text)
-        assert r.json()['error']['code'] == 'forbidden'
+        assert r.json()['error']['code'] == 'FORBIDDEN'

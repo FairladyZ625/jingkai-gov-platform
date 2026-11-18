@@ -144,13 +144,13 @@ def install(app, plat, current_user):
     async def admin_errors(request, exc):
         if request.url.path.startswith('/api/admin/apps'):
             codes = {400: 'invalid_request', 401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 409: 'conflict'}
-            return JSONResponse({'error': {'code': codes.get(exc.status_code, 'error'), 'message': str(exc.detail)}}, status_code=exc.status_code, headers=exc.headers)
+            return JSONResponse({'error': {'code': codes.get(exc.status_code, 'error').upper(), 'message': str(exc.detail)}}, status_code=exc.status_code, headers=exc.headers)
         return await previous_http_handler(request, exc)
 
     @app.exception_handler(RequestValidationError)
     async def admin_validation_errors(request, exc):
         if request.url.path.startswith('/api/admin/apps'):
-            return JSONResponse({'error': {'code': 'invalid_request', 'message': '请求参数无效'}}, status_code=400)
+            return JSONResponse({'error': {'code': 'INVALID_REQUEST', 'message': '请求参数无效'}}, status_code=400)
         return await previous_validation_handler(request, exc)
 
     def view(app_id):

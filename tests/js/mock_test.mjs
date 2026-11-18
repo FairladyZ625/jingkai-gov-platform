@@ -115,7 +115,7 @@ await withMock('forbidden', async () => {
 await withMock('failure', async () => {
   const failed = await post('/records', { project: 'sample-project', title: '会失败' });
   assert.equal(failed.status, 500);
-  assert.equal((await failed.json()).error.code, 'internal_error');
+  assert.equal((await failed.json()).error.code, 'INTERNAL_ERROR');
 });
 
 await withMock('conflict', async () => {
@@ -123,7 +123,7 @@ await withMock('conflict', async () => {
   const conflict = await put(`/records/${record.id}`, { baseVersion: 1, title: '并发修改' });
   assert.equal(conflict.status, 409);
   const body = await conflict.json();
-  assert.equal(body.error.code, 'version_conflict');
+  assert.equal(body.error.code, 'VERSION_CONFLICT');
   assert.equal(body.error.currentVersion, 2);
 
   const latest = await (await call(`/records/${record.id}`)).json();
@@ -144,7 +144,7 @@ await withMock('normal', async () => {
   const review = await (await post(`/records/${record.id}/submit`)).json();
   const self = await post(`/reviews/${review.id}/decisions`, { version: 1, decision: 'confirm' });
   assert.equal(self.status, 403);
-  assert.equal((await self.json()).error.code, 'self_review');
+  assert.equal((await self.json()).error.code, 'SELF_REVIEW');
 });
 
 // 新外壳把应用放在 iframe 里；切换账号会重建 iframe，父窗口状态要保留。
