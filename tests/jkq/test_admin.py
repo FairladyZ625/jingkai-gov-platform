@@ -45,7 +45,8 @@ def build(tmp_path, monkeypatch, cheap_password_hash):
 
     def mount_platform(app):
         install_platform(app)
-        install(app)
+        if not any(getattr(route, 'path', None) == AUDIT + '/export' for route in app.router.routes):
+            install(app)
 
     monkeypatch.setattr(instance, 'install_platform', mount_platform)
     apps = tmp_path / 'apps'
