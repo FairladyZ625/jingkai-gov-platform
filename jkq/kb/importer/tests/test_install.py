@@ -11,9 +11,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 from haiknow_core.aihub import adapters
-from haiknow_core.main import current_user
 from jkq.app import create_app
-from jkq.kb.importer import install
 
 PREFIX = "/api/v1/kb"
 FIXTURES = Path(__file__).resolve().parents[4] / "tests/fixtures/kb_import"
@@ -31,10 +29,7 @@ def boot(tmp_path, monkeypatch, cheap_password_hash):
 
     def start():
         app = create_app()
-        platform = app.state.platform
-        # 生产登记点由实例维护人接入。这里在正式实例中单独调用它。
-        install(app, platform, current_user)
-        return TestClient(app), platform
+        return TestClient(app), app.state.platform
 
     return start
 
