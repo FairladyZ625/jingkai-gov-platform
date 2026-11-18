@@ -8,10 +8,18 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from .parsing import MAX_FILE
 from .public_url import PublicURLError
 from .service import ImportFailure, ImportService, Upload, invalid
+
+MAX_REQUEST = 4 * MAX_FILE + 1024 * 1024
+MAX_UPLOADS = 16
+
+
+class _RequestTooLarge(MultiPartException):
+    pass
 
 
 class _ImportRoute(APIRoute):
@@ -56,20 +64,37 @@ def _decode(value):
 
 
 async def _payload(request, *, accept_files=True):
-    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
-    if content_type == "application/json":
-        return _decode(await request.body()), ()
-    if content_type != "multipart/form-data" or not accept_files:
-        raise ImportFailure(415, "UNSUPPORTED_MEDIA_TYPE", "请求须使用 JSON 或受支持的 multipart 文件上传")
+    async def bounded_stream():
+        received = 0
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > MAX_REQUEST:
+                raise _RequestTooLarge("导入请求超过大小上限")
+            yield chunk
 
+    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
     try:
-        async with request.form(max_fields=1) as form:
+        if content_type == "application/json":
+            data = bytearray()
+            async for chunk in bounded_stream():
+                data.extend(chunk)
+            return _decode(data), ()
+        if content_type != "multipart/form-data" or not accept_files:
+            raise ImportFailure(415, "UNSUPPORTED_MEDIA_TYPE", "请求须使用 JSON 或受支持的 multipart 文件上传")
+
+        parser = MultiPartParser(request.headers, bounded_stream(), max_files=MAX_UPLOADS, max_fields=1)
+        form = await parser.parse()
+        try:
             parts = form.getlist("file")
             metadata = form.get("payload")
-            if (form.keys() - {"payload", "file"} or not isinstance(metadata, str) or not parts
-                    or any(not isinstance(part, UploadFile) for part in parts)):
-                raise invalid("文件上传须包含 JSON 字段 payload 和一个或多个 file 字段")
-            payload = _decode(metadata)
+            if form.keys() - {"payload", "file"} or not parts or any(not isinstance(p, UploadFile) for p in parts):
+                raise invalid("文件上传须使用 file 字段")
+            if metadata is None and len(parts) == 1:
+                payload = {"items": [{"fileIndex": 0}]}
+            elif isinstance(metadata, str):
+                payload = _decode(metadata)
+            else:
+                raise invalid("批量上传须包含 JSON 字段 payload")
             files = []
             for part in parts:
                 content = await part.read(MAX_FILE + 1)
@@ -77,10 +102,12 @@ async def _payload(request, *, accept_files=True):
                     raise ImportFailure(422, "PARSE_FAILED", "文件超过大小上限")
                 files.append(Upload(part.filename or "", content))
             return payload, files
-    except HTTPException as exc:
-        if exc.status_code == 400:
-            raise invalid("文件上传格式无效") from None
-        raise
+        finally:
+            await form.close()
+    except _RequestTooLarge as exc:
+        raise ImportFailure(413, "REQUEST_TOO_LARGE", str(exc)) from None
+    except MultiPartException:
+        raise invalid("文件上传格式无效或文件数量超过上限") from None
 
 
 def build_router(service: ImportService, current_user):

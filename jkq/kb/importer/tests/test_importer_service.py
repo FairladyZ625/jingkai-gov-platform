@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("fastapi", reason="仓库轻量 CI 只安装 pytest，Core 检查覆盖知识库模块")
+
 from jkq.kb.importer.repository import MemoryImportRepository
 from jkq.kb.importer.service import ImportFailure, ImportService, SpaceAccess, Upload
 
@@ -18,10 +20,10 @@ def payload(text="第一条 使用虚构资料。", *, title="星汀绿色阅读
     return {"items": [{"name": "样本.txt", "text": text, "meta": {"title": title, **meta}}]}
 
 
-def setup(*, access=POLICY, repository=None, **options):
+def setup(*, access=POLICY, repository=None, remote_parser=None, **options):
     if repository is None:
         repository = MemoryImportRepository()
-    return ImportService(repository, lambda user: access, **options), repository
+    return ImportService(repository, lambda user: access, parser_for=lambda *_: remote_parser, **options), repository
 
 
 def docs(repository, space="policy"):

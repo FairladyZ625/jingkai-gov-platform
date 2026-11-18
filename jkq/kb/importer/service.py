@@ -1,6 +1,7 @@
 """导入预览、权限检查及事务内去重和换版。"""
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import PurePath
 import re
 import unicodedata
@@ -23,6 +24,7 @@ ITEM_FIELDS = {
 }
 BATCH_FIELDS = {"items", "space", "from", "classification"}
 META_FIELDS = {"title", "space", "kind", "docNo", "org", "date", "status", "url", "expire"}
+MAX_ITEMS = 32
 
 
 class ImportFailure(Exception):
@@ -121,13 +123,13 @@ def _version_hint(doc, score):
 
 class ImportService:
     def __init__(self, repository: ImportRepository, spaces_for, *, reader=None,
-                 remote_parser=None, title_threshold=0.62):
+                 parser_for=None, title_threshold=0.62):
         if not 0 < title_threshold <= 1:
             raise ValueError("标题相似度阈值须大于 0 且不超过 1")
         self._repository = repository
         self._spaces_for = spaces_for
         self._reader = reader if reader is not None else PublicURLReader()
-        self._remote_parser = remote_parser
+        self._parser_for = parser_for
         self._title_threshold = title_threshold
 
     def _access(self, user):
@@ -162,7 +164,7 @@ class ImportService:
             return _version_hint(best, rank[1]), best
         return {"type": "new"}, None
 
-    async def _prepare(self, value, access, default_space, fallback_origin, default_class, *, upload=None):
+    async def _prepare(self, user, value, access, default_space, fallback_origin, default_class, *, upload=None):
         _mapping(value, ITEM_FIELDS, "导入条目格式无效或包含未知字段")
         classification = _classification(value.get("classification", default_class or "internal"))
         if default_class is not None:
@@ -175,6 +177,8 @@ class ImportService:
             _space(access, overrides["space"])
         if default_space is not None:
             overrides["space"] = default_space
+        if overrides.get("space") == "enterprise":
+            classification = "confidential"
 
         decision = value.get("decision", "")
         if decision not in ("", "new", "version", "skip") or type(value.get("skip", False)) is not bool:
@@ -202,6 +206,7 @@ class ImportService:
         if not isinstance(expected, dict):
             raise invalid("查重提示须为对象")
         content = upload.content if upload is not None else None
+        remote_parser = None
         if upload is not None:
             uploaded_ext = PurePath(upload.name).suffix.lower().lstrip(".")
             ext = ext.lower().lstrip(".")
@@ -209,10 +214,12 @@ class ImportService:
                 raise invalid("文件扩展名与上传文件不一致")
             ext = uploaded_ext or ext
             parse, size = "real", len(content)
+            if self._parser_for is not None and classification != "confidential":
+                remote_parser = self._parser_for(user, overrides.get("space"), classification)
         try:
             text = await parse_document(
                 name, ext=ext, text=value.get("text"), content=content, classification=classification,
-                remote_parser=None if classification == "confidential" else self._remote_parser,
+                remote_parser=remote_parser,
             )
             if re.search(r"[\ud800-\udfff]", text):
                 raise ParseError("正文含无效的 Unicode 字符")
@@ -227,6 +234,8 @@ class ImportService:
         if meta["url"] and urlsplit(meta["url"]).username is not None:
             raise invalid("来源网址不能包含用户凭据")
         _space(access, meta["space"])
+        if meta["space"] == "enterprise":
+            classification = "confidential"
         tags = value.get("tags", result["tags"])
         if not isinstance(tags, list):
             raise invalid("标签须为数组")
@@ -241,7 +250,7 @@ class ImportService:
         }
         return _Prepared(item, chunks, decision, expected)
 
-    async def _prepare_batch(self, payload, access, files, *, one_step=False):
+    async def _prepare_batch(self, user, payload, access, files, *, one_step=False):
         extra = {"text", "title", "url"} if one_step else set()
         _mapping(payload, BATCH_FIELDS | extra, "导入请求格式无效或包含未知字段")
         space = _space(access, payload["space"]) if "space" in payload else None
@@ -250,6 +259,8 @@ class ImportService:
         items = payload.get("items", [])
         if not isinstance(items, list) or ("items" not in payload and not one_step):
             raise invalid("请提供待导入条目数组 items")
+        if len(items) + ("text" in payload) + ("url" in payload) > MAX_ITEMS:
+            raise invalid("单次最多导入 32 项资料")
 
         # fileIndex 指向同一请求内按传输顺序排列的 file 字段。每个文件必须引用一次。
         indexes = []
@@ -266,27 +277,27 @@ class ImportService:
         prepared = []
         for item in items:
             upload = files[item["fileIndex"]] if "fileIndex" in item else None
-            prepared.append(await self._prepare(item, access, space, origin, classification, upload=upload))
+            prepared.append(await self._prepare(user, item, access, space, origin, classification, upload=upload))
         if one_step and "text" in payload:
             text_item = {"name": payload.get("title", "粘贴的文字"), "text": payload["text"],
                          "from": payload.get("from", "粘贴")}
             if "title" in payload:
                 text_item["meta"] = {"title": payload["title"]}
-            prepared.append(await self._prepare(text_item, access, space, origin, classification))
+            prepared.append(await self._prepare(user, text_item, access, space, origin, classification))
         if one_step and "url" in payload:
-            prepared.append(await self._prepare_url(payload["url"], access, space, classification,
+            prepared.append(await self._prepare_url(user, payload["url"], access, space, classification,
                                                     payload.get("from", "网址")))
         if one_step and not prepared:
             raise invalid("请提供待导入条目、正文或网址")
         return prepared
 
-    async def _prepare_url(self, url, access, space, classification, origin="网址"):
+    async def _prepare_url(self, user, url, access, space, classification, origin="网址"):
         page = await self._reader.read(url)
         name = page.title[:2048] or urlsplit(page.url).hostname
         value = {"name": name, "text": page.text, "url": page.url, "from": origin, "real": True}
         if page.title:
             value["meta"] = {"title": name}
-        return await self._prepare(value, access, space, origin, classification)
+        return await self._prepare(user, value, access, space, origin, classification)
 
     def _preview(self, prepared):
         with self._repository.transaction(write=False) as view:
@@ -295,7 +306,7 @@ class ImportService:
                 item["dup"] = self._match(view, item)[0]
 
     async def preview(self, user, payload, *, files=()):
-        prepared = await self._prepare_batch(payload, self._access(user), files)
+        prepared = await self._prepare_batch(user, payload, self._access(user), files)
         if any(entry.decision == "skip" for entry in prepared):
             raise invalid("请在确认入库时选择跳过")
         self._preview(prepared)
@@ -306,12 +317,12 @@ class ImportService:
         _mapping(payload, {"url", "space", "classification"}, "网址导入请求格式无效")
         space = _space(access, payload["space"]) if "space" in payload else None
         classification = _classification(payload["classification"]) if "classification" in payload else None
-        entry = await self._prepare_url(payload.get("url"), access, space, classification)
+        entry = await self._prepare_url(user, payload.get("url"), access, space, classification)
         self._preview([entry])
         return {"item": entry.item, "snapshot": False}
 
     async def commit(self, user, payload, *, files=(), one_step=False):
-        prepared = await self._prepare_batch(payload, self._access(user), files, one_step=one_step)
+        prepared = await self._prepare_batch(user, payload, self._access(user), files, one_step=one_step)
         docs, skipped = {}, []
         with self._repository.transaction(write=True) as view:
             for entry in prepared:
@@ -356,7 +367,7 @@ class ImportService:
             "text": item["text"], "chunkList": entry.chunks, "chunks": item["chunks"],
             "tags": item["tags"], "parse": item["parse"], "real": item["real"], "example": False,
             "classification": item["classification"], "from": item["from"],
-            "uploadedBy": user.id, "version": 1,
+            "uploadedBy": user.id, "version": 1, "addedAt": datetime.now(timezone.utc).isoformat(),
         }
         if previous is not None:
             document.update(prev=previous["id"], version=previous["version"] + 1)

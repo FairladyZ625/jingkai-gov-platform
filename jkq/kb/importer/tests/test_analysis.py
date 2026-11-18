@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("fastapi", reason="仓库轻量 CI 只安装 pytest，Core 检查覆盖知识库模块")
+
 from jkq.kb.importer.analysis import analyze_document
 
 SAMPLES = Path(__file__).resolve().parents[4] / 'tests/fixtures/kb_import'

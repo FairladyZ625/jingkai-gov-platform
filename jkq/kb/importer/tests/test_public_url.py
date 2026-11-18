@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("fastapi", reason="仓库轻量 CI 只安装 pytest，Core 检查覆盖知识库模块")
+
 from jkq.kb.importer.public_url import PublicURLError, PublicURLReader, TOTAL_TIMEOUT
 
 PUBLIC = "https://example.invalid/a"

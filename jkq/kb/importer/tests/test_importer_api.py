@@ -28,9 +28,10 @@ GRANTS = {
 }
 
 
-def make_client(**kwargs):
+def make_client(*, remote_parser=None, **kwargs):
     repository = MemoryImportRepository()
-    service = ImportService(repository, lambda user: GRANTS[user.id], **kwargs)
+    service = ImportService(repository, lambda user: GRANTS[user.id],
+                            parser_for=lambda *_: remote_parser, **kwargs)
     app = FastAPI()
 
     def current_user(request: Request):
@@ -114,6 +115,24 @@ def test_multipart_files_bound_by_zero_based_index():
     body["payload"] = json.dumps({"items": items})
     code(client.post(PREFIX + "/preview", data=body, files=files), 422, "CHECK_FAILED")
     code(client.post(PREFIX + "/commit", json={"items": items}), 422, "CHECK_FAILED")
+
+
+def test_single_multipart_file_needs_no_metadata():
+    client, _ = make_client()
+    response = client.post(PREFIX + "/preview", files={"file": ("sample.txt", "第一条 上传正文。".encode())})
+    assert response.status_code == 200
+    assert response.json()["items"][0]["text"] == "第一条 上传正文。"
+
+
+def test_import_request_size_and_batch_limits(monkeypatch):
+    client, repository = make_client()
+    data = {"items": [{"name": "样本", "text": "正文"}] * 33}
+    code(client.post(PREFIX + "/preview", json=data), 422, "CHECK_FAILED")
+    monkeypatch.setattr("jkq.kb.importer.routes.MAX_REQUEST", 256)
+    code(client.post(PREFIX + "/commit", json=data), 413, "REQUEST_TOO_LARGE")
+    file = ("sample.txt", b"x" * 256)
+    code(upload(client, "/commit", {"fileIndex": 0}, file), 413, "REQUEST_TOO_LARGE")
+    assert documents(repository) == []
 
 
 def test_parse_failure_has_readable_reason_and_bytes_take_precedence():

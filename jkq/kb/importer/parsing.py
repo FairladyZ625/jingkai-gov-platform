@@ -121,7 +121,9 @@ async def parse_document(name, *, ext='', content=None, text=None,
             result = await asyncio.wait_for(remote_parser(name, ext, content, classification), 15)
         except Exception as exc:
             raise ParseError('外部解析服务未能读取文件') from exc
-    elif ext == 'pdf':
+        if result is not None:
+            return _body(result)
+    if ext == 'pdf':
         result = await _pdf(content)
     elif ext == 'docx':
         result = await asyncio.to_thread(_docx, content)
