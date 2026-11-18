@@ -11,6 +11,8 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
 const route = '/api/apps/policy';
 const documentRoute = '/api/apps/document';
 const exampleLabel = '示例（无对应原文）';
+// 从 01370e895615 的离线页面调用草稿、送审及对话接口得到的实际旧记录。
+const legacy = require('../workspace/legacy-cache.json');
 
 function boot({ stored = null, prepare } = {}) {
   const localStorage = {
@@ -295,30 +297,104 @@ test('旧公文经一次性升级，只清理有生成记录的演示文号', as
   }
 });
 
-test('历史政策草稿仍须按可信映射核对金额和依据，无替代时阻止送审', async () => {
-  const baseline = boot();
-  const inputs = { policy: 'RP-006', start: '2026-11-18', end: '2026-12-01', contact: '请填写' };
-  const { item: current } = await baseline.api.post(documentRoute + '/drafts', { templateId: 'T03', inputs });
-  const stale = plain(latest(current));
-  stale.paragraphs[0] = '根据旧发文，现就算力券申报有关事项说明如下。';
-  stale.paragraphs[2] = '二、支持标准。按照投入的30%，最高123万元。';
-  const state = baseline.api.state();
-  state.drafts[current.id].policyId = 'PI-08';
-  state.drafts[current.id].versions[0].content = stale;
-  state.drafts['DOC-REMOVED'] = { ...state.drafts[current.id], id: 'DOC-REMOVED', policyId: 'PI-18' };
+function bootWithLegacyPolicy(policyId) {
+  const { api } = boot();
+  const state = api.state();
+  delete state.demoSeedVersion;
+  const draft = plain(legacy.drafts[policyId]);
+  // 隔离本组的政策检查，避免一次性清理旧演示文号影响版本保真断言。
+  draft.versions[0].content.docNo = '';
+  state.drafts[draft.id] = draft;
+  state.inbox.push(...legacy.reviews.filter((review) => review.ref === draft.id));
+  return { ...boot({ stored: JSON.stringify(state) }), draft, resource: documentRoute + '/drafts/' + draft.id };
+}
 
-  const { api } = boot({ stored: JSON.stringify(state) });
-  const resource = documentRoute + '/drafts/' + current.id;
+const currentInputs = { start: '2026-11-18', end: '2026-12-01', contact: '请填写' };
+
+test('基线生成的 PI-08 旧金额和依据阻止送审，按 RP-006 修订后可送审及定稿', async () => {
+  const { api, draft, resource } = bootWithLegacyPolicy('PI-08');
   const { issues } = await api.post(resource + '/check', {});
   assert.ok(issues.some((i) => i.kind === '数字一致' && i.text.includes('2000 万元')));
   assert.ok(issues.some((i) => i.kind === '政策依据' && i.text.includes('RP-006')));
   await assert.rejects(api.post(resource + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
   assert.equal((await api.get(resource)).item.status, '草稿');
-  const removed = documentRoute + '/drafts/DOC-REMOVED';
-  assert.ok((await api.post(removed + '/check', {})).issues.some((i) => i.text.includes('重新选择')));
-  await assert.rejects(api.post(removed + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
 
+  const { item: current } = await api.post(documentRoute + '/drafts', {
+    templateId: 'T03', inputs: { ...currentInputs, policy: 'RP-006' },
+  });
+  await api.put(resource, { content: latest(current) });
+  const { item, review } = await api.post(resource + '/submit', {});
+  assert.equal(item.status, '审签中');
+  api.state().me = 'u-liyang';
+  assert.equal((await api.post('/api/v1/reviews/' + review.id + '/decisions', { decision: 'approve' })).item.status, 'done');
+  assert.equal((await api.get(resource)).item.status, '已定稿');
+  assert.equal((await api.get(resource + '/export')).final, true);
+  assert.deepEqual(plain((await api.get(resource)).item.versions[0]), draft.versions[0]);
+});
+
+test('基线生成的 PI-12 即使保留同一 ID，失效的支持口径仍阻止送审', async () => {
+  const { api, draft, resource } = bootWithLegacyPolicy('PI-12');
+  const { item: policy } = await api.get(route + '/items/PI-12');
+  assert.equal(policy.id, 'PI-12');
+  await assert.rejects(api.post(resource + '/submit', {}), {
+    status: 422, code: 'CHECK_FAILED', message: /PI-12.*政策依据和支持标准/,
+  });
+  assert.deepEqual(plain((await api.get(resource)).item.versions), draft.versions);
+  assert.equal((await api.get(resource)).item.status, '草稿');
+
+  const { item: current } = await api.post(documentRoute + '/drafts', {
+    templateId: 'T03', inputs: { ...currentInputs, policy: 'PI-12' },
+  });
+  const mixed = plain(latest(current));
+  mixed.paragraphs[2] = latest(draft).paragraphs[2];
+  mixed.paragraphs.push(latest(current).paragraphs[2]);
+  await api.put(resource, { content: mixed });
+  await assert.rejects(api.post(resource + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
   await api.put(resource, { content: latest(current) });
   assert.equal((await api.post(resource + '/submit', {})).item.status, '审签中');
-  assert.deepEqual(plain((await api.get(resource)).item.versions[0].content), stale);
+});
+
+test('基线已入队的 PI-18 无有效依据时不能定稿，退回和历史版本仍可用', async () => {
+  const { api, draft, resource } = bootWithLegacyPolicy('PI-18');
+  const review = legacy.reviews[0];
+  const decision = '/api/v1/reviews/' + review.id + '/decisions';
+  api.state().me = 'u-liyang';
+  await assert.rejects(api.post(decision, { decision: 'approve' }), {
+    status: 422, code: 'CHECK_FAILED', message: /退回修订.*PI-18.*已下线/,
+  });
+  assert.equal((await api.get(resource)).item.status, '审签中');
+  assert.deepEqual(plain((await api.get('/api/v1/reviews')).items.find(it => it.id === review.id)), review);
+  const exported = await api.get(resource + '/export');
+  assert.equal(exported.final, false);
+  assert.match(exported.html, /未定稿/);
+  assert.equal((await api.post(decision, { decision: 'reject', reason: '核对当前政策' })).item.status, 'rejected');
+  assert.deepEqual(plain((await api.get(resource)).item.versions), draft.versions);
+  assert.equal((await api.get(resource)).item.status, '已退回');
+  assert.ok((await api.post(resource + '/check', {})).issues.some((i) => i.text.includes('重新选择')));
+  await assert.rejects(api.post(resource + '/submit', {}), { status: 422, code: 'CHECK_FAILED' });
+});
+
+test('实际旧对话重载两次保留用户标题、消息与无引用标记的引述，只更新已知演示字段', async () => {
+  const { api } = boot();
+  const state = api.state();
+  delete state.demoSeedVersion;
+  Object.assign(state.enterprises.find(({ id }) => id === legacy.company.id), legacy.company);
+  state.conversations = plain(legacy.conversations);
+  state.messages = plain(legacy.messages);
+  const [history, seeded] = legacy.conversations;
+  const from = legacy.messages[seeded.id][1].content;
+  const currentCompany = boot().api.state().enterprises.find(({ id }) => id === legacy.company.id);
+  let stored = JSON.stringify(state);
+  for (let i = 0; i < 2; i++) {
+    const page = boot({ stored });
+    const get = (id) => page.api.get('/api/v1/conversations/' + id);
+    const original = await get(history.id);
+    assert.deepEqual(plain(original), { item: history, messages: legacy.messages[history.id] });
+    const demo = await get(seeded.id);
+    assert.equal(demo.item.title, seeded.title.replace(legacy.company.short, currentCompany.short));
+    assert.equal(demo.messages[0].content, legacy.messages[seeded.id][0].content);
+    assert.equal(demo.messages[1].content, from.replace(legacy.company.name, currentCompany.name));
+    assert.deepEqual(plain(demo.messages[1].cards), legacy.messages[seeded.id][1].cards);
+    stored = page.stored();
+  }
 });

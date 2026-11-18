@@ -268,10 +268,21 @@
         try { const rs = (await api.reviews.list()).items; const r = rs.find((x) => x.ref === S.id && x.status === 'pending'); if (!r) { ui.toast('没有找到待审签记录', { type: 'err' }); return; }
           await api.reviews.decide(r.id, { decision, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
           ui.toast(decision === 'approve' ? `已定稿 · ${latest().content.docNo || numberLabel}` : '已退回起草人', { type: 'ok' }); step3(); return S.doc; }
-        catch (e) { ui.toast(e.message, { type: 'err' }); }
+        catch (e) { ui.toast(e.message, { type: 'err' }); return { error: e }; }
       }
       function rejectModal() { return ui.modal({ title: '退回修改', okText: '退回', danger: true, body: '<div class="field"><label>退回意见</label><textarea class="textarea" id="drj" rows="3" placeholder="写明需要修改的地方"></textarea></div>', ok: async (box) => { const v = box.querySelector('#drj').value.trim() || '请按批注修改'; await decide('reject', v); } }); }
-      async function saveAs() { const c = latest().content; const r = await D.draft({ templateId: S.doc.templateId, inputs: {} }); await D.save(r.item.id, { content: Object.assign({}, c, { docNo: '' }), note: '另存自已定稿文稿' }); ui.toast('已另存为新稿', { type: 'ok' }); await refreshList(); return openDoc(r.item.id, 2); }
+      async function saveAs() {
+        const c = latest().content;
+        const { templateId, policyId } = S.doc;
+        const r = await D.draft({ templateId, inputs: { policy: policyId } }).catch((e) => {
+          if (e.status !== 404 || e.code !== 'NOT_FOUND' || !policyId) throw e;
+          return D.draft({ templateId, inputs: {} });
+        });
+        await D.save(r.item.id, { content: { ...c, docNo: '' }, note: '另存自已定稿文稿' });
+        ui.toast('已另存为新稿', { type: 'ok' });
+        await refreshList();
+        return openDoc(r.item.id, 2);
+      }
 
       /* ---------- 我的文稿 ---------- */
       function renderList(b) {
@@ -410,7 +421,11 @@
           await run.step(1); await run.highlight('[data-op="document.paper"]');
           const c = await run.ask(rej ? `退回「${S.doc.title}」给 ${S.doc.author} 修改吗？` : `审签通过「${S.doc.title}」？通过后定稿并编文号，内容锁定。`, [rej ? '确认退回' : '确认通过', '再看看']);
           if (!/^确认/.test(c || '')) { run.done('好的，暂不处理'); return; }
-          await run.step(2); await decide(rej ? 'reject' : 'approve', rej ? '请按批注修改' : '同意'); run.done(rej ? '已退回起草人' : `已定稿 · ${latest().content.docNo || numberLabel}`);
+          await run.step(2);
+          const result = await decide(rej ? 'reject' : 'approve', rej ? '请按批注修改' : '同意');
+          if (result?.error) return run.fail(result.error.message);
+          if (!result) return run.fail('没有找到待审签记录');
+          run.done(rej ? '已退回起草人' : `已定稿 · ${latest().content.docNo || numberLabel}`);
         },
         async export({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, S.step >= 2 ? S.step : 2))) return;

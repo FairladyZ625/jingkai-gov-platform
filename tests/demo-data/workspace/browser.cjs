@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
+const legacy = require('./legacy-cache.json');
 
 const root = path.resolve(__dirname, '../../..');
 const entry = pathToFileURL(path.join(root, 'prototype/v4/index.html')).href;
@@ -192,51 +193,90 @@ async function checkPolicy(page, legacy) {
 }
 
 async function checkUpgrade(page) {
-  const oldShort = '星河智驾';
+  const oldShort = legacy.company.short;
   const newShort = '纸鹿二号智驾';
   const imported = '用户原文中保留' + oldShort + '的历史称谓。';
-  const fileId = await page.evaluate(async ({ oldShort, newShort, imported }) => {
+  const [conversation] = legacy.conversations;
+  const quote = legacy.messages[conversation.id][1].content;
+  const fileId = await page.evaluate(async ({ imported, quote, legacy }) => {
     const { docs } = await JKAPI.post('/api/v1/kb/import', { text: imported, title: '历史原文核验' });
-    const state = JSON.parse(JSON.stringify(JKAPI.state()), (_, value) =>
-      typeof value === 'string' ? value.replaceAll(newShort, oldShort) : value,
-    );
+    const state = JSON.parse(JSON.stringify(JKAPI.state()));
     delete state.demoSeedVersion;
-    const company = state.enterprises.find((item) => item.id === 'E002');
+    const company = state.enterprises.find((item) => item.id === legacy.company.id);
+    Object.assign(company, legacy.company);
     delete company.example;
     company.creditCode = '旧演示格式';
     state.drafts['DOC-1112'].versions[0].content.paragraphs[0] = imported;
     localStorage.setItem(JK_STATE_KEY, JSON.stringify(state));
     localStorage.setItem('jk4-convs:' + state.me, JSON.stringify([
-      { id: 'legacy', title: oldShort + '走访', msgs: [
+      legacy.shellConversation,
+      { id: 'legacy-quote', title: legacy.conversations[0].title, msgs: [
         { role: 'user', text: imported, file: { text: imported } },
-        { role: 'ai', text: oldShort + '的示例台账' },
+        { role: 'ai', text: quote },
         { role: 'ai', text: imported, cites: [{ snippet: imported }] },
       ] },
-      { id: 'other', title: '保留的草稿', msgs: [] },
     ]));
     return docs[0].id;
-  }, { oldShort, newShort, imported });
-  await page.reload();
-  await op(page, 'nav.inbox').waitFor();
-  await page.locator('[data-conv="legacy"]').getByText(newShort + '走访').waitFor();
-  await page.getByText('保留的草稿', { exact: true }).waitFor();
-  await page.locator('[data-conv="legacy"]').click();
-  await page.locator('#chatcol').getByText(newShort + '的示例台账').waitFor();
-  await page.reload();
-  await op(page, 'nav.inbox').waitFor();
-  await page.locator('[data-conv="legacy"]').getByText(newShort + '走访').waitFor();
-  const result = await page.evaluate(async (fileId) => {
-    const { name, creditCode, example } = JKAPI.state().enterprises.find((item) => item.id === 'E002');
+  }, { imported, quote, legacy });
+  const card = legacy.shellConversation;
+  const previousAnswer = card.msgs.at(-1);
+  const newSummary = previousAnswer.text.replace(oldShort, newShort);
+  const shellConversation = page.locator('[data-conv="' + card.id + '"]');
+  for (let i = 0; i < 2; i++) {
+    await page.reload();
+    await op(page, 'nav.inbox').waitFor();
+    await shellConversation.getByText(card.title, { exact: true }).waitFor();
+    await page.locator('[data-conv="legacy-quote"]').getByText(conversation.title, { exact: true }).waitFor();
+    await shellConversation.click();
+    await page.locator('#chatcol').getByText(newSummary, { exact: true }).waitFor();
+  }
+  const result = await page.evaluate(async ({ fileId, shellId, companyId }) => {
+    const { name, creditCode, example } = JKAPI.state().enterprises.find((item) => item.id === companyId);
     const state = JSON.parse(localStorage.getItem(JK_STATE_KEY));
-    const { msgs } = JSON.parse(localStorage.getItem('jk4-convs:' + state.me)).find(({ id }) => id === 'legacy');
+    const conversations = JSON.parse(localStorage.getItem('jk4-convs:' + state.me));
+    const history = conversations.find(({ id }) => id === 'legacy-quote');
+    const card = conversations.find(({ id }) => id === shellId);
     const { item } = await JKAPI.get('/api/v1/kb/docs/' + fileId);
-    return { name, creditCode, example, version: state.demoSeedVersion,
-      imported: item.text, draft: state.drafts['DOC-1112'].versions[0].content.paragraphs[0],
-      user: msgs[0].text, file: msgs[0].file.text, citation: msgs[2].cites[0].snippet };
-  }, fileId);
-  assert.deepEqual(result, { name: '北京纸鹿二号智驾科技有限公司', creditCode: 'DEMO-E002', example: true,
-    version: 3, imported, draft: imported, user: imported, file: imported, citation: imported });
-  console.log('旧缓存重载两次，示例企业和对话派生字段已更新，用户原文、附件、引用和公文历史逐字保留');
+    return { name, creditCode, example, version: state.demoSeedVersion, card, history,
+      imported: item.text, draft: state.drafts['DOC-1112'].versions[0].content.paragraphs[0] };
+  }, { fileId, shellId: card.id, companyId: legacy.company.id });
+  assert.deepEqual(result, {
+    name: '北京纸鹿二号智驾科技有限公司', creditCode: 'DEMO-E002', example: true, version: 3,
+    imported, draft: imported,
+    card: { ...card, msgs: [...card.msgs.slice(0, -1), { ...previousAnswer, text: newSummary,
+      next: previousAnswer.next.map((action) => ({ ...action, say: action.say.replace(oldShort, newShort) })) }] },
+    history: { id: 'legacy-quote', title: conversation.title, msgs: [
+      { role: 'user', text: imported, file: { text: imported } },
+      { role: 'ai', text: quote },
+      { role: 'ai', text: imported, cites: [{ snippet: imported }] },
+    ] },
+  });
+  console.log('旧缓存重载两次，企业速览和固定动作更新；历史标题、无引用标记的引述、附件、知识库与草稿原文逐字保留');
+}
+
+async function checkLegacyApproval(page) {
+  const draft = legacy.drafts['PI-18'];
+  const [review] = legacy.reviews;
+  await page.evaluate(async ({ draft, review }) => {
+    JKAPI.state().drafts[draft.id] = draft;
+    JKAPI.state().inbox.unshift(review);
+    await JKShell.switchUser('liyang');
+    await JKShell.openApp('document');
+  }, { draft, review });
+  await op(page, 'document.tab-list').click();
+  await op(page, 'document.row-' + draft.id).click();
+  await op(page, 'document.approve').click();
+  await page.locator('[role="dialog"] [data-ok]').click();
+  await page.locator('.toast').getByText(/请退回修订.*PI-18.*已下线/).waitFor();
+  await op(page, 'document.reject').waitFor();
+  assert.equal(await page.evaluate(async (draftId) => (await JKApi.document.exportWord(draftId)).final, draft.id), false);
+
+  await page.evaluate(() => { void JKShell.send('审签通过'); });
+  await page.getByRole('button', { name: '确认通过', exact: true }).first().click();
+  await page.locator('#chatcol .msg').getByText(/请退回修订.*PI-18.*已下线/).waitFor();
+  assert.equal(await page.locator('#chatcol .msg').getByText(/^已定稿/).count(), 0);
+  assert.equal(await page.evaluate((id) => JKAPI.state().inbox.find(item => item.id === id).status, review.id), 'pending');
+  console.log('旧 PI-18 在公文按钮和对话审签均提示退回修订，保留待审状态及未定稿导出');
 }
 
 async function main() {
@@ -258,6 +298,7 @@ async function main() {
         await checkKb(page);
         await checkPolicy(page, width === 1280);
         await checkUpgrade(page);
+        await checkLegacyApproval(page);
         assert.deepEqual(errors, []);
       } finally {
         await page.close();
