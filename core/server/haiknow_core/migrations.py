@@ -1,4 +1,4 @@
-"""平台 schema 的唯一写入入口：只增表/可空列，升级前做 SQLite 一致性备份。"""
+"""平台 schema 的唯一写入入口，升级前做 SQLite 一致性备份。"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,6 +9,11 @@ import sqlite3
 import time
 
 # 已发布的迁移只追加，不修改；v1 收拢既有三个初始化入口。
+CREDENTIAL_CLEANUP_VERSION = 14
+LEGACY_CREDENTIAL_COLUMNS = (('ai_provider', 'secret'), ('feishu_config', 'encrypt_key'))
+CREDENTIAL_REMOVALS = tuple(f'alter table {table} drop column {column};'
+                            for table, column in LEGACY_CREDENTIAL_COLUMNS)
+
 MIGRATIONS = (
     (1, """
 create table if not exists audit (
@@ -264,6 +269,7 @@ create table if not exists v1_schedule_runs (
 );
 create index if not exists v1_schedule_runs_recent on v1_schedule_runs(app,name,project,slot);
 """),
+    (CREDENTIAL_CLEANUP_VERSION, '\n'.join(CREDENTIAL_REMOVALS)),
 )
 
 # 限制的是平台自己编写迁移的边界，防止误删、改列、DML 或给旧行添加新约束。
@@ -273,7 +279,9 @@ _INDEX = re.compile(rf'create\s+index\s+(?:if\s+not\s+exists\s+)?{_IDENT}\s+on\s
 _ADD = re.compile(rf'alter\s+table\s+{_IDENT}\s+add\s+(?:column\s+)?{_IDENT}\s+(?:text|integer|real|blob|numeric)(?:\s+null)?\s*;', re.I)
 
 
-def statements(script: str) -> list[str]:
+def statements(script: str, *, version: int = 0) -> list[str]:
+    if version == CREDENTIAL_CLEANUP_VERSION and script == '\n'.join(CREDENTIAL_REMOVALS):
+        return list(CREDENTIAL_REMOVALS)
     out, buffer = [], ''
     for ch in script:
         buffer += ch
@@ -288,6 +296,28 @@ def statements(script: str) -> list[str]:
     return out
 
 
+def _columns(db, table):
+    return {row[1] for row in db.execute(f'pragma table_info({table})')}
+
+
+def _backup(db, path, redact_credentials):
+    with closing(sqlite3.connect(path)) as backup:
+        if not redact_credentials:
+            db.backup(backup)
+            return
+        # 保留迁移前的业务数据与 schema 版本。只在内存中清理、压实旧页，
+        # 确认旧密文不落进新备份文件，再写盘。
+        with closing(sqlite3.connect(':memory:')) as clean:
+            db.backup(clean)
+            for table, column in LEGACY_CREDENTIAL_COLUMNS:
+                if column in _columns(clean, table):
+                    # 旧版 schema 恢复后仍可顺序升级；备份只保留兼容的空占位。
+                    clean.execute(f"update {table} set {column}=zeroblob(0)")
+            clean.commit()
+            clean.execute('vacuum')
+            clean.backup(backup)
+
+
 def migrate(db: sqlite3.Connection, data_dir: Path) -> None:
     current = 0
     try:
@@ -300,20 +330,28 @@ def migrate(db: sqlite3.Connection, data_dir: Path) -> None:
             raise ValueError('迁移必须按版本连续追加')
         if current > len(MIGRATIONS):
             raise ValueError('数据库来自更高版本，禁止用旧平台打开')
-        pending = [(v, statements(sql)) for v, sql in MIGRATIONS if v > current]
+        pending = [(v, statements(sql, version=v)) for v, sql in MIGRATIONS if v > current]
         if not pending:
             return
+        removes_credentials = any(version == CREDENTIAL_CLEANUP_VERSION for version, _ in pending)
         # 不备份空库；旧库在任何 DDL 之前备份，包含未版本化的 0 版数据库。
         if db.execute("select 1 from sqlite_master where type='table' limit 1").fetchone():
             directory = data_dir / 'backups'
             directory.mkdir(exist_ok=True)
             stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-            with closing(sqlite3.connect(directory / f'{stamp}-{current}.db')) as backup:
-                db.backup(backup)
+            redact = removes_credentials and any(column in _columns(db, table)
+                                                 for table, column in LEGACY_CREDENTIAL_COLUMNS)
+            _backup(db, directory / f'{stamp}-{current}.db', redact)
+        if removes_credentials:
+            db.execute('pragma secure_delete=on')
         db.execute('begin immediate')
         try:
             db.execute('create table if not exists schema_versions(version integer primary key, applied_at real not null)')
+            # 另一连接可能在取得写锁前已经完成同一升级。
+            applied = db.execute('select coalesce(max(version), 0) from schema_versions').fetchone()[0]
             for version, sqls in pending:
+                if version <= applied:
+                    continue
                 for sql in sqls:
                     db.execute(sql)
                 db.execute('insert into schema_versions values (?,?)', (version, time.time()))
