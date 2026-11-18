@@ -49,6 +49,12 @@ CONTACT_CLAIM = re.compile(
 )
 # 模型金额一律以元计，面积以平方米计。识别显式单位后才能确认数值。
 CURRENCY = {"元": 1, "万元": 10_000, "亿元": 100_000_000}
+NUMERIC_UNITS = {
+    **dict.fromkeys(AMOUNTS, CURRENCY),
+    "amounts.area": {"㎡": 1, "平方米": 1, "平米": 1},
+    "employees": {"人": 1},
+    "yearsInZone": {"年": 1},
+}
 MEASURE = r"\s*(?:现有|已有|有|增至|增加至|降至|达到|达|为|约为|约|是|[:：]){0,2}\s*"
 NUMBER = r"[0-9]+(?:\.[0-9]+)?"
 MONEY = rf"({NUMBER})\s*(亿元|万元|元)(?:\s*人民币)?(?!\s*(?:美元|美金|欧元|港[元币]|日元|英镑|圆|圓|角|分|多|余|\d)){RANGE}"
@@ -218,9 +224,20 @@ def candidates(extractor, company, notes):
             new = normalize(field, candidate.get("new"))
         except ValueError:
             continue
-        checked_value = Decimal(str(new)) if field in AMOUNTS else new
+        checked_value = new
+        if field in NUMERIC_UNITS:
+            # 未声明单位的模型候选使用约定基准单位。声明单位时先核对，再换到基准单位。
+            units = NUMERIC_UNITS[field]
+            unit = candidate.get("unit")
+            if "unit" in candidate and (not isinstance(unit, str) or unit not in units):
+                continue
+            checked_value = Decimal(str(new)) * units.get(unit, 1)
         source = evidence(notes, quote, field, checked_value, claims)
         if source:
+            if field in AMOUNTS:
+                new = float(checked_value)
+                if not math.isfinite(new):
+                    continue
             proposed[field] = (field, new, source, quote)
 
     issues = list(dict.fromkeys(

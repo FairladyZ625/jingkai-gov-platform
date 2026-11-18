@@ -325,6 +325,7 @@ def test_revenue_uses_ledger_unit(enterprise, unit, expected):
 @pytest.mark.parametrize(("unit", "notes"), [
     ("", "营收为120万元。"), ("美元", "营收为120万元。"),
     ("万元", "营收为120。"), ("万元", "营收为120万欧元。"),
+    ("万元", "营收为120万元 美元。"),
 ])
 def test_unknown_revenue_unit_requires_manual_review(enterprise, unit, notes):
     cid = company(enterprise, revenue={"value": 45, "unit": unit})
@@ -337,6 +338,7 @@ def test_unknown_revenue_unit_requires_manual_review(enterprise, unit, notes):
 
 @pytest.mark.parametrize(("notes", "candidate", "field", "initial"), [
     ("职工现有30人。", {"new": 300, "source": "职工现有30人"}, "employees", 25),
+    ("职工现有30人。", {"new": 30, "unit": "人次", "source": "职工现有30人"}, "employees", 25),
     ("办公室容纳30人。", {"new": 30, "source": "办公室容纳30人"}, "employees", 25),
     ("职工现有30人次。", {"new": 30, "source": "职工现有30人"}, "employees", 25),
     ("职工现有30人至50人。", {"new": 30, "source": "职工现有30人"}, "employees", 25),
@@ -504,3 +506,18 @@ def test_legacy_proposal_is_retained_but_requires_reextraction(enterprise):
     assert decision(enterprise, proposal, "accept").is_success
     with sqlite3.connect(environ["JKQ_ENTERPRISE_PRIVATE_DB"]) as db:
         assert db.execute("SELECT status FROM visit_proposals WHERE id = 'old'").fetchone() == ("legacy",)
+
+
+
+def test_model_revenue_with_explicit_supported_unit(enterprise):
+    visits = module("visits")
+    extraction = module("visit_extraction")
+    enterprise.app.dependency_overrides[visits.visit_extractor] = lambda: extraction.Extractor(
+        extraction.Destination("private-test", "local"),
+        lambda *_: {"proposals": [{"field": "revenue.value", "new": 120, "unit": "万元",
+                                   "source": "营收为120万元"}], "issues": []},
+    )
+    cid = company(enterprise, revenue={"value": 45, "unit": "元"})
+    proposal, = visit(enterprise, cid, "营收为120万元。").json()["proposals"]
+    assert decision(enterprise, proposal, "accept").is_success
+    assert raw_company(enterprise, cid)["revenue"] == {"value": 1_200_000, "unit": "元"}
