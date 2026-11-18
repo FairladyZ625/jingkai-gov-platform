@@ -1,13 +1,12 @@
 """经开区应用目录及界面、对话共用的工具调用入口。"""
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.routing import Match
@@ -41,8 +40,6 @@ class _CallBody(BaseModel):
     args: dict[str, Any]
 
 
-WritePreflight = Callable[[User, dict[str, Any]], None]
-
 _HTTP_ERRORS = {
     401: ("UNAUTHENTICATED", "请先登录"),
     403: ("FORBIDDEN", "没有执行此操作的权限"),
@@ -66,9 +63,13 @@ class _BridgeIsolation(AppIsolation):
 
     async def __call__(self, scope, receive, send):
         # 桥的路由依赖先验证登录，随后桥自身按权限、可用性的顺序处理。
-        if (scope["type"] == "http" and scope["path"].startswith("/api/v1/apps/")
-                and any(route.matches(scope)[0] is Match.FULL for route in self.routes)):
-            return await self.app(scope, receive, send)
+        if scope["type"] == "http" and scope["path"].startswith("/api/v1/apps/"):
+            path = scope["path"].rstrip("/")
+            canonical = dict(scope, path=path)
+            if any(route.matches(canonical)[0] is Match.FULL for route in self.routes):
+                if "raw_path" in canonical:
+                    canonical["raw_path"] = canonical["raw_path"].rstrip(b"/")
+                return await self.app(canonical, receive, send)
         return await super().__call__(scope, receive, send)
 
 
@@ -96,22 +97,22 @@ def _public_manifest(entry: AppEntry, actions: frozenset[str], is_admin: bool) -
     return result
 
 
-def _template_record_model(app: FastAPI, path: str) -> type[BaseModel]:
-    # FastAPI 旧版直接展开 include_router，新版在保留前缀的路由上下文中保存同一个入参模型。
+def _preflight_method(app: FastAPI, method: str, path: str) -> str:
+    """同一业务路由显式提供只读检查方法，沿用其全部依赖、入参和业务授权。"""
+    check = f"CHECK-{method}"
     for route in app.routes:
-        if isinstance(route, APIRoute):
-            candidates = (route,)
-        else:
-            expand = getattr(route, "effective_route_contexts", None)
-            candidates = expand() if expand else ()
-        for candidate in candidates:
-            if getattr(candidate, "path", None) == path and "POST" in (getattr(candidate, "methods", None) or ()):
-                field = candidate.body_field
-                model = field.field_info.annotation if field else None
-                if isinstance(model, type) and issubclass(model, BaseModel) and "project" in model.model_fields:
-                    return model
-                break
-    raise DataError("internal_error", "工具业务入参模型尚未接入")
+        expand = getattr(route, "effective_route_contexts", None)
+        for candidate in expand() if expand else (route,):
+            pattern = getattr(candidate, "path_regex", None)
+            if not pattern or not pattern.match(path):
+                continue
+            methods = getattr(candidate, "methods", None)
+            if methods and methods.isdisjoint({method, check}):
+                continue
+            if methods and {method, check} <= methods:
+                return check
+            raise DataError("internal_error", "工具业务路由尚未接入共用预检")
+    raise DataError("internal_error", "找不到工具业务路由")
 
 
 def _tool_target(tool: dict, app_id: str, args: dict) -> tuple[str, str, dict]:
@@ -141,6 +142,8 @@ async def _dispatch(request: Request, method: str, path: str, args: dict) -> Any
         result = response.json() if response.content else None
     except ValueError:
         raise DataError("internal_error", "应用工具未返回 JSON 结果") from None
+    if method.startswith("CHECK-") and response.is_success and response.status_code != 204:
+        raise DataError("internal_error", "工具业务预检未确认授权")
     if response.is_success:
         return result
     if response.status_code in _HTTP_ERRORS:
@@ -163,13 +166,11 @@ class AppsBridge:
         current_user: Callable[[Request], User],
         review_sink: ReviewSink | None,
         list_skills: Callable[[User], list[dict]] | None,
-        write_preflights: Mapping[str, WritePreflight] | None = None,
     ):
         self.platform = platform
         self.current_user = current_user
         self.review_sink = review_sink
         self.list_skills = list_skills
-        self.write_preflights = dict(write_preflights or {})
 
     def user(self, request: Request) -> User:
         try:
@@ -221,19 +222,6 @@ class AppsBridge:
         user = await run_in_threadpool(self.user, request)
         return await self._call(request, user, app_id, tool, args, via="chat")
 
-    def _preflight(self, app: FastAPI, user: User, tool: dict, path: str, body: dict, args: dict) -> None:
-        if validate := self.write_preflights.get(tool["name"]):
-            validate(user, args)
-        elif tool.get("preflight") == "record.create":
-            model = _template_record_model(app, path)
-            try:
-                record = model.model_validate(body)
-            except ValidationError:
-                raise DataError("invalid_request", "工具参数缺失或类型不正确") from None
-            self.platform.data.projects.require(user, record.project)
-        else:
-            raise DataError("internal_error", "工具业务预检尚未接入")
-
     async def _call(self, request: Request, user: User, app_id: str, name: str, args: dict, *, via: str) -> dict:
         name = name if "." in name else f"{app_id}.{name}"
         entry = self._entry(app_id)
@@ -254,7 +242,8 @@ class AppsBridge:
             if via == "chat" and tool["write"]:
                 if self.review_sink is None:
                     raise DataError("internal_error", "工具审签服务尚未接入")
-                await run_in_threadpool(self._preflight, request.app, user, tool, path, body, args)
+                check = _preflight_method(request.app, method, path)
+                await _dispatch(request, check, path, body)
                 review_id = await run_in_threadpool(self.review_sink.create_tool_review, app_id, name, args, user)
                 result = {"status": "pending", "reviewId": review_id, "message": "待确认"}
                 detail.update(outcome="pending", reviewId=review_id)
@@ -283,12 +272,11 @@ def install(
     *,
     review_sink: ReviewSink | None = None,
     list_skills: Callable[[User], list[dict]] | None = None,
-    write_preflights: Mapping[str, WritePreflight] | None = None,
 ) -> AppsBridge:
     """启动前注册。业务写工具的预检负责同一请求人的入参和资源授权，全程只读。"""
     if app.middleware_stack is not None:
         raise RuntimeError("应用工具桥须在实例启动前注册")
-    bridge = AppsBridge(app.state.platform, current_user, review_sink, list_skills, write_preflights)
+    bridge = AppsBridge(app.state.platform, current_user, review_sink, list_skills)
     app.state.apps_bridge = bridge
     router = APIRouter(prefix="/api/v1")
 

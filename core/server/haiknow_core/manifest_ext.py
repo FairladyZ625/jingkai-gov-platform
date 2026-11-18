@@ -104,10 +104,4 @@ def validate_extensions(manifest: dict, *, required: bool = False) -> list[str]:
                 allowed = {"POST", "PUT", "PATCH", "DELETE"} if item["write"] else {"GET", "POST"}
                 if method not in allowed:
                     errors.append(f"字段 {path}.endpoint 的 HTTP 方法与 write 不匹配")
-                if "preflight" in item and (
-                    item["preflight"] != "record.create"
-                    or not item["write"]
-                    or item["endpoint"] != f"POST /api/apps/{app_id}/records"
-                ):
-                    errors.append(f"字段 {path}.preflight 仅支持样例记录创建工具的 record.create")
     return errors

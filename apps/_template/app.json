@@ -29,8 +29,7 @@
       "description": "保存一条样例记录",
       "write": true,
       "input": {"project": "string", "title": "string", "content": "string?"},
-      "endpoint": "POST /api/apps/__APP_ID__/records",
-      "preflight": "record.create"
+      "endpoint": "POST /api/apps/__APP_ID__/records"
     }
   ],
   "starters": ["帮我查一下项目里的样例记录"],

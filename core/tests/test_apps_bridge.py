@@ -27,6 +27,32 @@ def manifest(app_id=APP):
     return json.loads(template.replace("__APP_ID__", app_id).replace("__OWNER__", "fixture-owner"))
 
 
+# 已接入共同授权的业务应用。同一个处理函数先授权，再按方法选择检查或写入。
+BUSINESS_ROUTES = """
+from fastapi import Request
+
+@router.api_route("/tool-records", methods=["POST", "CHECK-POST"])
+def tool_create(request: Request, body: RecordIn, ctx: AppContext = Depends(require("operate"))):
+    ctx.records.list(project=body.project)
+    if body.title == "需要审批角色" and "approve" not in ctx.actions:
+        raise DataError("forbidden", "需要审批角色")
+    if request.method == "CHECK-POST":
+        return Response(status_code=204)
+    return create_record(body, ctx)
+
+@router.api_route("/tool-records/{rid}", methods=["PUT", "CHECK-PUT"])
+def tool_update(request: Request, rid: str, body: RecordPatch, ctx: AppContext = Depends(require("operate"))):
+    ctx.records.get(rid)
+    if request.method == "CHECK-PUT":
+        return Response(status_code=204)
+    return update_record(rid, body, ctx)
+
+@router.post("/restricted-records")
+def restricted_create(body: RecordIn, ctx: AppContext = Depends(require("approve"))):
+    return create_record(body, ctx)
+"""
+
+
 class MemoryReviewSink:
     def __init__(self):
         self.items = {}
@@ -56,6 +82,9 @@ def api(make_client, isolated_platform):
         shutil.copytree(ROOT / "apps/_template", target, ignore=shutil.ignore_patterns("__pycache__"))
         data = manifest(app_id)
         if app_id == APP:
+            with (target / "api/router.py").open("a", encoding="utf-8") as router:
+                router.write(BUSINESS_ROUTES)
+            data["tools"][1]["endpoint"] = f"POST /api/apps/{APP}/tool-records"
             data["defaultRoles"]["partner"] = ["view"]
             data["tools"].append({
                 "name": f"{APP}.get_record", "description": "读取指定版本的记录",
@@ -77,13 +106,7 @@ def api(make_client, isolated_platform):
     def list_skills(user):
         return [{"id": "sample-skill"}] if "sampleoperator" in user.roles else []
 
-    def preflight_update(user, args):
-        client.app.state.platform.data.get_record(user, APP, args["rid"])
-
-    bridge = install(
-        client.app, current_user, review_sink=reviews, list_skills=list_skills,
-        write_preflights={f"{APP}.update_record": preflight_update},
-    )
+    bridge = install(client.app, current_user, review_sink=reviews, list_skills=list_skills)
 
     @client.app.post("/api/v1/chat-fixture/{app}/{tool}")
     async def chat(request: Request, app: str, tool: str, body: dict):
@@ -187,6 +210,7 @@ def test_chat_write_creates_one_pending_review_without_touching_business_records
 
 
 @pytest.mark.parametrize(("args", "status", "code"), [
+    ({**ARGS, "title": "需要审批角色"}, 403, "FORBIDDEN"),
     ({"project": "limited-project", "title": "样例"}, 404, "NOT_FOUND"),
     ({"project": "sample-project"}, 422, "invalid_request"),
     ({"project": "sample-project", "title": ""}, 422, "invalid_request"),
@@ -210,7 +234,7 @@ def test_chat_write_requires_registered_preflight_and_checks_target_record(api):
     platform.apps[APP].manifest["tools"].append({
         "name": f"{APP}.update_record", "description": "修改样例记录",
         "write": True, "input": {"rid": "string", "baseVersion": "integer", "title": "string"},
-        "endpoint": f"PUT /api/apps/{APP}/records/{{rid}}",
+        "endpoint": f"PUT /api/apps/{APP}/tool-records/{{rid}}",
     })
     login(client, "sampleadmin")
     target = client.post(f"/api/apps/{APP}/records", json={**ARGS, "project": "limited-project"}).json()
@@ -219,7 +243,7 @@ def test_chat_write_requires_registered_preflight_and_checks_target_record(api):
     chat = f"/api/v1/chat-fixture/{APP}/update_record"
     for path in (f"{BASE}/update_record", chat):
         assert_error(client.post(path, json={"args": args}), 404, "NOT_FOUND")
-    client.app.state.apps_bridge.write_preflights.clear()
+    platform.apps[APP].manifest["tools"][-1]["endpoint"] = f"PUT /api/apps/{APP}/records/{{rid}}"
     assert_error(client.post(chat, json={"args": args}), 500, "internal_error")
     assert reviews.items == {}
     login(client, "sampleadmin")
@@ -229,8 +253,9 @@ def test_chat_write_requires_registered_preflight_and_checks_target_record(api):
     }
 
 
+@pytest.mark.parametrize("suffix", ["", "/", "//"])
 @pytest.mark.parametrize("unavailable", ["disabled", "circuit"])
-def test_unavailable_app_checks_permissions_before_availability_and_audits(api, unavailable):
+def test_unavailable_app_checks_permissions_before_availability_and_audits(api, unavailable, suffix):
     client, reviews = api
     entry = client.app.state.platform.apps[APP]
     if unavailable == "disabled":
@@ -242,8 +267,8 @@ def test_unavailable_app_checks_permissions_before_availability_and_audits(api, 
         for _ in range(FAILURE_THRESHOLD):
             entry.circuit.record(True)
 
-    detail = f"/api/v1/apps/{APP}"
-    paths = (f"{BASE}/create_record", f"/api/v1/chat-fixture/{APP}/create_record")
+    detail = f"/api/v1/apps/{APP}{suffix}"
+    paths = (f"{BASE}/create_record{suffix}", f"/api/v1/chat-fixture/{APP}/create_record")
     assert_error(client.get(detail), 401, "UNAUTHENTICATED")
     for path in paths:
         assert_error(client.post(path, json={"args": ARGS}), 401, "UNAUTHENTICATED")
@@ -253,7 +278,7 @@ def test_unavailable_app_checks_permissions_before_availability_and_audits(api, 
     login(client, "partner")
     for path in paths:
         assert_error(client.post(path, json={"args": ARGS}), 403, "FORBIDDEN")
-    assert_error(client.get(f"{detail}/records"), 503, "app_unavailable")
+    assert_error(client.get(f"/api/v1/apps/{APP}/records"), 503, "app_unavailable")
     assert_error(client.get(f"/api/apps/{APP}/records"), 503, "app_unavailable")
 
     login(client, "sampleoperator")
@@ -386,20 +411,16 @@ def test_manifest_rejects_unscoped_and_mismatched_tool_endpoints(endpoint):
     assert "tools[0].endpoint" in validate_extensions(data)[0]
 
 
-@pytest.mark.parametrize("target", ["read-tool", "other-endpoint", "invalid-value"])
-def test_manifest_restricts_template_preflight(target):
-    data = manifest()
-    read, write = data["tools"]
-    if target == "read-tool":
-        read["preflight"] = "record.create"
-        field = "tools[0].preflight"
-    else:
-        field = "tools[1].preflight"
-        if target == "other-endpoint":
-            write["endpoint"] += "/other"
-        else:
-            write["preflight"] = {}
-    assert field in validate_extensions(data)[0]
+def test_template_marker_cannot_authorize_an_unregistered_business_route(api):
+    client, reviews = api
+    tool = client.app.state.platform.apps[APP].manifest["tools"][1]
+    tool.update(endpoint=f"POST /api/apps/{APP}/restricted-records", preflight="record.create")
+    login(client, "sampleoperator")
+    assert_error(client.post(f"{BASE}/create_record", json={"args": ARGS}), 403, "FORBIDDEN")
+    path = f"/api/v1/chat-fixture/{APP}/create_record"
+    assert_error(client.post(path, json={"args": ARGS}), 500, "internal_error")
+    assert reviews.items == {}
+    assert client.get(f"/api/apps/{APP}/records").json()["items"] == []
 
 
 def test_template_and_generated_app_pass_manifest_cli(tmp_path):
