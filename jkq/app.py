@@ -8,7 +8,8 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, get_route_path
 
-from .compat import Compatibility, install_internal_error_handler
+from .compat import Compatibility, install_error_handlers
+from .projects import load_project_seed, restore_empty_projects
 from .settings import REPO_ROOT, core_environment, required_environment, web_directory
 
 
@@ -29,15 +30,17 @@ def create_app() -> FastAPI:
     root = Path(os.environ.get("HAIKNOW_ROOT") or REPO_ROOT).resolve()
     web_dir = web_directory(root)
     with core_environment(root):
+        seed = load_project_seed(Path(os.environ["HAIKNOW_CONFIG_DIR"]))
         from haiknow_core.main import create_app as create_core_app
 
         from .routers import register_routes
 
         app = create_core_app(root)
+        restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
 
     app.title = "北京经开区共享智能体工作站"
-    install_internal_error_handler(app)
+    install_error_handlers(app)
     app.add_middleware(Compatibility, router=app.router)
 
     if not (web_dir / "favicon.ico").is_file():

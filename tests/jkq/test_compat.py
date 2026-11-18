@@ -6,29 +6,42 @@ import subprocess
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 
 # 仓库检查仅装 pytest。安装平台依赖的 Core 检查会执行这组集成用例。
 pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-dev.txt")
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.testclient import TestClient
 
 from jkq import routers
 from jkq.app import create_app
-from jkq.settings import REPO_ROOT
+from jkq.settings import REPO_ROOT, core_environment
 
 
 @pytest.fixture
 def data_dir(monkeypatch, tmp_path):
     for name in ("HAIKNOW_ROOT", "HAIKNOW_CONFIG_DIR", "HAIKNOW_APPS_DIR", "JKQ_WEB_DIR"):
         monkeypatch.delenv(name, raising=False)
+    for name in tuple(os.environ):
+        if name.startswith(("HAIKNOW_MODEL_", "HAIKNOW_PROVIDER_")):
+            monkeypatch.delenv(name)
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
     monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
     directory = tmp_path / "database"
     monkeypatch.setenv("HAIKNOW_DATA_DIR", str(directory))
     return directory
+
+
+def seed_environment(data_dir):
+    return {
+        "PYTHON": sys.executable,
+        "HAIKNOW_DATA_DIR": str(data_dir),
+        "HAIKNOW_DEMO_LOGIN": "0",
+        "HAIKNOW_SECRET": os.environ["HAIKNOW_SECRET"],
+    }
 
 
 @pytest.fixture
@@ -115,6 +128,19 @@ def test_unmapped_routes_use_error_envelope(client, path):
     assert_error(client.get(path), 404, "NOT_FOUND")
 
 
+@pytest.mark.parametrize(("method", "path"), [
+    ("GET", "/api/v1/auth/session"),
+    ("POST", "/api/v1/admin/departments"),
+    ("DELETE", "/api/v1/admin/departments/example"),
+    ("GET", "/api/v1/kb/libraries"),
+    ("GET", "/api/v1/kb/files/example"),
+])
+def test_unavailable_contract_routes_have_explicit_stub(client, method, path):
+    response = client.request(method, path)
+    assert_error(response, 404, "NOT_FOUND")
+    assert response.json()["error"]["message"] == "接口待接入"
+
+
 def test_wrong_method_preserves_allow_header(client):
     response = client.post("/api/v1/kb/categories")
     assert_error(response, 405, "METHOD_NOT_ALLOWED")
@@ -127,12 +153,24 @@ def test_canonical_redirect_preserves_alias_and_query(client):
     assert response.headers["location"] == "http://testserver/api/v1/auth/state?source=jkq"
 
 
-def test_native_routes_take_precedence_by_method(client):
+def test_native_and_aliased_methods_coexist(client):
     create_admin(client)
     body = {"enabled": True}
     assert client.put("/api/admin/apps/missing", json=body).status_code == 405
     response = client.put("/api/v1/admin/apps/missing", json=body)
     assert_error(response, 404, "NOT_FOUND")
+    assert client.patch("/api/admin/apps/missing", json={}).status_code == 404
+    assert_error(client.patch("/api/v1/admin/apps/missing", json={}), 404, "NOT_FOUND")
+
+
+def test_native_admin_route_preserves_redirect_and_allow_header(client):
+    path = "/api/v1/admin/ai/providers"
+    response = client.get(f"{path}/?source=jkq", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == f"http://testserver{path}?source=jkq"
+    response = client.post(path)
+    assert_error(response, 405, "METHOD_NOT_ALLOWED")
+    assert response.headers["allow"] == "GET"
 
 
 def test_instance_router_registration_precedes_alias(data_dir, monkeypatch):
@@ -142,10 +180,44 @@ def test_instance_router_registration_precedes_alias(data_dir, monkeypatch):
     def state():
         return {"source": "jkq"}
 
+    @router.get("/session")
+    def session():
+        return {"user": None}
+
     monkeypatch.setattr(routers, "ROUTERS", (router,))
     with TestClient(create_app()) as client:
         assert client.get("/api/v1/auth/state").json() == {"source": "jkq"}
         assert client.get("/api/auth/state").json() == {"demoLogin": False, "needsBootstrap": True}
+        response = client.get("/api/v1/auth/state/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "http://testserver/api/v1/auth/state"
+        response = client.post("/api/v1/auth/state")
+        assert_error(response, 405, "METHOD_NOT_ALLOWED")
+        assert response.headers["allow"] == "GET"
+        assert client.get("/api/v1/auth/session").json() == {"user": None}
+
+
+def test_registered_route_preserves_http_error_status_details_and_headers(data_dir, monkeypatch):
+    router = APIRouter(prefix="/api/v1")
+
+    @router.post("/conflict")
+    def conflict():
+        raise HTTPException(409, "当前版本已变更", headers={"Retry-After": "2"})
+
+    @router.get("/unavailable")
+    def unavailable():
+        raise HTTPException(503, "测试内部诊断", headers={"Retry-After": "60"})
+
+    monkeypatch.setattr(routers, "ROUTERS", (router,))
+    with TestClient(create_app()) as client:
+        response = client.post("/api/v1/conflict")
+        assert_error(response, 409, "INVALID_REQUEST")
+        assert response.json()["error"]["message"] == "当前版本已变更"
+        assert response.headers["retry-after"] == "2"
+        response = client.get("/api/v1/unavailable")
+        assert_error(response, 503, "INTERNAL_ERROR")
+        assert "测试内部诊断" not in response.text
+        assert response.headers["retry-after"] == "60"
 
 
 class PageAssets(HTMLParser):
@@ -181,6 +253,8 @@ def test_health_and_prototype_assets(client):
 def test_web_directory_selection(data_dir, tmp_path, monkeypatch, configured):
     root = tmp_path / "instance"
     root.mkdir()
+    (root / "config").mkdir()
+    copyfile(REPO_ROOT / "config/projects.yaml", root / "config/projects.yaml")
     monkeypatch.setenv("HAIKNOW_ROOT", str(root))
     (root / "web").mkdir()
     (root / "web/index.html").write_text("web 优先", encoding="utf-8")
@@ -215,7 +289,7 @@ def test_v1_internal_error_has_standard_envelope(data_dir, monkeypatch):
 
 
 def test_make_seed_is_idempotent(data_dir):
-    env = {**os.environ, "PYTHON": sys.executable}
+    env = seed_environment(data_dir)
     snapshots = []
     for _ in range(2):
         result = subprocess.run(["make", "--no-print-directory", "seed"], cwd=REPO_ROOT,
@@ -225,3 +299,62 @@ def test_make_seed_is_idempotent(data_dir):
             snapshots.append((result.stdout, list(db.iterdump())))
     assert snapshots[0] == snapshots[1]
     assert projects == [("jkq",)]
+
+
+@pytest.mark.parametrize("config", [
+    "companies: [",
+    "companies: {id: jingkai}",
+    "companies: [{id: jingkai, name: 经开区, projects: [{id: other, name: 演示}]}]",
+    "companies: [{id: jingkai, name: 经开区, projects: [{id: jkq}]}]",
+])
+def test_invalid_project_config_fails_before_opening_database(data_dir, tmp_path, monkeypatch, config):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "projects.yaml").write_text(config, encoding="utf-8")
+    monkeypatch.setenv("HAIKNOW_CONFIG_DIR", str(config_dir))
+    with pytest.raises(RuntimeError, match=r"HAIKNOW_CONFIG_DIR.*projects\.yaml"):
+        create_app()
+    assert not data_dir.exists()
+
+
+def test_seed_can_retry_same_data_dir_after_missing_project_config(data_dir, tmp_path):
+    env = {**seed_environment(data_dir), "HAIKNOW_CONFIG_DIR": str(tmp_path / "missing")}
+    command = ["make", "--no-print-directory", "seed"]
+    failed = subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+    assert failed.returncode != 0
+    assert "HAIKNOW_CONFIG_DIR" in failed.stderr
+    assert "projects.yaml" in failed.stderr
+    assert not data_dir.exists()
+    env["HAIKNOW_CONFIG_DIR"] = str(REPO_ROOT / "config")
+    recovered = subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+    assert "实例项目已初始化：jkq" in recovered.stdout
+    with sqlite3.connect(data_dir / "platform.db") as db:
+        assert db.execute("select id from projects").fetchall() == [("jkq",)]
+
+
+def test_seed_repairs_existing_empty_project_library_without_replacing_data(data_dir, tmp_path, monkeypatch):
+    with monkeypatch.context() as legacy:
+        legacy.setenv("HAIKNOW_CONFIG_DIR", str(tmp_path / "missing"))
+        with core_environment(REPO_ROOT):
+            from haiknow_core.main import create_app as create_core_app
+
+            old_store = create_core_app(REPO_ROOT).state.platform.store
+            try:
+                old_store.kv_put("test-app", "existing", {"kept": True})
+            finally:
+                old_store._db.close()
+    with sqlite3.connect(data_dir / "platform.db") as db:
+        assert db.execute("select id from projects").fetchall() == []
+        assert db.execute("select value from settings where key='identity.seeded'").fetchone() == ("true",)
+
+    env = seed_environment(data_dir)
+    command = ["make", "--no-print-directory", "seed"]
+    subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+    with sqlite3.connect(data_dir / "platform.db") as db:
+        assert db.execute("select id, company_id from projects").fetchall() == [("jkq", "jingkai")]
+        assert db.execute("select id from companies where id='company'").fetchone() == ("company",)
+        assert db.execute("select value from kv where app_id='test-app'").fetchone() == ('{"kept": true}',)
+        snapshot = list(db.iterdump())
+    subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
+    with sqlite3.connect(data_dir / "platform.db") as db:
+        assert list(db.iterdump()) == snapshot

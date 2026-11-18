@@ -1,10 +1,13 @@
 """经开区 v1 路径和错误信封，复用 core 的会话与请求处理。"""
 
 import json
+from http.client import responses
 from urllib.parse import urlsplit, urlunsplit
 
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException
 from starlette.routing import Match, get_route_path
 
 ALIASES = {
@@ -52,7 +55,23 @@ def error_content(status: int, payload: dict) -> dict:
     return {"error": {"code": ERROR_ALIASES.get(code, code), "message": message, "details": details}}
 
 
-def install_internal_error_handler(app) -> None:
+def install_error_handlers(app) -> None:
+    previous_http = app.exception_handlers[HTTPException]
+
+    @app.exception_handler(HTTPException)
+    async def http_error(request, exc):
+        if not get_route_path(request.scope).startswith("/api/v1/"):
+            return await previous_http(request, exc)
+        if exc.status_code < 400:
+            return await http_exception_handler(request, exc)
+
+        # core 以 DataError 重新推导 HTTP 状态。这里用原状态和公开的客户端提示。
+        message = exc.detail
+        if exc.status_code >= 500 or message == responses.get(exc.status_code):
+            message = None
+        return JSONResponse(error_content(exc.status_code, {"detail": message}),
+                            status_code=exc.status_code, headers=exc.headers)
+
     # Starlette 的 500 处理器位于用户 middleware 外层。
     previous = app.exception_handlers[Exception]
 
@@ -69,6 +88,32 @@ class Compatibility:
         self.app = app
         self.router = router
 
+    def _match(self, scope):
+        match = Match.NONE
+        for route in self.router.routes:
+            candidate, _ = route.matches(scope)
+            if candidate is Match.FULL:
+                return candidate
+            if candidate is Match.PARTIAL:
+                match = candidate
+        return match
+
+    def _prefer_alias(self, original, rewritten):
+        native = self._match(original)
+        if native is Match.FULL:
+            return False
+        if self._match(rewritten) is Match.FULL:
+            return True
+        if native is Match.PARTIAL:
+            return False
+
+        if self.router.redirect_slashes:
+            path = original["path"]
+            slash_path = path.rstrip("/") if path.endswith("/") else path + "/"
+            if self._match({**original, "path": slash_path}) is not Match.NONE:
+                return False
+        return True
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not get_route_path(scope).startswith("/api/v1/"):
             await self.app(scope, receive, send)
@@ -78,11 +123,13 @@ class Compatibility:
         path = get_route_path(scope)
         alias = next(((source, target) for source, target in ALIASES.items()
                       if path.startswith(source + "/")), None)
-        if alias and not any(route.matches(scope)[0] == Match.FULL for route in self.router.routes):
+        if alias:
             source, target = alias
             prefix = scope["path"][:-len(path)]
-            scope = {**scope, "path": prefix + target + path[len(source):]}
-            scope.pop("raw_path", None)
+            rewritten = {**scope, "path": prefix + target + path[len(source):]}
+            rewritten.pop("raw_path", None)
+            if self._prefer_alias(original, rewritten):
+                scope = rewritten
 
         start = None
         body = bytearray()

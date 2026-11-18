@@ -15,6 +15,9 @@ make dev
 `/api/health` 得到 `{"ok":true}`。`make test` 运行 Python 回归测试。
 `make seed` 通过实例工厂初始化数据库，新库只有 `jkq` 一个项目，
 重复运行保留库内现有数据。
+实例在打开数据库前检查 `HAIKNOW_CONFIG_DIR/projects.yaml`，要求一个组织和唯一的
+`jkq` 项目。旧版若用错误配置初始化出了空项目库，修正配置后对原数据目录重跑
+`make seed`，即可补齐项目并保留库内数据。
 
 | 环境变量 | 默认值 |
 | --- | --- |
@@ -30,13 +33,18 @@ make dev
 ## 挂载平台业务
 
 业务模块导出 `router = APIRouter(prefix="/api/v1/业务前缀")`，
-由 `jkq/routers.py` 的 `ROUTERS` 集中登记。实例业务路由优先处理同方法、同路径的请求。
-未被实例业务路由接管时，auth、admin、kb 的前缀分别转给 core 的
-`/api/auth`、`/api/admin`、`/api/v1/knowledge`，保留卫华的会话及权限检查。
+由 `jkq/routers.py` 的 `ROUTERS` 集中登记。原生路由优先处理同方法、同路径的请求。
+auth、admin、kb 的前缀分别映射到 core 的 `/api/auth`、`/api/admin`、
+`/api/v1/knowledge`。别名目标完全匹配时允许转发，其余请求保留原生路由的
+尾斜杠重定向和方法限制。会话和权限检查由目标接口执行。
 业务路由使用 `request.app.state.platform` 获取实例，并可复用 core 的
 `current_user` 鉴权依赖。
+
+`auth/session`、`admin/departments` 及其子项、`kb/libraries`、`kb/files/{id}`
+的占位路由返回 404 `NOT_FOUND`。业务模块在 `ROUTERS` 接管对应路径后可删除占位。
 
 `/api/v1/` 错误使用 `{error: {code, message, details}}`。登录凭据错误使用
 `BAD_CREDENTIALS`，缺少有效会话使用 `UNAUTHENTICATED`，拒绝访问使用
 `FORBIDDEN`，资源或路由不存在使用 `NOT_FOUND`。其余 core 错误保留原 HTTP
-状态和具体错误语义，错误码写作大写。
+状态和具体错误语义，错误码写作大写。业务路由抛出 4xx `HTTPException` 时保留公开字符串提示，
+5xx 使用通用提示。
