@@ -1,4 +1,5 @@
-"""空库首管关闭、公网路径和续跑任务。不启动容器，也不打印口令。"""
+"""空库首管关闭、公网路径、应用列表和续跑任务。"""
+import json
 import shutil
 import time
 from pathlib import Path
@@ -88,6 +89,15 @@ def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monke
     apps = tmp_path / "apps"
     data = tmp_path / "data"
     shutil.copytree(HOLD, apps / "jkq-hold")
+    example_manifest = json.loads((HOLD / "app.json").read_text(encoding="utf-8"))
+    example_manifest.pop("internal", None)
+    for app_id, flags in (("fixture-public", {}), ("fixture-internal", {"internal": True})):
+        target = apps / app_id
+        target.mkdir()
+        (target / "app.json").write_text(
+            json.dumps({**example_manifest, "id": app_id, "name": app_id, **flags}),
+            encoding="utf-8",
+        )
     for name in tuple(__import__("os").environ):
         if name.startswith(("HAIKNOW_MODEL_", "HAIKNOW_PROVIDER_")):
             monkeypatch.delenv(name)
@@ -107,12 +117,29 @@ def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monke
         assert client.get("/api/auth/state").json()["needsBootstrap"] is False
         assert client.post("/api/v1/auth/bootstrap", json={}).status_code == 404
         assert client.post("/api/auth/bootstrap", json={}).status_code == 404
+        assert client.get("/api/apps").status_code == 401
+        assert client.get("/api/v1/admin/apps").status_code == 401
+        assert client.get("/api/auth/users").status_code == 404
         login = client.post("/api/v1/auth/login", json={
             "username": "admin", "password": PASSWORDS["JKQ_DEMO_ADMIN_PASSWORD"],
         })
         assert login.status_code == 200, login.text
         assert login.json()["role"]["id"] == "admin"
         assert client.get("/api/v1/auth/session").json()["user"]["username"] == "admin"
+        hidden = {"jkq-hold", "fixture-internal"}
+        for path in ("/api/apps", "/api/admin/apps", "/api/v1/admin/apps",
+                     "/api/admin/grants", "/api/v1/admin/grants"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            body = response.json()
+            assert {entry["id"] for entry in body["apps"]} == {"fixture-public"}, path
+            assert all(hidden.isdisjoint(grants) for grants in body.get("grants", {}).values()), path
+        me = client.get("/api/v1/me")
+        assert me.status_code == 200
+        for body in (login.json(), me.json()):
+            assert {"*", "fixture-public"} <= body["grants"].keys()
+            assert hidden.isdisjoint(body["grants"])
+        assert hidden <= client.app.state.platform.apps.keys()
         created = client.post("/api/v1/jobs", json={
             "appId": "jkq-hold", "project": "jkq", "operation": "hold",
             "input": {}, "idempotencyKey": "hold-once",
