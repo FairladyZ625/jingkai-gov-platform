@@ -18,7 +18,7 @@
 
 
 > 对应卫华 haiknow 的 `apps/<id>/app.json` + `mount(el, ctx)` 小应用规范。shell（外壳）负责：登录/权限、对话、模型切换、AI 操作员（光标/高亮/任务清单）、收件箱、审计、演示。应用只负责右侧面板里自己的界面和业务。
-> 设计规范见 `DESIGN.md`；颜色只能用 `assets/theme.css` 变量与 `config/tags.js` 色槽。
+> 设计规范见 [DESIGN.md](../web/DESIGN.md)；颜色只能用 `assets/theme.css` 变量与 `config/tags.js` 色槽。
 
 ## 1. 目录与加载
 
