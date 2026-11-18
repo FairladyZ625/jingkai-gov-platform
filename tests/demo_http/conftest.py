@@ -5,6 +5,7 @@ import secrets
 import socket
 import threading
 import time
+from dataclasses import dataclass, field
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +13,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@dataclass(frozen=True)
+class DemoServer:
+    url: str
+    password: str = field(repr=False)
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +62,7 @@ def server(tmp_path_factory):
                 while not instance.started:
                     assert thread.is_alive() and time.monotonic() < deadline, "实例启动失败"
                     time.sleep(0.02)
-                yield f"http://127.0.0.1:{listener.getsockname()[1]}", password
+                yield DemoServer(f"http://127.0.0.1:{listener.getsockname()[1]}", password)
             finally:
                 instance.should_exit = True
                 thread.join(10)
