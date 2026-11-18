@@ -102,13 +102,10 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
 
     @router.delete("/{sid}")
     def remove(sid: str, user=Depends(current_user)):
-        doc = skills.load(user, sid, edit=True)
-        return {"ok": True, "item": skills.save(user, doc, {"deleted": True})}
+        return {"ok": True, "item": skills.set_deleted(user, sid, True)}
 
     @router.post("/{sid}/restore-deleted")
     def undo(sid: str, user=Depends(current_user)):
-        doc = skills.load(user, sid, edit=True, deleted=True)
-        item = skills.save(user, doc, {"deleted": False}) if doc["data"]["deleted"] else skills.view(user, doc)
-        return {"ok": True, "item": item}
+        return {"ok": True, "item": skills.set_deleted(user, sid, False)}
 
     app.include_router(router)

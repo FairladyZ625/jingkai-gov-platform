@@ -1,11 +1,31 @@
 """技能级授权在当前版本判定，内容版本由 core DataService 持久化。"""
 import json
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
 from haiknow_core.data import DataService
 from haiknow_core.store import Store
 
 from .spec import CONTENT, SkillError, content_fields, invalid, next_version, validate_spec
+
+
+class SkillStore(Store):
+    """技能记录与标准审计使用同一 SQLite 事务，记录表仍留在专用库。"""
+
+    action = ContextVar("skill_audit_action", default="skill.update")
+
+    def __init__(self, platform_store):
+        super().__init__(platform_store.data_dir / "skills")
+        self._db.execute("ATTACH DATABASE ? AS platform", (str(platform_store.data_dir / "platform.db"),))
+
+    def audit(self, app_id, user_id, action, detail, *, connection=None):
+        super().audit(app_id, user_id, action, detail, connection=connection)
+        if connection is not None and action == "v1.record.save":
+            connection.execute(
+                "INSERT INTO platform.audit(ts, app_id, user_id, action, detail) "
+                "SELECT ts, app_id, user_id, ?, detail FROM main.audit WHERE id=last_insert_rowid()",
+                (self.action.get(),),
+            )
 
 
 class SkillWorkspace:
@@ -26,7 +46,7 @@ class SkillRecords(DataService):
 class Skills:
     def __init__(self, platform):
         self.platform = platform
-        self.store = Store(platform.store.data_dir / "skills")
+        self.store = SkillStore(platform.store)
         self.records = SkillRecords(self.store, platform.rbac, SkillWorkspace(), {})
 
     def access(self, user, item):
@@ -56,6 +76,16 @@ class Skills:
         if not visible or (edit and not editable):
             raise SkillError(403, "FORBIDDEN", "没有该技能的访问权限", app="skills", need="edit" if edit else "view")
         return doc
+
+    def set_deleted(self, user, sid, deleted):
+        doc = self.load(user, sid, edit=True, deleted=not deleted)
+        item = doc["data"]
+        if item["authorId"] != user.id and "admin" not in self.platform.rbac.actions(user, "skills"):
+            raise SkillError(403, "FORBIDDEN", "只有所有者或技能管理员可删除或撤销删除")
+        if item["deleted"] == deleted:
+            return self.view(user, doc)
+        action = "skill.delete" if deleted else "skill.restore_deleted"
+        return self.save(user, doc, {"deleted": deleted}, action=action)
 
     def history(self, doc):
         # 一个内容版本的删除、撤销和分享可产生多个存储修订，只展示内容快照。
@@ -93,14 +123,22 @@ class Skills:
                 "share": {"scope": "private", "perm": "use", "people": []},
                 "uses": 0, "rating": 0, "ratingN": 0, "forks": 0,
                 "forkOf": source, "note": "复制改编" if source else "新建草稿"}
-        doc = self.records.save_record(user, "skills", {"project": "jkq", "type": "skill", "data": item})
+        doc = self.write(user, {"project": "jkq", "type": "skill", "data": item},
+                         "skill.fork" if source else "skill.create")
         return self.view(user, doc)
 
-    def save(self, user, doc, changes):
+    def write(self, user, body, action, sid=None):
+        token = self.store.action.set(action)
+        try:
+            return self.records.save_record(user, "skills", body, sid)
+        finally:
+            self.store.action.reset(token)
+
+    def save(self, user, doc, changes, *, action="skill.update"):
         # baseVersion 同时保护内容和授权快照。并发更新冲突由 core 返回。
-        updated = self.records.save_record(user, "skills", {
+        updated = self.write(user, {
             "baseVersion": doc["version"], "data": {**doc["data"], **changes},
-        }, doc["id"])
+        }, action, doc["id"])
         return self.view(user, updated)
 
     def revise(self, user, sid, body, restore=False):
@@ -121,4 +159,5 @@ class Skills:
             note = body.get("note", "修改内容")
             if not isinstance(note, str):
                 invalid("版本说明应为文本")
-        return self.save(user, doc, {**fields, "version": next_version(doc["data"]["version"]), "note": note})
+        return self.save(user, doc, {**fields, "version": next_version(doc["data"]["version"]), "note": note},
+                         action="skill.restore" if restore else "skill.update")

@@ -1,5 +1,9 @@
 """技能编辑器与保存接口共用的工具目录、内容字段和结构校验。"""
 
+import json
+import re
+
+
 TOOLS = (
     {"id": "policy.match", "label": "匹配兑现事项", "needs": "ent"},
     {"id": "enterprise.get", "label": "读取企业档案", "needs": "ent"},
@@ -22,10 +26,31 @@ def invalid(message):
 def validate_spec(spec):
     if not isinstance(spec, dict):
         invalid("技能规格应为对象")
-    for key, kind in (("triggers", str), ("inputs", dict), ("steps", dict)):
+    try:
+        json.dumps(spec, allow_nan=False, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        invalid("规格须可编码为 UTF-8 JSON，数字须为有限值")
+    for key, kind in (("triggers", str), ("inputs", dict), ("steps", dict), ("kb", str)):
         values = spec.get(key, [])
         if not isinstance(values, list) or not all(isinstance(i, kind) for i in values):
             invalid(f"{key} 列表格式有误")
+    keys = set()
+    for field in spec.get("inputs", []):
+        key = field.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            invalid("输入标识须以字母或下划线开头，仅可含字母、数字和下划线")
+        if key in keys or key in ("__proto__", "constructor", "prototype"):
+            invalid("输入标识重复或为保留名")
+        keys.add(key)
+    output = spec.get("output", {})
+    if not isinstance(output, dict):
+        invalid("输出设置应为对象")
+    output = {"format": "要点", "title": "", **output}
+    if output["format"] not in ("要点", "表格", "清单", "公文") or not isinstance(output["title"], str):
+        invalid("输出格式或标题无效")
+    for name in ("cat", "model", "prompt"):
+        if name in spec and not isinstance(spec[name], str):
+            invalid(f"{name} 应为文本")
     steps = spec.get("steps", [])
     if len(steps) > 5:
         invalid("技能最多允许五个步骤")
@@ -42,7 +67,8 @@ def validate_spec(spec):
     for tool in tools:
         if not isinstance(tool, str) or tool not in allowed:
             raise SkillError(400, "SKILL_TOOL_NOT_ALLOWED", "工具不在技能白名单内")
-    return {"triggers": [], "inputs": [], "steps": [], **spec}
+    return {"cat": "知识", "model": "auto", "prompt": "", "triggers": [], "inputs": [],
+            "steps": [], "kb": [], **spec, "output": output}
 
 
 def content_fields(body):
