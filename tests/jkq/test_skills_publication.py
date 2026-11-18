@@ -136,3 +136,16 @@ def test_failed_review_creation_rolls_back_publication(api):
     with pytest.raises(sqlite3.IntegrityError, match="审核写入失败"):
         call(api, "POST", path + "/publish", body={"share": {"scope": "zone"}})
     assert call(api, "GET", path).json()["item"]["status"] == "draft"
+
+
+def test_concurrent_votes_keep_both_users(api):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = create(api)
+    call(api, "POST", path + "/publish", body={"share": {"scope": "dept"}})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = [pool.submit(call, api, "POST", path + "/rate", user, {"useful": useful})
+                     for user, useful in (("sampleoperator", False), ("sampleextra", True))]
+        assert [job.result().status_code for job in responses] == [200, 200]
+    item = call(api, "GET", path).json()["item"]
+    assert (item["ratingN"], item["usefulRate"]) == (2, 50)

@@ -31,9 +31,15 @@ def transaction(skills):
         scoped.store._db = db
         scoped.records = copy(skills.records)
         scoped.records.store = scoped.store
-        db.execute("BEGIN IMMEDIATE")
-        yield scoped
-        db.commit()
+        # 与 CRUD 统一先持技能库锁，再申请 SQLite 写锁。
+        with skills.store._lock:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                yield scoped
+                db.commit()
+            finally:
+                if db.in_transaction:
+                    db.rollback()
     finally:
         db.close()  # 发生异常时回滚所有记录、投票及审计。
 
