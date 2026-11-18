@@ -32,17 +32,18 @@ HA 每 20 分钟巡检一次。已经 assign 的 Issue 不会再派给 Codex。
 ## 避免冲突
 
 - 只改 Issue 写明的文件范围。需要超出范围时，先在 Issue 里说明，等确认再改。
-- 经常把分支 rebase 到当前基线（现在是 `chore/import-v4-and-plan`，PR #1 合并后改为 `main`）。
+- 经常把分支 rebase 到最新的 `origin/main`（`main` 为当前主干基线）。
 - 同一文件同一时间只由一人修改。
 - 改到公共文件（如 `shell.js`、接口规范、mock 数据）时，必须在 PR 描述里点名列出，方便审阅和协调。
 
 ## 怎么提 PR
 
-- 把 Issue 里的验收标准逐条勾选，并附上本地验证输出。
-- 改了界面：附 1440 和 1280 宽度的截图。
-- 等 CI / guard 全绿后再请审核。
+- 按 [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) 和 [AGENTS.md](AGENTS.md) 填写 PR 正文：首行单独写 `Closes #n`（仅关联时写 `Refs #n`），保留 `## 摘要`、`## 验证`、`## 截图` 三个二级标题（由 `scripts/check_pr_body.py` 在 CI 中校验）。
+- 在 `## 摘要` 把 Issue 里的验收标准逐条核对说明，在 `## 验证` 附上本地命令与真实输出。
+- 改了界面（`prototype/v4/**`、`web/**`、`apps/*/web/**`）：在 `## 截图` 附 1440 和 1280 宽度的两张截图；未改界面则在该节说明无需截图的原因。
+- 提交前按 [AGENTS.md](AGENTS.md) 运行 `guard.py` 和本地 `pytest`（改动 `core/`、`jkq/`、`apps/_template/` 等路径时还需跑 `scripts/check.py`），等 CI / guard 全绿后再请审核。
 - CEO 助手按验收标准审代码，由 Ben 合并。`main` 受保护，不能直接推。
-- 没有写权限时，从自己的 fork 向本仓库对应基线分支提 PR，同样写 `Closes #n`。
+- 没有写权限时，从自己的 fork 向本仓库 `main` 分支提 PR，同样写 `Closes #n`。
 
 ## 红线（不要提交）
 
