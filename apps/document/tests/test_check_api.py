@@ -4,14 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from haiknow_sdk.ai import AI, AIError
 from haiknow_sdk.resources import Records
 
+from jkq.app import create_app
+
 APP = "/api/apps/document"
-APP_ROOT = Path(__file__).resolve().parents[1]
-pytestmark = pytest.mark.skipif(
-    not (APP_ROOT / "app.json").is_file(), reason="#38 公文草稿入口尚未合入当前基线",
-)
+APPS = Path(__file__).resolve().parents[2]
 INPUTS = {
     "orig": "示例征集通知", "oldEnd": "2026-11-02", "newEnd": "2026-11-06", "reason": "示例原因",
     "docNo": "测试[2026]08号", "to": "各单位", "sign": "测试单位", "date": "2026年11月1日",
@@ -28,11 +28,11 @@ class Knowledge:
 
 
 @pytest.fixture
-def document(isolated_platform, client_for, monkeypatch):
+def document(isolated_platform, cheap_password_hash, monkeypatch):
     config, _ = isolated_platform
     path = config / "projects.yaml"
     seed = json.loads(path.read_text())
-    seed["companies"][0]["projects"].append({"id": "jkq", "name": "示例经开区", "products": []})
+    seed["companies"][0]["projects"] = [{"id": "jkq", "name": "示例经开区", "products": []}]
     path.write_text(json.dumps(seed))
     path = config / "roles.yaml"
     seed = json.loads(path.read_text())
@@ -46,10 +46,16 @@ def document(isolated_platform, client_for, monkeypatch):
             user["projects"].append("jkq")
     path.write_text(json.dumps(seed))
     monkeypatch.setattr(AI, "chat", lambda *args, **kwargs: {"result": '{"issues":[]}'})
-    client = client_for("document")
-    knowledge = Knowledge()
-    client.app.state.platform.kb = knowledge
-    return client, knowledge
+    monkeypatch.delenv("HAIKNOW_ROOT", raising=False)
+    monkeypatch.delenv("JKQ_WEB_DIR", raising=False)
+    monkeypatch.delenv("JKQ_MOCK_GOV_URL", raising=False)
+    monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
+    monkeypatch.setenv("HAIKNOW_APPS_DIR", str(APPS))
+    with TestClient(create_app()) as client:
+        assert client.post("/api/auth/login", json={"user_id": "sampleadmin"}).status_code == 200
+        knowledge = Knowledge()
+        client.app.state.platform.kb = knowledge
+        yield client, knowledge
 
 
 def payload(response):
@@ -150,3 +156,29 @@ def test_finalized_draft_can_be_checked_but_not_fixed(document):
     result = client.post(f"{url}/fix", json={"ids": ["不存在"]})
     assert (result.status_code, result.json()["error"]["code"]) == (409, "LOCKED")
     assert payload(client.get(url))["item"]["versions"] == original["versions"]
+
+
+
+def test_approval_between_check_and_save_blocks_revision(document, monkeypatch):
+    client, _ = document
+    url, original = create(client)
+    review = client.post("/api/v1/reviews", json={
+        "appId": "document", "recordId": original["id"], "version": 1, "assignee": "samplereviewer",
+    })
+    assert review.status_code == 201, review.text
+    ids = [issue["id"] for issue in payload(client.post(f"{url}/check"))["issues"] if "fix" in issue]
+    assert ids
+    platform = client.app.state.platform
+    reviewer = platform.directory.user("samplereviewer")
+    save = Records.save
+
+    def finalize_before_save(records, *, id=None, **body):
+        platform.data.decide_review(reviewer, review.json()["id"], {"version": 1, "decision": "confirm"})
+        return save(records, id=id, **body)
+
+    monkeypatch.setattr(Records, "save", finalize_before_save)
+    response = client.post(f"{url}/fix", json={"ids": ids})
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "LOCKED")
+    current = payload(client.get(url))["item"]
+    assert current["status"] == "已定稿"
+    assert current["versions"] == original["versions"]

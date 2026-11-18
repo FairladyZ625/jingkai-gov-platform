@@ -35,6 +35,10 @@ def install_platform(app: FastAPI) -> None:
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    if "document" in app.state.platform.apps:
+        from apps.document.instance import install as install_document
+
+        install_document(app)
 
 
 def create_app() -> FastAPI:

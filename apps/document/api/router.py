@@ -6,10 +6,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
+from .checking_router import router as checking_router
 from .drafting_router import router as drafting_router
 
 router = APIRouter()
 router.include_router(drafting_router)
+router.include_router(checking_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
