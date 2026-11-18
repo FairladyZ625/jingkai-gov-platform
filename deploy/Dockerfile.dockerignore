@@ -19,6 +19,12 @@
 !data/
 !data/public/
 !data/public/**
+!deploy/
+!deploy/entrypoint.py
+!deploy/healthcheck.py
+!deploy/hold/
+!deploy/hold/jkq-hold/
+!deploy/hold/jkq-hold/**
 **/.env*
 **/.git
 **/__pycache__

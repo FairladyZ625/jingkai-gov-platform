@@ -200,8 +200,9 @@ def test_compose(site):
     )
     services = json.loads(result)["services"]
     app, proxy = services["app"], services["proxy"]
-    assert app["command"][-2:] == ["--workers", "1"]
-    assert app["command"][3:5] == ["jkq.app:create_app", "--factory"]
+    assert app["command"] == ["python", "deploy/entrypoint.py"]
+    entry = (DEPLOY / "entrypoint.py").read_text(encoding="utf-8")
+    assert "jkq.app:create_app" in entry and '"--factory"' in entry and '"--workers", "1"' in entry
     assert app["volumes"][0]["target"] == app["environment"]["HAIKNOW_DATA_DIR"]
     assert "ports" not in app
     assert {port["target"] for port in proxy["ports"]} == {80, 443}
