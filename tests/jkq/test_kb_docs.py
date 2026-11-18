@@ -55,7 +55,7 @@ def test_version_and_alias(api):
     old = client.get("docs", params={"space": "template", "limit": 1}).json()["hits"][0]
     path = "docs/" + old["id"]
     original = client.get(path).json()["item"]
-    assert original["version"] == 1 and original["versions"] == [1]
+    assert original["version"] == 1 and original["versions"] == [dict(id=old["citationId"], version=1, date=old["source"]["date"])]
     assert original["chunkList"][0]["end"] == len(original["text"])
     edits = dict(title="样例标题", tags=["格式"], expire="2028-01-01", space="minutes")
     edited = client.patch(path, json=edits).json()["item"]
@@ -64,7 +64,7 @@ def test_version_and_alias(api):
     pinned = client.get("files/" + old["citationId"]).json()["item"]
     assert pinned["state"] == "来源已修订" and pinned["text"] == original["text"]
     current = client.get(path).json()["item"]
-    assert (current["text"], current["version"], current["versions"]) == ("新版原文", 2, [1, 2])
+    assert (current["text"], current["version"], [v["version"] for v in current["versions"]]) == ("新版原文", 2, [1, 2])
     file = client.get("files/" + old["id"], params={"version": 1}).json()["item"]
     assert file == dict(id=old["id"], name="样例标题", no=original["source"]["docNo"],
                         text=original["text"], state="来源已修订", url=original["source"]["url"])
@@ -137,3 +137,68 @@ def test_seed_counts_across_two_restarts(api):
         assert client.get("docs?limit=1").json()["total"] == expected
         client, _ = boot()
     assert client.get("docs?limit=1").json()["total"] == expected
+
+
+def test_saved_cards_reopen_after_restart(api):
+    client, service, user, _, boot = api
+    doc = client.get("docs?space=template&limit=1").json()["hits"][0]
+    version_path = "docs/" + doc["citationId"]
+    original = client.get(version_path).json()["item"]
+    path = "messages/M-123/citations"
+    refs = {"citations": [dict(fileId=doc["id"], snippet=original["text"][:20])]}
+    assert client.put(path, json=refs).json() == {"ok": True}
+    service.replace_text(user, doc["id"], "第二版")
+    client, _ = boot()
+    expected = dict(fileId=doc["citationId"], name=doc["title"], snippet=original["text"][:20],
+                    version=1, text=original["text"], state="来源已修订", source=doc["source"])
+    assert client.get(path).json() == {"citations": [expected]}
+    versions = client.get(version_path).json()["item"]["versions"]
+    assert [client.get("docs/" + v["id"]).json()["item"]["text"] for v in versions] == [expected["text"], "第二版"]
+    assert client.put(path, json={"citations": [dict(fileId="missing", snippet="")]}).status_code == 404
+    assert client.get(path).json()["citations"] == [expected]
+    user.id = "another"
+    assert client.get(path).json() == {"citations": []}
+    user.id = "sample"
+    user.roles = ["partner"]
+    assert client.get(path).json() == {"citations": []}
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("get", "docs?limit=0", None), ("get", "docs?space=bad", None),
+    ("get", "docs?offset=-1", None), ("patch", "docs/x", {"space": "bad"}),
+    ("patch", "docs/x", {"title": None}), ("patch", "docs/x", ["bad"]),
+])
+def test_validation_envelope(api, method, path, body):
+    response = api[0].request(method, path, json=body)
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "CHECK_FAILED" and error["message"] and error["details"]["fields"]
+
+
+def test_repair_existing_seed_preserves_edits_and_deletion(api):
+    client, service, user, _, boot = api
+    expired = client.get("docs?space=rules&status=已失效&limit=100").json()["hits"]
+    rule = next(d for d in expired if d["source"].get("statusNote") == "已失效（官网标注）")
+    policy_id = "rd-4913172"
+    path = "docs/" + policy_id
+    original = client.get(path).json()["item"]
+    excerpt = original["excerpts"][0]
+    assert excerpt["original"] and excerpt["original"] in original["text"]
+    assert excerpt["source"]["url"] == original["source"]["url"]
+    client.patch(path, json={"title": "保留用户标题"})
+    client.delete("docs/" + rule["id"])
+    with service.store._db as db:
+        db.execute("""update jkq_kb_docs set doc=json_remove(json_set(doc,'$.status',?),'$.source.statusNote')
+                   where id=?""", ("已失效（官网标注）", rule["id"]))
+        db.execute("""update jkq_kb_docs set doc=json_remove(json_set(doc,'$.text',''),'$.excerpts')
+                   where id=?""", (policy_id,))
+    for _ in range(2):
+        client, service = boot()
+        assert client.get("docs/" + rule["id"]).status_code == 404
+        restored = client.get(path).json()["item"]
+        assert restored["title"] == "保留用户标题"
+        assert restored["excerpts"] == original["excerpts"] and restored["text"] == original["text"]
+        assert any(d["id"] == policy_id and excerpt["original"] in d["text"] for d in service.candidates(user))
+    assert client.post("docs/" + rule["id"] + "/restore").status_code == 200
+    detail = client.get("docs/" + rule["id"]).json()["item"]
+    assert (detail["status"], detail["source"]["statusNote"]) == ("已失效", "已失效（官网标注）")

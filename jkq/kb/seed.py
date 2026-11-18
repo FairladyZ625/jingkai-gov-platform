@@ -1,4 +1,5 @@
 """读取公开快照及 #8 补充资料。相同来源在不同资料集合中保留各自身份。"""
+from collections import defaultdict
 import hashlib
 import json
 from pathlib import Path
@@ -18,10 +19,15 @@ def document(row, space, identity, text):
                   date=row.get("date", ""), url=row.get("source_url") or row.get("url", ""),
                   docNo=row.get("doc_no") or row.get("docNo") or row.get("no", ""))
     example = row.get("example", False)
+    source_status = row.get("status", "")
+    status = source_status
+    if source_status not in {"", "现行有效", "已失效", "即将到期", "已更新"}:
+        source["statusNote"] = source_status
+        status = {"已失效（官网标注）": "已失效", "现行（政务服务网）": "现行有效"}.get(source_status, "")
     return dict(id=identity, space=space, title=row.get("title") or row["name"],
                 kind=row.get("kind") or row.get("type") or row.get("wenzhong") or NAMES[space],
                 tags=row.get("tags", []), real=row.get("real", not example), example=example,
-                source=source, expire=row.get("expire", ""), status=row.get("status", ""),
+                source=source, expire=row.get("expire", ""), status=status,
                 text=text, version=1, **{"from": "官网" if not example else "粘贴"})
 
 
@@ -35,15 +41,23 @@ def documents(root=ROOT):
 
     policies = seed / "real-policies.json"
     if policies.exists():
-        policy_docs = read(policies)["policyDocs"]
+        payload = read(policies)
     else:
         # 主种子迁移前，原型的赋值右侧是相同结构的 JSON；不执行脚本。
         script = (root / "prototype/v4/data/real-policies.js").read_text(encoding="utf-8")
         payload, _ = json.JSONDecoder().raw_decode(script.split("window.JK_REAL =", 1)[1].lstrip())
-        policy_docs = payload["policyDocs"]
-    for row in policy_docs:
-        yield document(dict(row, kind="政策文件", status=row.get("state", "").split(" · ")[0]),
+    excerpts = defaultdict(list)
+    for clause in payload["policies"]:
+        if clause.get("original"):
+            excerpts[clause["doc"]].append(dict(clause=clause["clause"], original=clause["original"],
+                                                source=clause["source"]))
+    for row in payload["policyDocs"]:
+        doc = document(dict(row, kind="政策文件", status=row.get("state", "").split(" · ")[0]),
                        "policy", row["id"], by_url.get(row["url"], ""))
+        if not doc["text"] and excerpts[row["id"]]:
+            doc["excerpts"] = excerpts[row["id"]]
+            doc["text"] = "\n\n".join(c["clause"] + " " + c["original"] for c in doc["excerpts"])
+        yield doc
 
     if (seed / "kb-examples.json").exists():
         for row in read(seed / "kb-examples.json"):
