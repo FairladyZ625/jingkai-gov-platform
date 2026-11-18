@@ -333,7 +333,7 @@
       field.dispatchEvent(new Event(event, { bubbles: true }));
     };
     const click = (selector) => { if (current()) query(selector)?.click(); };
-    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.filter || params.expanded)));
+    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.calcAmounts || params.filter || params.expanded)));
     await slot.ctl.go(matchedRoute ? 'match' : route, params);
 
     if (matchedRoute && await find('.pol-kpis')) {
@@ -344,6 +344,7 @@
         if (params.expanded || changed.some((id) => !query(pick(id)))) click('[data-op="policy.show-all"]');
         changed.forEach((id) => change(pick(id), selected.has(id)));
       } else if (params.expanded) click('[data-op="policy.show-all"]');
+      if (params.calcAmounts) await slot.ctl.restoreCalcAmounts(params.calcAmounts);
       if (route === 'match' && params.filter) click(`[data-filter="${CSS.escape(params.filter)}"]`);
       if (route === 'estimate' || route === 'notice') click('[data-op="policy.next"]');
       if (route === 'notice') click('[data-op="policy.to-notice"]');
@@ -514,6 +515,8 @@
           const next = { entId: slot.entId };
           const notice = query('#pn');
           if (slot.selectionChanged || policyRoute !== 'match') next.pickedIds = [...slot.pickedIds];
+          const amounts = slot.ctl.getCalcAmounts();
+          if (Object.keys(amounts).length) next.calcAmounts = amounts;
           if (notice) next.notice = notice.value;
           const filter = query('[data-filter].on')?.dataset.filter;
           if (filter) next.filter = filter;
