@@ -2,8 +2,9 @@
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
-from haiknow_sdk import AppContext, KV, app_context
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from haiknow_sdk import KV, PermissionDenied, app_context
 
 router = APIRouter()
 
@@ -17,5 +18,14 @@ def reset_seed(kv: KV, seed_dir: Path) -> None:
 
 
 @router.get("/health")
-def health(ctx: AppContext = Depends(app_context)):
+def health(request: Request):
+    try:
+        ctx = app_context(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "未登录", "details": {}}}, status_code=401)
+    except PermissionDenied as exc:
+        details = {"app": exc.app_id, "need": exc.action}
+        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "无权查看此应用", "details": details}}, status_code=403)
     return {"id": ctx.app_id, "status": "ok"}
