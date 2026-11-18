@@ -162,3 +162,20 @@ def test_segment(server, title):
                 assert data(c.get("/api/v1/me"))["prefs"]["theme"] == theme
         else:
             pytest.fail(f"未登记演示段落 {title}")
+
+
+def test_reset_checks_real_session_before_host(server):
+    url, password = server
+    path = "/api/v1/demo/reset"
+    with httpx.Client(base_url=url, trust_env=False) as c:
+        assert c.post(path).status_code == 401
+        login(c, "hejun", password)
+        assert c.post(path).status_code == 403
+        try:
+            data(c.put("/api/v1/me/role", json={"role": "admin"}))
+            assert c.post(path).status_code == 403
+        finally:
+            data(c.put("/api/v1/me/role", json={"role": "partner"}))
+        login(c, "admin", password)
+        unavailable = c.post(path)
+        assert unavailable.status_code == 503 and unavailable.json()["error"]["code"] == "RESET_UNAVAILABLE"
