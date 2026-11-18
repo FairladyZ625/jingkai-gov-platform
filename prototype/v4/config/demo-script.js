@@ -19,5 +19,5 @@ window.JK_DEMO_SCRIPT = [
   { title: '审签', steps: [{ caption: '⑧ 换成审签领导李阳：刚送审的通知在收件箱里，一键通过' }, { login: 'liyang' }, { open: 'inbox' }, { wait: 1600 }, { click: '[data-op^="inbox.approve."]' }, { wait: 1200 }] },
   { title: '外部协作者', steps: [{ caption: '⑨ 外部协作者何军：只看授权应用，电话营收自动打码' }, { login: 'hejun' }, { wait: 1200 }, { say: '查一下纸鹿二号智驾' }, { wait: 1500 }] },
   { title: '管理后台', steps: [{ caption: '⑩ 管理员：账号、授权、模型、审计，改动立即生效' }, { login: 'admin' }, { open: 'admin', tab: 'grants' }, { wait: 1800 }, { open: 'admin', tab: 'models' }, { wait: 1400 }, { open: 'admin', tab: 'audit' }, { wait: 1600 }] },
-  { title: '浅色主题', steps: [{ caption: '深色、浅色两套主题都可用' }, { theme: 'light' }, { wait: 1800 }, { theme: 'dark' }, { login: 'wangmin' }, { caption: '演示结束 · 可以随便点，右下角头像菜单可“重置演示数据”' }, { wait: 2400 }] },
+  { title: '浅色主题', steps: [{ caption: '深色、浅色两套主题都可用' }, { theme: 'light' }, { wait: 1800 }, { theme: 'dark' }, { login: 'wangmin' }, { caption: '演示结束 · 可以随便点，左侧栏底部头像菜单可“重置演示数据”' }, { wait: 2400 }] },
 ];
