@@ -1,0 +1,12 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "sdk1-app",
+  "name": "SDK 1.0 冻结样例",
+  "owner": "fixture-owner",
+  "sector": "platform",
+  "kind": "module",
+  "status": "usable",
+  "actions": ["view", "operate", "approve"],
+  "defaultRoles": {"sampleoperator": ["view", "operate"], "samplereviewer": ["view", "operate", "approve"], "sampleobserver": ["view"]}
+}

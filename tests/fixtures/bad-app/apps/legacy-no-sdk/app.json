@@ -1,0 +1,9 @@
+{
+  "contract": 1,
+  "id": "legacy-no-sdk",
+  "name": "旧应用缺 sdk 声明",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

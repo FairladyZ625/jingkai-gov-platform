@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "no-web",
+  "name": "没有前端入口的 module",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}
