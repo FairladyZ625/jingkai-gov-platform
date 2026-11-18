@@ -6,7 +6,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 
 from .inbox import router as inbox_router
 from .kb import install as install_kb
-from .models import install as install_models
+from .ai_chat import install as install_models
 from .skills import api as skills_api, runtime_api as skills_runtime
 from .transcribe import router as transcribe_router
 

@@ -1,0 +1,276 @@
+"""验证网关消息、§3.2 HTTP/SSE 及 #15 路由边界。"""
+
+import json
+import os
+from time import monotonic
+
+import pytest
+
+pytest.importorskip("fastapi")
+import httpx
+from anyio import sleep
+
+from haiknow_core.aihub.streaming import ChatRequest
+from jkq.ai_chat import chat_message, install
+
+PATH = "/api/v1/ai/chat"
+REQUEST = {"messages": [{"role": "user", "content": "匹配演练企业的事项"}]}
+TOOL = "policy.match"
+ALIAS = "policy_match"
+CALL = {"type": "function", "function": {"name": ALIAS, "arguments": '{"entId":"E001"}'}}
+
+
+class ProviderStream(httpx.AsyncByteStream):
+    def __init__(self, *frames, disconnect=False):
+        self.frames = frames
+        self.disconnect = disconnect
+        self.closed = False
+
+    async def __aiter__(self):
+        for frame in self.frames:
+            yield frame.encode()
+        if self.disconnect:
+            raise httpx.RemoteProtocolError("sensitive-upstream-detail")
+
+    async def aclose(self):
+        self.closed = True
+
+
+def frame(delta=None, *, finish=None, usage=None):
+    choices = [] if delta is None else [{"index": 0, "delta": delta, "finish_reason": finish}]
+    return "data: " + json.dumps({"choices": choices, "usage": usage}, ensure_ascii=False) + "\n\n"
+
+
+def events(response):
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    return [(event.removeprefix("event: "), json.loads(data.removeprefix("data: ")))
+            for event, data in (part.splitlines() for part in response.text.strip().split("\n\n"))]
+
+
+def configure(monkeypatch, *, local=False, approve=False):
+    prefix = "JKQ_LOCAL_MODEL" if local else "JKQ_CLOUD_MODEL"
+    url = "https://local.example.test/v1" if local else "https://cloud.example.test/v1"
+    monkeypatch.setenv(prefix + "_BASE_URL", url)
+    monkeypatch.setenv(prefix + "_NAME", "local-model" if local else "cloud-model")
+    if approve:
+        monkeypatch.setenv(prefix + "_CONFIDENTIAL_BASE_URL", url)
+    if not local:
+        monkeypatch.setenv(prefix + "_API_KEY", "test-placeholder-key")
+
+
+@pytest.fixture
+def client_factory(make_client, isolated_platform, monkeypatch):
+    for key in os.environ.keys() & {
+        "JKQ_MODEL_PROVIDER",
+        *(f"JKQ_{provider}_MODEL_{option}"
+          for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "LOCAL_BACKUP", "OVERSEAS")
+          for option in ("BASE_URL", "NAME", "API_KEY", "CONFIDENTIAL_BASE_URL")),
+    }:
+        monkeypatch.delenv(key)
+    _, apps = isolated_platform
+    manifest = apps / "sample-app/app.json"
+    manifest.write_text(json.dumps({
+        **json.loads(manifest.read_text()),
+        "tools": [{"name": TOOL, "desc": "匹配演练事项", "params": {"entId": "string"}}],
+    }), encoding="utf-8")
+
+    def create():
+        client = make_client()
+        install(client.app)
+        return client
+
+    return create
+
+
+def login(client, user="sampleadmin"):
+    assert client.post("/api/auth/login", json={"user_id": user}).status_code == 200
+
+
+def test_gateway_chat_message_and_legacy_text(client_factory):
+    with client_factory() as client:
+        service = client.app.state.jkq_models
+        service.providers["mock"]["chat_script"] = {"content": None, "tool_calls": [CALL]}
+        result = chat_message(service, None, REQUEST)
+        assert result == {"content": None, "tool_calls": [{"name": ALIAS, "arguments": {"entId": "E001"}}]}
+        ai = client.app.state.platform.model.aihub
+        assert isinstance(ai.call("sample-app", "chat", REQUEST)["result"], str)
+
+
+def test_core_gateway_structured_chat(make_client, monkeypatch):
+    client = make_client()
+    gateway = client.app.state.platform.model.aihub
+    provider = {"id": "scripted", "kind": "mock", "allow_outbound": "internal",
+                "chat_script": {"content": "演练", "tool_calls": [CALL]}}
+    monkeypatch.setattr(gateway, "_route_candidates", lambda *_: [(provider, "scripted-model")])
+    assert gateway.call("sample-app", "chat", ChatRequest(REQUEST))["result"] == {
+        "content": "演练", "tool_calls": [{"name": ALIAS, "arguments": {"entId": "E001"}}],
+    }
+    assert isinstance(gateway.call("sample-app", "chat", REQUEST)["result"], str)
+
+
+def test_non_stream_keeps_model_content_route_note(client_factory):
+    with client_factory() as client:
+        assert client.post(PATH, json=REQUEST).status_code == 401
+        login(client)
+        response = client.post(PATH, json={**REQUEST, "stream": False})
+        assert response.status_code == 200
+        catalog = {item["id"]: item for item in client.get("/api/v1/models").json()["items"]}
+        assert response.json()["model"] == catalog["mock"]["name"]
+        assert response.json()["content"] == "[模拟模型] 已收到输入。"
+        assert response.json()["routeNote"] == "使用模拟模型"
+        assert response.json()["usage"] == {"input": 0, "output": 0}
+        assert client.post(PATH, json={**REQUEST, "stream": "true"}).status_code == 422
+        assert client.post(PATH, json={**REQUEST, "tools": [{"name": TOOL}]}).status_code == 422
+
+
+def test_mock_event_snapshot_is_repeatable(client_factory):
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.providers["mock"]["chat_script"] = {"content": "已匹配演练事项", "tool_calls": [CALL]}
+        body = {**REQUEST, "stream": True, "tools": [TOOL, TOOL], "temperature": 0.3}
+        first = client.post(PATH, json=body)
+        assert first.text == client.post(PATH, json=body).text
+        assert events(first) == [
+            ("meta", {"model": service.items()["mock"]["name"], "routeNote": "使用模拟模型"}),
+            ("delta", {"text": "已匹配演练事项"}),
+            ("tool", {"tool": TOOL, "args": {"entId": "E001"}}),
+            ("done", {"messageId": "M-bf453c66-02f6-58ad-b0b4-7a9851ce9b19", "usage": {"input": 0, "output": 0}}),
+        ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_unregistered_tool_returns_404_before_provider(client_factory, monkeypatch, stream):
+    configure(monkeypatch)
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: pytest.fail("未注册工具不应发给模型"))
+        response = client.post(PATH, json={**REQUEST, "stream": stream, "tools": ["unknown.tool"]})
+        assert response.status_code == 404
+        assert response.json()["error"] == {
+            "code": "TOOL_NOT_FOUND", "message": "请求包含未注册的工具。", "details": {},
+        }
+
+
+def test_registered_tool_requires_app_operate(client_factory):
+    with client_factory() as client:
+        login(client, "sampleobserver")
+        response = client.post(PATH, json={**REQUEST, "stream": True, "tools": [TOOL]})
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeypatch):
+    configure(monkeypatch)
+    upstream = ProviderStream(
+        frame({"role": "assistant"}),
+        frame({"content": "已查找"}),
+        frame({"tool_calls": [{"index": 0, "function": {"name": "policy_", "arguments": '{"ent'}}]}),
+        frame({"tool_calls": [{"index": 0, "function": {"name": "match", "arguments": 'Id":"E001"}'}}]}),
+        frame({}, finish="tool_calls"), frame(usage={"prompt_tokens": 8, "completion_tokens": 5}),
+        "data: [DONE]\n\n",
+    )
+
+    def respond(request):
+        body = json.loads(request.content)
+        assert body == {**REQUEST, "stream": True, "model": "cloud-model", "tools": [{
+            "type": "function", "function": {"name": ALIAS, "description": "匹配演练事项",
+                                           "parameters": {"type": "object", "properties": {
+                                               "entId": {"type": "string"},
+                                           }}},
+        }]}
+        return httpx.Response(200, stream=upstream)
+
+    with client_factory() as client:
+        login(client)
+        client.app.state.jkq_models.transport = httpx.MockTransport(respond)
+        result = events(client.post(PATH, json={**REQUEST, "stream": True, "tools": [TOOL]}))
+        assert result[:3] == [
+            ("meta", {"model": "cloud-model", "routeNote": ""}),
+            ("delta", {"text": "已查找"}),
+            ("tool", {"tool": TOOL, "args": {"entId": "E001"}}),
+        ]
+        assert len(result) == 4 and result[3][0] == "done"
+        assert result[3][1]["usage"] == {"input": 8, "output": 5}
+        assert upstream.closed
+
+
+@pytest.mark.parametrize("disconnect", [False, True], ids=["incomplete-eof", "transport-error"])
+def test_midstream_disconnect_reports_error_and_closes(client_factory, monkeypatch, disconnect):
+    configure(monkeypatch)
+    upstream = ProviderStream(frame({"content": "半句"}), disconnect=disconnect)
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: httpx.Response(200, stream=upstream))
+        started = monotonic()
+        response = client.post(PATH, json={**REQUEST, "stream": True})
+        assert monotonic() - started < 30
+        result = events(response)
+        assert [event for event, _ in result] == ["meta", "delta", "error"]
+        assert result[1][1] == {"text": "半句"}
+        assert set(result[2][1]) == {"code", "message"}
+        assert result[2][1]["code"] == "PROVIDER_ERROR"
+        assert "sensitive-upstream-detail" not in response.text and upstream.closed
+        audit = service.store.audit_list("platform")
+        assert [row["detail"]["status"] for row in audit if row["action"] == "ai.chat"] == ["provider_error"]
+
+
+def test_provider_timeout_ends_stream(client_factory, monkeypatch):
+    configure(monkeypatch)
+
+    class StalledProvider(ProviderStream):
+        async def __aiter__(self):
+            yield frame({"content": "已开始"}).encode()
+            await sleep(60)
+
+    upstream = StalledProvider()
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: httpx.Response(200, stream=upstream))
+        started = monotonic()
+        result = events(client.post(PATH, json={**REQUEST, "stream": True}))
+        assert monotonic() - started < 30
+        assert [event for event, _ in result] == ["meta", "delta", "error"]
+        assert result[-1][1]["code"] == "TIMEOUT" and upstream.closed
+
+
+def test_stream_falls_back_before_output_and_reports_actual_provider(client_factory, monkeypatch):
+    configure(monkeypatch)
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: httpx.Response(503))
+        result = events(client.post(PATH, json={**REQUEST, "stream": True}))
+        assert result[0] == ("meta", {"model": service.items()["mock"]["name"],
+                                     "routeNote": "主模型调用失败，已回退，使用模拟模型"})
+        assert [event for event, _ in result] == ["meta", "delta", "done"]
+
+
+@pytest.mark.parametrize("approved", [False, True])
+def test_stream_confidential_obeys_same_outbound_gate(client_factory, monkeypatch, approved):
+    configure(monkeypatch)
+    configure(monkeypatch, local=True, approve=approved)
+    seen = []
+
+    def respond(request):
+        seen.append(request.url.host)
+        assert request.url.host == "local.example.test"
+        assert "classification" not in json.loads(request.content)
+        return httpx.Response(200, text=frame({"content": "本地结果"}, finish="stop"))
+
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(respond)
+        response = client.post(PATH, json={**REQUEST, "classification": "confidential", "stream": True})
+        if approved:
+            assert events(response)[0] == ("meta", {"model": "local-model", "routeNote": "按密级切换到白名单模型"})
+            assert seen == ["local.example.test"]
+        else:
+            assert response.status_code == 403
+            assert response.json()["error"]["code"] == "OUTBOUND_DENIED"
+            assert seen == []
