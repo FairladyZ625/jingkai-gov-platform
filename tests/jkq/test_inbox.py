@@ -6,7 +6,6 @@ import pytest
 
 from jkq.admin.usage import usage_page
 from jkq.feed import feed_page, publish
-from jkq.inbox import add_todo
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,6 +66,7 @@ def login(client, user):
 
 
 def test_inbox_transitions_and_ownership(client):
+    from jkq.inbox import add_todo  # 依赖 fastapi，CI 轻量 pytest job 只装 pytest
     login(client, 'samplereviewer')
     base = '/api/v1'
     for box in ('review', 'todo', 'done'):
