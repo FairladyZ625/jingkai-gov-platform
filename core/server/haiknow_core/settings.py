@@ -2,42 +2,22 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
 
-from cryptography.fernet import Fernet
-
+from .aihub.config import ENVIRONMENT_PROVIDER, ModelEnvironment, managed_api_key
 from .migrations import migrate
 
 
-def load_settings_cipher(data_dir: Path) -> Fernet:
-    """加载系统配置共用的主密钥；首次使用时创建。"""
-    data_dir.mkdir(parents=True, exist_ok=True)
-    key_file = data_dir / 'ai-master.key'
-    try:
-        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        pass
-    else:
-        with os.fdopen(fd, 'wb') as f:
-            f.write(Fernet.generate_key())
-    return Fernet(key_file.read_bytes())
-
-
-def encrypt_setting(cipher: Fernet, value: str) -> bytes:
-    return cipher.encrypt(value.encode())
-
-
-def decrypt_setting(cipher: Fernet, value: bytes) -> str:
-    return cipher.decrypt(value).decode()
+PROVIDER_FIELDS = 'id,kind,base_url,models,enabled,allow_outbound'
 
 
 class AISettings:
-    def __init__(self, data_dir: Path):
-        self._cipher = load_settings_cipher(data_dir)
+    def __init__(self, data_dir: Path, environment: ModelEnvironment | None = None):
+        self.environment = environment or ModelEnvironment.read()
+        data_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._db = sqlite3.connect(data_dir / 'platform.db', check_same_thread=False, timeout=30)
         try:
@@ -46,28 +26,41 @@ class AISettings:
             self._db.close()
             raise
 
-    def put_provider(self, ident, kind, base_url, api_key, models, enabled, allow_outbound=None):
+    def put_provider(self, ident, kind, base_url, models, enabled, allow_outbound=None):
         with self._lock, self._db:
-            old = self._db.execute('select secret,allow_outbound from ai_provider where id=?', (ident,)).fetchone()
-            secret = encrypt_setting(self._cipher, api_key) if api_key is not None else (old[0] if old else encrypt_setting(self._cipher, ''))
-            limit = allow_outbound if allow_outbound is not None else (old[1] if old else None)
-            self._db.execute('insert or replace into ai_provider(id,kind,base_url,secret,models,enabled,allow_outbound) values (?,?,?,?,?,?,?)',
-                             (ident, kind, base_url.rstrip('/'), secret, json.dumps(models), int(enabled), limit))
+            old = self._db.execute('select allow_outbound from ai_provider where id=?', (ident,)).fetchone()
+            limit = allow_outbound if allow_outbound is not None else (old[0] if old else None)
+            self._db.execute(f'insert or replace into ai_provider({PROVIDER_FIELDS}) values (?,?,?,?,?,?)',
+                             (ident, kind, base_url.rstrip('/'), json.dumps(models), int(enabled), limit))
+
+    @staticmethod
+    def _provider(row):
+        ident, kind, base_url, models, enabled, limit = row
+        return dict(id=ident, kind=kind, base_url=base_url, models=json.loads(models),
+                    enabled=bool(enabled), allow_outbound=limit or 'internal',
+                    api_key=managed_api_key(ident, base_url) if kind not in ('mock', 'builtin') else '')
 
     def provider(self, ident):
+        if ident == ENVIRONMENT_PROVIDER:
+            return self.environment.provider()
         with self._lock:
-            row = self._db.execute('select id,kind,base_url,secret,models,enabled,allow_outbound from ai_provider where id=?', (ident,)).fetchone()
-        if row is None:
-            return None
-        return dict(id=row[0], kind=row[1], base_url=row[2], api_key=decrypt_setting(self._cipher, row[3]), models=json.loads(row[4]), enabled=bool(row[5]), allow_outbound=row[6] or 'internal')
+            row = self._db.execute(f'select {PROVIDER_FIELDS} from ai_provider where id=?', (ident,)).fetchone()
+        return self._provider(row) if row is not None else None
 
     def providers(self):
         with self._lock:
-            rows = self._db.execute('select id,kind,base_url,models,enabled,length(secret),allow_outbound from ai_provider order by id').fetchall()
-        return [dict(id=r[0], kind=r[1], base_url=r[2], models=json.loads(r[3]), enabled=bool(r[4]), api_key='********', allow_outbound=r[6] or 'internal') for r in rows]
+            rows = self._db.execute(f'select {PROVIDER_FIELDS} from ai_provider where id<>? order by id',
+                                    (ENVIRONMENT_PROVIDER,)).fetchall()
+        items = [self._provider(row) for row in rows]
+        environment = self.environment.provider()
+        if environment:
+            items.insert(0, environment)
+        for item in items:
+            item['has_key'] = bool(item['api_key'])
+            item['api_key'] = '********' if item['has_key'] else ''
+        return items
 
     def delete_provider(self, ident):
-        """删除服务商，密文列随行一起消失；引用检查在管理接口做。"""
         with self._lock, self._db:
             self._db.execute('delete from ai_provider where id=?', (ident,))
 
@@ -75,10 +68,20 @@ class AISettings:
         with self._lock, self._db:
             self._db.execute('insert or replace into ai_route values (?,?,?,?,?)', (capability, provider, model, fallback_provider, fallback_model))
 
-    def routes(self):
+    def stored_routes(self):
         with self._lock:
             rows = self._db.execute('select capability,provider,model,fallback_provider,fallback_model from ai_route order by capability').fetchall()
         return [dict(zip(('capability','provider','model','fallback_provider','fallback_model'), r)) for r in rows]
+
+    def routes(self):
+        routes = self.stored_routes()
+        if self.environment.explicit:
+            routes = [route for route in routes if route['capability'] != 'chat']
+        environment_chat = self.environment.mode != 'mock' and (self.environment.explicit or self.environment.ready())
+        if environment_chat and not any(route['capability'] == 'chat' for route in routes):
+            routes.append(dict(capability='chat', provider=ENVIRONMENT_PROVIDER, model=self.environment.model,
+                               fallback_provider=None, fallback_model=None))
+        return sorted(routes, key=lambda route: route['capability'])
 
     def route(self, capability):
         return next((r for r in self.routes() if r['capability'] == capability), None)

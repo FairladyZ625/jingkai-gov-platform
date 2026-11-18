@@ -4,6 +4,7 @@ import json
 import httpx
 import pytest
 
+from conftest import set_provider_credential
 from haiknow_core.aihub.errors import AIError
 from haiknow_core.aihub.gateway import CAPABILITY_SUPPORT, OUTBOUND_CAPABILITIES, Gateway, TEST_SAMPLES
 from haiknow_core.settings import AISettings
@@ -32,7 +33,8 @@ def test_text_capabilities_filter_each_route_before_http(tmp_path, monkeypatch, 
                                                        fail_primary, expected, error):
     store = AISettings(tmp_path)
     for ident, limit in [('primary', primary), ('fallback', fallback)]:
-        store.put_provider(ident, 'openai', f'https://{ident}.test/v1', 'dummy-key', ['m'], True,
+        set_provider_credential(monkeypatch, ident, f'https://{ident}.test/v1', 'dummy-key')
+        store.put_provider(ident, 'openai', f'https://{ident}.test/v1', ['m'], True,
                            allow_outbound=limit)
     store.put_route(capability, 'primary', 'm', 'fallback', 'm')
     requests, audit = [], []
@@ -67,7 +69,8 @@ def test_text_capabilities_filter_each_route_before_http(tmp_path, monkeypatch, 
 @pytest.mark.parametrize('capability', ['embedding', 'image', 'speech'])
 def test_admin_samples_obey_outbound_limit(tmp_path, monkeypatch, capability):
     store = AISettings(tmp_path)
-    store.put_provider('p', 'openai', 'https://primary.test/v1', 'dummy-key', ['m'], True,
+    set_provider_credential(monkeypatch, 'p', 'https://primary.test/v1', 'dummy-key')
+    store.put_provider('p', 'openai', 'https://primary.test/v1', ['m'], True,
                        allow_outbound='public')
     store.put_route(capability, 'p', 'm')
     requests = []
