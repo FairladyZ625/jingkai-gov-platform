@@ -16,16 +16,46 @@ function result(name, width, theme) {
   return { name, width, theme, errors: [], file: '', evidence: '', expected: false };
 }
 
+function observeBrowserErrors(theme) {
+  function record(message) {
+    // 段落切换发生在浏览器内，Node 等待上一段返回时可能已在下一段。
+    const segment = window.JKDemo?.state.i ?? 0;
+    void window.recordDemoError(segment, message).catch(() => {});
+  }
+
+  window.addEventListener('error', event => {
+    if (event instanceof ErrorEvent) {
+      record(event.error?.message ?? event.message);
+    } else if (event.target instanceof Element) {
+      const url = event.target.src || event.target.href;
+      if (url) record('资源加载失败：' + url);
+    }
+  }, true);
+  window.addEventListener('unhandledrejection', event => {
+    record(String(event.reason?.message ?? event.reason));
+  });
+
+  for (const level of ['error', 'warn']) {
+    const original = console[level];
+    console[level] = function (...args) {
+      const first = args[0];
+      if (level === 'error' || (typeof first === 'string' &&
+          (first.startsWith('demo ') || (first === 'demo' && args.length > 1)))) {
+        record(args.map(String).join(' '));
+      }
+      return original.apply(this, args);
+    };
+  }
+  localStorage.setItem('jk4-theme2', theme);
+}
+
 async function newPage(browser, width, theme, onError) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, offline: true });
   try {
     const page = await context.newPage();
     page.setDefaultTimeout(12000);
-    page.on('pageerror', e => onError(e.message));
-    page.on('console', m => {
-      if (m.type() === 'error' || (m.type() === 'warning' && m.text().startsWith('demo '))) onError(m.text());
-    });
-    await page.addInitScript(t => localStorage.setItem('jk4-theme2', t), theme);
+    await page.exposeFunction('recordDemoError', onError);
+    await page.addInitScript(observeBrowserErrors, theme);
     return page;
   } catch (error) {
     await context.close();
@@ -62,7 +92,10 @@ async function walkthrough(browser, rows) {
   let current = 0;
   let started = false;
   try {
-    page = await newPage(browser, width, theme, message => rows[current].errors.push(message));
+    page = await newPage(browser, width, theme, (segment, message) => {
+      // 正常结束时索引推进到段落数，收尾时的错误仍归末段。
+      rows[Math.min(segment, rows.length - 1)].errors.push(message);
+    });
     await login(page, theme);
     assert.deepEqual(await page.evaluate(() => JK_DEMO_SCRIPT.map(s => s.title)), labels.map(([title]) => title));
     await page.evaluate(installChecks);
@@ -186,7 +219,7 @@ async function regression(browser, row, id, run) {
   let page;
   let started = false;
   try {
-    page = await newPage(browser, row.width, row.theme, message => row.errors.push(message));
+    page = await newPage(browser, row.width, row.theme, (_segment, message) => row.errors.push(message));
     await login(page, row.theme);
     started = true;
     await run(page, row);
@@ -235,7 +268,8 @@ async function main() {
   let browser;
   try {
     await fs.mkdir(path.join(__dirname, 'screenshots'), { recursive: true });
-    browser = await chromium.launch();
+    // file:// 外链脚本需要同文件访问权限，页面才会收到异常详情和未处理的拒绝。
+    browser = await chromium.launch({ args: ['--allow-file-access-from-files'] });
   } catch (error) {
     for (const group of groups) markInterrupted(group, 0, '浏览器初始化失败：' + error.message);
     for (const [row] of p0) row.errors.push('浏览器初始化失败：' + error.message);
