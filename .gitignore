@@ -1,0 +1,14 @@
+# 内部 / 私有资料，永不入库
+00_内部资料*
+data/private/
+.env*
+*.key
+*.pem
+*.zip
+
+# 依赖与构建产物
+node_modules/
+dist/
+.wrangler/
+__pycache__/
+.DS_Store

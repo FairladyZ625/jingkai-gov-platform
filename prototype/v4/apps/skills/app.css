@@ -1,0 +1,124 @@
+/* 技能中心 · 只用 theme.css 变量；所有选择器以 .app-skills 开头 */
+.app-skills .sk-wrap{max-width:880px;margin:0 auto;padding:var(--s6) var(--s8) var(--s12)}
+.app-skills .sk-head{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)}
+.app-skills .sk-head h2{margin:0}
+.app-skills .sk-tabs{margin-bottom:var(--s5)}
+.app-skills .sk-tabs .count{margin-left:2px}
+.app-skills .sk-filter{margin-bottom:var(--s6)}
+.app-skills .sk-filter .seg{flex:none}
+.app-skills .sk-sec{margin-bottom:var(--s8)}
+.app-skills .sk-sec-h{font-size:var(--fs-xs);font-weight:var(--fw-m);color:var(--text-3);margin-bottom:var(--s3);display:flex;align-items:center;gap:var(--s2)}
+.app-skills .sk-name{font-weight:var(--fw-m);font-size:var(--fs-md);line-height:1.4}
+.app-skills .sk-apps{grid-template-columns:repeat(4,minmax(0,1fr))}
+@container (max-width: 760px) { .app-skills .sk-apps{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.app-skills .sk-app{display:flex;align-items:center;gap:var(--s3);min-width:0} .app-skills .sk-app .grow{min-width:0} .app-skills .sk-app .t-3,.app-skills .sk-app .t-xs{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-skills .sk-card{display:flex;flex-direction:column;gap:var(--s3);padding:var(--s4)}
+.app-skills .sk-sum{min-height:2.9em}
+.app-skills .sk-foot{font-size:var(--fs-xs);color:var(--text-3);gap:var(--s3)}
+.app-skills .sk-meta-i{display:inline-flex;align-items:center;gap:4px} .app-skills .sk-meta-i .ico{width:13px;height:13px;color:var(--t-amber-fg)}
+.app-skills .sk-glyph{font-weight:var(--fw-b);font-size:var(--fs-sm)} .app-skills .app-ico.lg.sk-glyph{font-size:var(--fs-lg)} .app-skills .app-ico.sm.sk-glyph{font-size:11px}
+.app-skills .sk-back{margin:0 0 var(--s3) calc(-1 * var(--s2))} .app-skills .sk-back .ico{transform:rotate(180deg)}
+.app-skills .sk-dh{margin-bottom:var(--s5);align-items:flex-start} .app-skills .sk-dh>.grow{min-width:0} .app-skills .sk-dact{flex:none} .app-skills .sk-dh h2{margin:2px 0 6px}
+.app-skills .sk-dmeta{gap:var(--s2)}
+.app-skills .sk-note{margin-bottom:var(--s4)}
+.app-skills .sk-use{display:flex;flex-direction:column;gap:var(--s4)}
+.app-skills .sk-form .textarea{min-height:72px}
+.app-skills .sk-plan{max-width:420px}
+.app-skills .sk-result{display:flex;flex-direction:column;gap:var(--s3)}
+.app-skills .sk-md{font-size:var(--fs-md);line-height:1.7} .app-skills .sk-md p{margin:0 0 var(--s2)}
+.app-skills .sk-out-t{font-size:var(--fs-lg);font-weight:var(--fw-b);margin-bottom:var(--s3)}
+.app-skills .sk-ul{display:flex;flex-direction:column;gap:6px;margin:var(--s2) 0 var(--s3)}
+.app-skills .sk-bl{position:relative;padding-left:16px} .app-skills .sk-bl::before{content:"";position:absolute;left:3px;top:.72em;width:5px;height:5px;border-radius:50%;background:var(--text-3)}
+.app-skills .sk-ck{display:flex;align-items:center;gap:var(--s2)} .app-skills .sk-ck .ico{width:16px;height:16px;padding:2px;border-radius:50%}
+.app-skills .sk-ck.ok .ico{color:var(--t-green-fg);background:var(--t-green-bg)} .app-skills .sk-ck.no{color:var(--text-2)} .app-skills .sk-ck.no .ico{color:var(--t-red-fg);background:var(--t-red-bg)}
+.app-skills .sk-tbl{margin:var(--s2) 0 var(--s3);border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden} .app-skills .sk-tbl th{background:var(--surface-2)}
+.app-skills .sk-srcs{display:flex;flex-direction:column;gap:6px}
+.app-skills .sk-srcs .src{align-items:center} .app-skills .sk-srcs .src .ico{color:var(--text-3)}
+.app-skills .sk-li-ro{cursor:default;min-height:40px} .app-skills .sk-li-ro:hover{background:transparent}
+.app-skills .sk-flow{display:flex;flex-direction:column;gap:var(--s2)}
+.app-skills .sk-flow-i{display:flex;align-items:center;gap:var(--s2);font-size:var(--fs-sm)} .app-skills .sk-flow-i .ico{color:var(--text-2)}
+.app-skills .sk-flow-n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:var(--fw-b);background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);flex:none}
+.app-skills .sk-kv{font-weight:var(--fw-m);margin-top:4px}
+.app-skills .sk-chips{gap:var(--s2);margin-top:var(--s3)}
+.app-skills .sk-step-pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:var(--r-pill);background:var(--surface-2);border:1px solid var(--border);font-size:var(--fs-xs);color:var(--text-2)} .app-skills .sk-step-pill .ico{width:13px;height:13px}
+.app-skills .sk-rv .sk-sum{min-height:0;margin-top:var(--s3)}
+/* 制作向导 */
+.app-skills .sk-mk-h{margin-bottom:var(--s5)}
+.app-skills .sk-wiz{max-width:none}
+.app-skills .sk-ask{display:flex;flex-direction:column;gap:var(--s3);padding:var(--s6) 0}
+.app-skills .sk-big{font-size:var(--fs-lg);min-height:120px;padding:var(--s4)}
+.app-skills .sk-ex{height:auto;min-height:28px;white-space:normal;text-align:left;padding:4px 10px}
+.app-skills .sk-ai{align-items:flex-start} .app-skills .sk-ai-q{margin-top:var(--s2)}
+.app-skills .sk-basic{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
+.app-skills .sk-gap{margin-top:var(--s4)} .app-skills .sk-gap0{margin-bottom:var(--s3)}
+.app-skills .sk-x{border:0;background:none;padding:0;margin-left:2px;color:var(--text-3);cursor:pointer;display:inline-flex} .app-skills .sk-x .ico{width:12px;height:12px} .app-skills .sk-x:hover{color:var(--text)}
+.app-skills .sk-tadd{width:200px}
+.app-skills .sk-ed-in .input{flex:1}
+.app-skills .sk-w140{width:140px;flex:none}
+.app-skills .sk-ed-step{display:flex;align-items:center;gap:var(--s2);padding:6px var(--s2);border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--border)}
+.app-skills .sk-ed-step .ico{color:var(--text-2)} .app-skills .sk-ed-st{font-size:var(--fs-sm);font-weight:var(--fw-m);width:64px;flex:none}
+.app-skills .sk-ed-step .select,.app-skills .sk-ed-step .input{height:var(--ctl-h-sm);font-size:var(--fs-sm);width:auto;min-width:180px;background:var(--surface)}
+.app-skills .sk-kbc{gap:4px}
+.app-skills .sk-adv{margin-top:var(--s4)} .app-skills .sk-adv summary{cursor:pointer;margin-bottom:var(--s2)} .app-skills .sk-adv .textarea{font-size:var(--fs-sm)}
+.app-skills .sk-scopes .sk-scope{display:flex;flex-direction:column;gap:4px;align-items:flex-start} .app-skills .sk-scope .ico{width:18px;height:18px;color:var(--text-2);margin-bottom:4px} .app-skills .sk-scope.sel .ico{color:var(--accent)}
+.app-skills .sk-people .btn{gap:6px}
+.app-skills .sk-link{margin-top:var(--s4)} .app-skills .sk-link .input{flex:1;font-size:var(--fs-sm);color:var(--text-2)}
+.app-skills .sk-done{display:flex;flex-direction:column;align-items:center;text-align:center;gap:var(--s2);padding:var(--s10) var(--s6)}
+.app-skills .sk-done-i{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:1px solid var(--border-strong);box-shadow:var(--shadow-1);color:var(--ok);margin-bottom:var(--s2)}
+.app-skills .sk-done .sk-link{width:100%;max-width:440px}
+.app-skills .sk-done-a{margin-top:var(--s4)}
+/* 弹窗里的代码块（弹窗挂在 body 上，不在 .app-skills 内） */
+.sk-code{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s3);font:12px/1.55 var(--mono);max-height:300px;margin:var(--s3) 0;white-space:pre}
+.modal .sk-scopes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s3)}
+.modal .sk-scope{display:flex;flex-direction:column;gap:4px;align-items:flex-start} .modal .sk-scope .ico{width:18px;height:18px;color:var(--text-2);margin-bottom:4px} .modal .sk-scope.sel .ico{color:var(--accent)}
+.modal .sk-name{font-weight:var(--fw-m)} .modal .sk-link{margin-top:var(--s4)} .modal .sk-link .input{flex:1;font-size:var(--fs-sm)} .modal .sk-people{gap:var(--s2)}
+.app-skills .sk-m0{margin:0}
+
+.app-skills{container-type:inline-size}
+.app-skills .chip-btn{height:28px;padding:0 12px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:var(--fs-xs);cursor:pointer;white-space:nowrap}
+.app-skills .chip-btn:hover{border-color:var(--border-strong);color:var(--text)}
+/* 窄面板（对话 + 面板并排） */
+@container (max-width: 680px) {
+  .app-skills .sk-wrap{padding:var(--s5) var(--s5) var(--s10)}
+  .app-skills .sk-apps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .app-skills .sk-filter{flex-wrap:wrap} .app-skills .sk-filter .search{flex:1 1 100%} .app-skills .sk-filter .seg{max-width:100%;overflow-x:auto}
+  .app-skills .sk-dh{flex-wrap:wrap} .app-skills .sk-dact{width:100%;padding-left:56px}
+  .app-skills .sk-scopes{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (max-width: 520px) {
+  .app-skills .g2{grid-template-columns:1fr}
+}
+
+/* 2.0：颜色只在图标/圆点上——提示条一律中性底，图标保留色相 */
+.app-skills .callout[class*=" h-"],.modal [data-sharebox] .callout[class*=" h-"]{background:var(--surface-2);border-color:var(--border)}
+.app-skills .sk-ai>.ico{color:var(--app-skills)}
+.app-skills .sk-head h2,.app-skills .sk-mk-h h2,.app-skills .sk-dh h2{font-weight:var(--fw-m);letter-spacing:var(--track-tight)}
+.app-skills .sk-card .sk-name{font-size:var(--fs-md)}
+.app-skills .sk-card:hover .sk-name{color:var(--text)}
+.app-skills .sk-out-t{font-weight:var(--fw-b)}
+/* ===== 2.2 multica 对齐 ===== */
+/* 分组标题 = 浅灰圆角条（同壳 .sect） */
+.app-skills .sk-sec>.sk-sec-h,.app-skills .sk-how>.card>.sk-sec-h{height:32px;display:flex;align-items:center;gap:6px;padding:0 var(--s3);margin:0 0 var(--s2);border-radius:var(--r-md);background:var(--fill);color:var(--text-2);font-size:var(--fs-sm);font-weight:var(--fw-m)}
+/* 官方应用：一张卡里的格子，发丝线分隔，不再四个框 */
+.app-skills .sk-apps{gap:0;border:1px solid var(--border-strong);border-radius:var(--r-xl);background:var(--surface);overflow:hidden}
+.app-skills .sk-apps>.sk-app{border:0;border-radius:0;box-shadow:none;border-left:1px solid var(--border);background:transparent}
+.app-skills .sk-apps>.sk-app:first-child{border-left:0}
+.app-skills .sk-apps>.sk-app:hover{background:var(--hover)}
+@container (max-width: 760px){
+  .app-skills .sk-apps>.sk-app:nth-child(odd){border-left:0}
+  .app-skills .sk-apps>.sk-app:nth-child(n+3){border-top:1px solid var(--border)}
+}
+/* 同事的技能：multica 看板卡（浅灰列底 + 白卡细边，无阴影） */
+.app-skills .sk-sec>.g2{background:var(--canvas);border:1px solid var(--border);border-radius:var(--r-xl);padding:var(--s2);gap:var(--s2)}
+.app-skills .sk-card{padding:var(--s3) var(--s4);gap:var(--s2);box-shadow:none;border-color:var(--border-strong)}
+.app-skills .sk-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-1)}
+.app-skills .sk-card .sk-sum{color:var(--text-2)}
+.app-skills .sk-card .sk-foot{color:var(--text-3);font-size:var(--fs-xs)}
+/* 怎么做的：去掉框，分组条 + 内容；三项参数并成一行发丝线 */
+.app-skills .sk-how{gap:var(--s5)}
+.app-skills .sk-how>.card{border:0;box-shadow:none;background:transparent;padding:0}
+.app-skills .sk-how>.card>:not(.sk-sec-h){padding:0 var(--s3)}
+.app-skills .sk-how .sk-li-ro{border-bottom:1px solid var(--border)} .app-skills .sk-how .sk-li-ro:last-child{border-bottom:0}
+.app-skills .sk-kv3{gap:0;border:1px solid var(--border-strong);border-radius:var(--r-xl);overflow:hidden}
+.app-skills .sk-kv3>.card{border:0;border-radius:0;box-shadow:none;border-left:1px solid var(--border)} .app-skills .sk-kv3>.card:first-child{border-left:0}
+.app-skills .sk-kv3 .sk-kv{font-weight:var(--fw-m)}

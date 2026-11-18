@@ -1,0 +1,417 @@
+/* 【可改】模拟数据：企业、政策、会议、公文模板、资料库、对话历史等全部示例数据都在这里，改文案 / 数字直接改即可（改完点“重置演示数据”生效）。
+ *   账号、角色、权限在 data/accounts.js；AI 助手能听懂的话在 data/operator-intents.js；演示步骤在 data/demo-script.js。 */
+/* 经开区共享智能体工作站 · 模拟数据（全部为虚构示例，政策条款摘录自经开区公开政策用于演示，正式18项清单以局方提供为准）
+ * 结构与《接口规范》中的实体定义一一对应，后端接入时由真实接口返回同构 JSON。 */
+(function () {
+  const D = {};
+  D.today = '2026-11-17';
+  D.org = { id: 'jkq-ai', name: '经开区 AI 工作组', seats: 25, used: 19 };
+
+  /* ---------- 用户（≤25 个账号，三类角色） ---------- */
+  D.users = [
+    { id: 'u-wangmin', name: '王敏', dept: '产业促进局 · 企业服务处', role: 'member', title: '经办', me: true },
+    { id: 'u-liyang', name: '李阳', dept: '产业促进局', role: 'admin', title: '处长 · 审签人' },
+    { id: 'u-zhaoqian', name: '赵倩', dept: '产业促进局 · 政策兑现科', role: 'member', title: '经办' },
+    { id: 'u-sunting', name: '孙婷', dept: '产业促进局 · 综合科', role: 'member', title: '文秘' },
+    { id: 'u-liuxiang', name: '刘翔', dept: '产业促进局 · 企业服务处', role: 'member', title: '服务专员' },
+    { id: 'u-chenhao', name: '陈浩', dept: '产业促进局 · 企业服务处', role: 'member', title: '服务专员' },
+    { id: 'u-zhoujing', name: '周静', dept: '商务金融局', role: 'member', title: '经办' },
+    { id: 'u-wuqiang', name: '吴强', dept: '科技和产业促进局', role: 'member', title: '经办' },
+    { id: 'u-zhengli', name: '郑丽', dept: '产业促进局 · 政策兑现科', role: 'member', title: '科长' },
+    { id: 'u-hejun', name: '何军', dept: '亦智数科（合作企业）', role: 'partner', title: 'AI 工程师' },
+    { id: 'u-tangxin', name: '唐鑫', dept: '亦智数科（合作企业）', role: 'partner', title: '产品经理' },
+    { id: 'u-fengyu', name: '冯宇', dept: '产业促进局 · 企业服务处', role: 'member', title: '服务专员' },
+  ];
+  D.me = 'u-wangmin';
+  D.roles = [
+    { id: 'admin', name: '管理员 / 审签人', desc: '审签公文、确认台账入库、审核技能上架、管理模型与资料' },
+    { id: 'member', name: '局方成员', desc: '使用四个应用、创建并共享自己的技能' },
+    { id: 'partner', name: '外部协作者（合作企业）', desc: '只看授权的技能与资料，联系人电话等敏感字段自动隐去' },
+  ];
+
+  /* ---------- 模型（统一模型网关，可随时替换） ---------- */
+  D.models = [
+    { id: 'auto', name: '自动选择', provider: '模型网关', group: '推荐', kind: 'route', desc: '按任务自动路由：敏感数据走本地，写作走旗舰，问答走高速', tags: ['推荐'], enabled: true },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '复杂推理、政策条件分析', tags: ['推理'], ctx: '1M', enabled: true },
+    { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '高频问答、信息提取，速度快', tags: ['高速'], ctx: '1M', enabled: true },
+    { id: 'qwen4-max', name: '通义千问 Qwen4-Max', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '旗舰多模态，长文写作与工具调用', tags: ['旗舰', '写作'], ctx: '1M', enabled: true },
+    { id: 'qwen3.8-flash', name: '通义千问 Qwen3.8-Flash', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '低成本日常任务', tags: ['高速'], ctx: '1M', enabled: true },
+    { id: 'glm-5.3', name: '智谱 GLM-5.3', provider: '智谱 AI', group: '国产云端', kind: 'cloud', desc: '规则梳理、方案检查', tags: ['推理'], ctx: '1M', enabled: true },
+    { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', provider: '月之暗面', group: '国产云端', kind: 'cloud', desc: '超长文档阅读，政策原文通读', tags: ['长文'], ctx: '1M', enabled: true },
+    { id: 'doubao-seed-2', name: '豆包 Seed-2.0', provider: '字节跳动', group: '国产云端', kind: 'cloud', desc: '口语化改写、通知摘要，响应快', tags: ['快速'], ctx: '256K', enabled: true },
+    { id: 'ernie-5.5', name: '文心 5.5', provider: '百度智能云', group: '国产云端', kind: 'cloud', desc: '可经“亦智”平台纳管调用', tags: ['亦智'], ctx: '128K', enabled: true },
+    { id: 'hunyuan-hy4', name: '腾讯混元 Hy4', provider: '腾讯云', group: '国产云端', kind: 'cloud', desc: '视觉理解、读图', tags: ['读图'], ctx: '1M', enabled: true },
+    { id: 'local-qwen-32b', name: 'Qwen3-32B（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '企业台账、未公开公文等敏感数据只走本地', tags: ['数据不出局'], ctx: '128K', enabled: true },
+    { id: 'local-deepseek', name: 'DeepSeek 蒸馏版（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '离线兜底', tags: ['数据不出局'], ctx: '64K', enabled: true },
+    { id: 'gpt', name: 'GPT 系列', provider: 'OpenAI', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
+    { id: 'claude', name: 'Claude 系列', provider: 'Anthropic', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
+  ];
+  D.capabilities = [
+    { id: 'chat', name: '对话', route: 'auto' }, { id: 'transcribe', name: '语音转写', route: 'FunASR / SenseVoice（本地）' },
+    { id: 'embedding', name: '向量检索', route: 'BGE-M3（本地）' }, { id: 'parse', name: '文档解析', route: 'MinerU（本地）' },
+    { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
+  ];
+
+  /* ---------- 小应用注册表（复用卫华 apps/<id>/app.json 清单规范） ---------- */
+  D.apps = [
+    { id: 'policy', name: '政策兑现咨询', short: '政策', icon: '政', color: '#2563eb', kind: 'official-app', version: '1.3.0', owner: 'AI 工作组',
+      summary: '说出企业情况，自动匹配 18 项兑现事项：能报的、要核对的、不满足的一目了然，附原文和额度试算。',
+      tools: ['policy.search', 'policy.match', 'policy.calc', 'policy.notice'], uses: 1863, rating: 4.8,
+      starters: ['书香里文化能申请哪些支持？', '买数据的补贴怎么算？', '实体书店房租补贴的条件是什么？'] },
+    { id: 'enterprise', name: '企业管理维护', short: '企业', icon: '企', color: '#0f766e', kind: 'official-app', version: '1.1.0', owner: 'AI 工作组',
+      summary: '一企一档。走访前 30 秒看懂企业，走访后说几句话就能更新台账，诉求进度随时可查。',
+      tools: ['enterprise.search', 'enterprise.get', 'enterprise.propose_update', 'enterprise.issues'], uses: 1240, rating: 4.7,
+      starters: ['查一下星河智驾', '资质快到期的企业有哪些？', '超过 90 天没走访的重点企业'] },
+    { id: 'meeting', name: '会议记录', short: '会议', icon: '会', color: '#7c3aed', kind: 'official-app', version: '1.1.0', owner: 'AI 工作组',
+      summary: '传录音，自动转写、分清谁说的，生成纪要并提取待办。每句话都能回听核对。',
+      tools: ['meeting.transcribe', 'meeting.summarize', 'meeting.commit_todos'], uses: 986, rating: 4.6,
+      starters: ['整理昨天文化企业座谈会的纪要', '本周会议还有哪些待办没认领？'] },
+    { id: 'document', name: '公文协作', short: '公文', icon: '文', color: '#c2410c', kind: 'official-app', version: '1.2.0', owner: 'AI 工作组',
+      summary: '选“要办什么事”，填几个要素出初稿；自动核查数字文号，润色、比对、批注、审签、导出一条龙。',
+      tools: ['document.draft', 'document.polish', 'document.check', 'document.compare'], uses: 1102, rating: 4.7,
+      starters: ['起草一份数据券申报延期通知', '把这段话润色得更正式', '比对两版通知的差异'] },
+  ];
+  D.skills = [
+    { id: 'sk-shudian', name: '实体书店政策预判', icon: '书', kind: 'skill', author: '王敏', authorId: 'u-wangmin', visibility: 'team', version: '1.0.0', uses: 214, rating: 4.9,
+      summary: '实体书店问“能申请什么”时，按成本奖励规则预判并试算，标出待确认项。', base: 'policy', source: 'policy@1.3.0', status: 'published' },
+    { id: 'sk-zoufang', name: '走访随记转台账', icon: '访', kind: 'skill', author: '刘翔', authorId: 'u-liuxiang', visibility: 'team', version: '1.2.0', uses: 389, rating: 4.8,
+      summary: '把手写/语音走访记录整理成五块档案，并列出与台账不一致的地方。', base: 'enterprise', status: 'published' },
+    { id: 'sk-zhoubao', name: '处室周报整理', icon: '周', kind: 'skill', author: '孙婷', authorId: 'u-sunting', visibility: 'recommended', version: '2.0.1', uses: 562, rating: 4.7,
+      summary: '把本周会议纪要和待办汇总成处室周报，按“完成 / 推进 / 下周”三段输出。', base: 'meeting', status: 'published' },
+    { id: 'sk-xinbanjiu', name: '政策新旧版本对比', icon: '比', kind: 'skill', author: '孙婷', authorId: 'u-sunting', visibility: 'team', version: '1.0.3', uses: 147, rating: 4.6,
+      summary: '上传同名政策的两个版本，列出条件、比例、封顶的变化。', base: 'document', status: 'published' },
+    { id: 'sk-suqiu', name: '企业诉求答复口径', icon: '答', kind: 'skill', author: '赵倩', authorId: 'u-zhaoqian', visibility: 'pending', version: '0.9.0', uses: 23, rating: 4.4,
+      summary: '根据诉求内容和政策依据，生成电话答复口径和书面答复要点。', base: 'policy', status: 'in_review' },
+    { id: 'sk-shuju', name: '数据券材料预审', icon: '券', kind: 'skill', author: '何军', authorId: 'u-hejun', visibility: 'private', version: '0.3.0', uses: 6, rating: 0,
+      summary: '核对数据券申报材料是否齐全：合同、发票、平台交易凭证。', base: 'policy', status: 'draft' },
+  ];
+
+  /* ---------- 政策事项卡（18 项，结构与《四项需求梳理》字段一致） ---------- */
+  const P = (o) => Object.assign({ status: '已发布', verifiedAt: '2026-11-13' }, o);
+  D.policyDocs = [
+    { id: 'pd-2021-161', no: '京技管〔2021〕161号', title: '北京经济技术开发区实体书店扶持暂行管理办法', year: 2021, state: '现行有效' },
+    { id: 'pd-2022-153', no: '京技管〔2022〕153号', title: '关于支持企业复工复产促进高质量发展的若干措施', year: 2022, state: '已到期 · 历史兑现' },
+    { id: 'pd-2023-17', no: '京技管发〔2023〕17号', title: '北京经济技术开发区促进商业领域发展若干措施（试行）', year: 2023, state: '已于 2025.12.31 到期' },
+    { id: 'pd-2024-10', no: '京技管发〔2024〕10号', title: '关于打造 AI 原生产业创新高地的若干政策（3月版）', year: 2024, state: '历史版本 · 已失效' },
+    { id: 'pd-2024-29', no: '京技管发〔2024〕29号', title: '关于打造 AI 原生产业创新高地的若干政策（11月版）', year: 2024, state: '现行有效' },
+    { id: 'pd-2025-16', no: '京技管发〔2025〕16号', title: '关于加快推进数据产业高质量发展的若干措施', year: 2025, state: '有效至 2027.12.31' },
+    { id: 'pd-2026-12', no: '京技管发〔2026〕12号', title: '关于支持人工智能原生人才发展的若干措施', year: 2026, state: '有效至 2029.12.31' },
+  ];
+  D.policies = [
+    P({ id: 'PI-01', title: '采购数据产品（数据券）', doc: 'pd-2025-16', clause: '第 8 项及附则', object: '企业', sub: '数据采购主体', action: '购买数据产品',
+      conditions: [{ f: 'regInZone', op: '==', v: true, label: '在经开区注册并开展数据相关工作' }, { f: 'dataPurchase', op: '>', v: 0, label: '通过合规数据流通交易平台采购数据集 / 接口 / 模型' }],
+      pending: ['企业规模', '交易发生期', '可计入金额与凭证'], rule: { base: 'dataPurchase', ratio: 0.10, cap: 1000000, text: '年度数据交易金额的 10%；单主体年度最高 100 万元' },
+      times: { valid: '至 2027.12.31', occur: '待年度指南核对', window: '2026.10.12—11.06（已延期，已结束）', open: false }, keywords: ['数据券', '买数据', '数据接口', '训练数据', '数据采购'],
+      materials: ['数据产品采购合同', '交易平台成交凭证', '发票及付款凭证', '企业营业执照', '信用承诺书'],
+      original: '对在经开区开展数据相关工作的企业，通过合规数据流通交易平台采购数据集、数据接口、数据模型等数据产品的，按照年度数据交易金额的10%给予支持，单个主体年度支持金额最高不超过100万元。' }),
+    P({ id: 'PI-02', title: '高质量数据集建设与开放', doc: 'pd-2025-16', clause: '第 9 项', object: '企业', sub: '数据建设主体', action: '建设并开放数据集',
+      conditions: [{ f: 'regInZone', op: '==', v: true, label: '经开区注册' }, { f: 'datasetInvest', op: '>', v: 0, trigger: true, label: '建设高质量数据集并在平台开放' }],
+      pending: ['数据集质量评审结论'], rule: { base: 'datasetInvest', ratio: 0.30, cap: 3000000, text: '经评审，按建设投入的 30% 给予支持，最高 300 万元' },
+      times: { valid: '至 2027.12.31', occur: '待指南', window: '本轮未核实', open: null }, keywords: ['数据集', '语料', '数据建设'],
+      materials: ['数据集建设方案', '投入明细及凭证', '开放证明'], original: '支持企业建设行业高质量数据集并在合规平台开放共享，经评审后按照建设投入的30%给予支持，最高不超过300万元。' }),
+    P({ id: 'PI-03', title: '实体书店成本奖励', doc: 'pd-2021-161', clause: '第二、六、十一、十二条', object: '企业', sub: '实体书店', action: '支付房租 / 物业费',
+      conditions: [{ f: 'tags', op: 'has', v: '实体书店', label: '独立法人实体书店' }, { f: 'license', op: 'has', v: '出版物经营许可证', label: '持有出版物经营许可证' }, { f: 'yearsInZone', op: '>=', v: 1, label: '经开区注册、纳税并经营满一年' }, { f: 'rent', op: '>', v: 0, label: '实际支付房租或物业费' }],
+      pending: ['当前申报窗口', '年度已获奖励项目数（每年最多 2 项）'], rule: { base: 'rent', ratio: 0.5, cap: 200000, text: '不超过实际支出的 50%；每店每年最高 20 万元' },
+      times: { valid: '官网标记现行有效', occur: '相应申请年度', window: '本轮未核实（待通知）', open: null }, keywords: ['书店', '房租', '物业费', '书咖', '租金补贴'],
+      materials: ['营业执照', '出版物经营许可证', '租赁合同及付款凭证', '物业费发票', '经营情况说明', '不重复申报承诺书'],
+      original: '对符合条件的实体书店，按照其实际支付房租或物业费的50%给予成本奖励，每店每年最高不超过20万元。每家书店每年最多申请两个奖励项目，同类财政资金不重复支持。' }),
+    P({ id: 'PI-04', title: '实体书店新建 / 升级改造奖励', doc: 'pd-2021-161', clause: '第九条', object: '企业', sub: '实体书店', action: '新建或改造门店',
+      conditions: [{ f: 'tags', op: 'has', v: '实体书店', label: '实体书店' }, { f: 'renovation', op: '>', v: 0, trigger: true, label: '新建或升级改造投入' }],
+      pending: ['改造验收', '面积'], rule: { base: 'renovation', ratio: 0.3, cap: 500000, text: '不超过改造投入的 30%，最高 50 万元' },
+      times: { valid: '现行有效', occur: '申请年度', window: '本轮未核实', open: null }, keywords: ['书店装修', '书店改造', '新开书店'],
+      materials: ['改造方案', '投入凭证', '竣工验收资料'], original: '对新建或升级改造的实体书店，按照装修改造投入的30%给予奖励，最高不超过50万元。' }),
+    P({ id: 'PI-05', title: '商业主体改造提升支持（2025 年度）', doc: 'pd-2023-17', clause: '第十一、十四条', object: '企业', sub: '商业主体', action: '改造提升经营场所',
+      conditions: [{ f: 'tags', op: 'hasAny', v: ['购物中心', '百货店', '专业专卖店'], label: '购物中心 / 百货店 / 专业专卖店' }, { f: 'area', op: '>=', v: 2000, label: '营业面积 ≥ 2000㎡（购物中心/百货 ≥ 5000㎡）' }, { f: 'renovation', op: '>', v: 1000000, label: '改造投资额 > 100 万元（购物中心/百货 > 1000 万元）' }],
+      pending: ['改造后经营表现', '三年内择优申报限制'], rule: { base: 'renovation', ratio: 0.05, cap: 5000000, text: '不超过审定实际投资额的 5%；单项目最高 500 万元' },
+      times: { valid: '已于 2025.12.31 到期', occur: '2025 年度事项', window: '2026.08.28—09.24（已结束）', open: false }, keywords: ['商场改造', '装修补助', '旧店升级'],
+      materials: ['改造项目审计报告', '投资凭证', '经营数据'], original: '对购物中心、百货店营业面积5000平方米以上且改造投资额超过1000万元，专业专卖店营业面积2000平方米以上且投资额超过100万元的改造提升项目，按照审定实际投资额的5%给予支持，单个项目最高500万元。' }),
+    P({ id: 'PI-06', title: '商业数字化建设支持', doc: 'pd-2023-17', clause: '第十二条', object: '企业', sub: '商业主体', action: '数字化建设',
+      conditions: [{ f: 'tags', op: 'hasAny', v: ['购物中心', '百货店', '专业专卖店', '连锁便利'], label: '商业主体' }, { f: 'digitalInvest', op: '>', v: 500000, label: '数字化投入 > 50 万元' }],
+      pending: ['与改造事项三年内择优'], rule: { base: 'digitalInvest', ratio: 0.2, cap: 2000000, text: '不超过投入的 20%，最高 200 万元' },
+      times: { valid: '已到期', occur: '2025 年度事项', window: '2026.08.28—09.24（已结束）', open: false }, keywords: ['智慧商场', '数字化'],
+      materials: ['数字化项目合同', '投入凭证'], original: '支持商业主体开展数字化建设，按照实际投入的20%给予支持，最高不超过200万元。' }),
+    P({ id: 'PI-07', title: '首店 / 旗舰店落户奖励', doc: 'pd-2023-17', clause: '第五条', object: '企业', sub: '商业品牌', action: '开设首店',
+      conditions: [{ f: 'tags', op: 'has', v: '首店', label: '品牌首店或旗舰店' }],
+      pending: ['首店认定'], rule: { base: null, fixed: 500000, text: '经认定一次性奖励最高 50 万元' },
+      times: { valid: '已到期', occur: '2025 年度', window: '已结束', open: false }, keywords: ['首店', '旗舰店'], materials: ['首店认定材料'], original: '对新引进的品牌首店、旗舰店，经认定给予最高50万元一次性奖励。' }),
+    P({ id: 'PI-08', title: '算力券（11 月版）', doc: 'pd-2024-29', clause: '第一条', object: '企业', sub: 'AI 研发主体', action: '采购算力服务',
+      conditions: [{ f: 'tags', op: 'hasAny', v: ['人工智能', '大模型'], label: '开展 AI 模型研发的企业' }, { f: 'computePurchase', op: '>', v: 0, label: '采购智能算力服务' }],
+      pending: ['评审认定'], rule: { base: 'computePurchase', ratio: 0.3, cap: 10000000, text: '经评审认定，按算力采购费用的 30% 支持，最高 1000 万元' },
+      times: { valid: '现行有效', occur: '待指南', window: '本轮未核实', open: null }, keywords: ['算力券', 'GPU', '算力补贴'],
+      materials: ['算力采购合同', '发票', '研发项目说明'], original: '对在经开区开展大模型研发的企业，经评审认定后，按照智能算力采购费用的30%给予支持。', versionNote: '3 月版（〔2024〕10号）区分 30% / 40%，已失效；按事项发生时间核对适用版本。' }),
+    P({ id: 'PI-09', title: '大模型备案奖励', doc: 'pd-2024-29', clause: '第三条', object: '企业', sub: 'AI 研发主体', action: '完成大模型备案',
+      conditions: [{ f: 'tags', op: 'has', v: '大模型', label: '大模型研发企业' }, { f: 'license', op: 'has', v: '生成式AI备案', label: '完成生成式人工智能服务备案' }],
+      pending: [], rule: { base: null, fixed: 1000000, text: '一次性奖励 100 万元' }, times: { valid: '现行有效', occur: '备案当年', window: '常态化受理（以通知为准）', open: true },
+      keywords: ['备案', '大模型备案'], materials: ['备案证明', '营业执照'], original: '对完成国家生成式人工智能服务备案的企业，给予一次性奖励100万元。' }),
+    P({ id: 'PI-10', title: 'AI 场景应用示范', doc: 'pd-2024-29', clause: '第五条', object: '企业', sub: 'AI 应用主体', action: '建设应用场景',
+      conditions: [{ f: 'tags', op: 'hasAny', v: ['人工智能', '大模型', '机器人', '智能网联汽车'], label: 'AI 应用企业' }, { f: 'sceneInvest', op: '>', v: 0, label: '场景项目投入' }],
+      pending: ['示范项目评选'], rule: { base: 'sceneInvest', ratio: 0.3, cap: 5000000, text: '按项目投入 30%，最高 500 万元' }, times: { valid: '现行有效', occur: '待指南', window: '本轮未核实', open: null },
+      keywords: ['场景', '示范项目'], materials: ['项目方案', '投入明细'], original: '对入选AI场景应用示范的项目，按照项目投入的30%给予支持，最高500万元。' }),
+    P({ id: 'PI-11', title: 'AI 原生创业者支持（OPC）', doc: 'pd-2026-12', clause: '第三条及附则', object: '个人', sub: '创业者 · AI 原生创业者', action: 'AI 原生创业',
+      conditions: [{ f: 'subjectType', op: '==', v: '个人', label: '个人受益' }, { f: 'tags', op: 'has', v: 'AI原生创业', label: '轻组织形态运行，具备闭环交付能力' }],
+      pending: ['申请主体（个人或企业）', '认定指标', '申报批次'], rule: { base: null, fixed: 500000, text: '个人最高 50 万元奖励，认定口径待核' },
+      times: { valid: '至 2029.12.31（起始日期待核）', occur: '待申报指南', window: '本轮未核实', open: null }, keywords: ['一人公司', 'OPC', '个人创业'], materials: ['身份证明', '项目材料'], original: '对以轻组织形态运行、具备闭环交付能力的人工智能原生创业者，给予个人最高50万元奖励。' }),
+    P({ id: 'PI-12', title: 'AI 青年人才安居支持', doc: 'pd-2026-12', clause: '第五条', object: '个人', sub: '就业人员 · AI 人才', action: '在区就业',
+      conditions: [{ f: 'subjectType', op: '==', v: '个人', label: '个人' }, { f: 'age', op: '<=', v: 35, label: '35 周岁以下' }, { f: 'tags', op: 'has', v: 'AI人才', label: '在经开区 AI 企业全职工作' }],
+      pending: ['社保缴纳时长'], rule: { base: null, fixed: 36000, text: '每年最高 3.6 万元，连续支持不超过 3 年' }, times: { valid: '至 2029.12.31', occur: '在职期间', window: '按季度受理（待通知）', open: null },
+      keywords: ['人才公寓', '租房补贴', '青年人才'], materials: ['劳动合同', '社保证明', '学历证明'], original: '对在经开区人工智能企业全职工作的35周岁以下青年人才，给予每年最高3.6万元安居支持，连续支持不超过3年。' }),
+    P({ id: 'PI-13', title: '在读学生 AI 实习补贴', doc: 'pd-2026-12', clause: '第六条', object: '个人', sub: '学生 · 在读', action: '在区实习',
+      conditions: [{ f: 'subjectType', op: '==', v: '个人', label: '个人' }, { f: 'tags', op: 'has', v: '在读学生', label: '本科 / 硕士 / 博士在读' }],
+      pending: ['实习时长', '学校条件（原文未明确）'], rule: { base: null, fixed: 3000, text: '每人每月最高 3000 元，最长 6 个月' }, times: { valid: '至 2029.12.31', occur: '实习期间', window: '待通知', open: null },
+      keywords: ['实习', '学生'], materials: ['学籍证明', '实习协议'], original: '对在经开区人工智能企业实习的在读学生，给予每人每月最高3000元实习补贴，最长不超过6个月。' }),
+    P({ id: 'PI-14', title: '复工复产稳岗补贴（历史）', doc: 'pd-2022-153', clause: '第三条', object: '企业', sub: '一般企业', action: '稳定就业',
+      conditions: [{ f: 'regInZone', op: '==', v: true, label: '经开区注册' }, { f: 'employees', op: '>=', v: 20, label: '参保人数 ≥ 20 人' }],
+      pending: [], rule: { base: null, fixed: 0, text: '已结束兑现，仅供历史查询' }, times: { valid: '已到期', occur: '2022 年度', window: '已结束', open: false },
+      keywords: ['稳岗', '复工'], materials: [], original: '对2022年度稳定就业的企业，按照参保人数给予稳岗补贴。（历史政策，已兑现完毕）' }),
+    P({ id: 'PI-15', title: '服务机构（申请方≠受益方）支持', doc: 'pd-2022-153', clause: '第七条', object: '其他组织', sub: '服务机构', action: '为企业提供服务',
+      conditions: [{ f: 'tags', op: 'has', v: '服务机构', label: '为区内企业提供专业服务的机构' }],
+      pending: ['服务对象清单'], rule: { base: null, fixed: 0, text: '已结束兑现' }, times: { valid: '已到期', occur: '2022 年度', window: '已结束', open: false },
+      keywords: ['服务机构'], materials: [], original: '对为区内企业提供专业服务的机构，按服务成效给予支持。申请方为服务机构，受益方为区内企业。' }),
+    P({ id: 'PI-16', title: '高新技术企业认定奖励', doc: 'pd-2024-29', clause: '附件 2（示例）', object: '企业', sub: '高新技术企业', action: '首次认定高企',
+      conditions: [{ f: 'license', op: 'has', v: '高新技术企业', label: '首次通过高新技术企业认定' }, { f: 'regInZone', op: '==', v: true, label: '经开区注册' }],
+      pending: ['是否首次认定'], rule: { base: null, fixed: 200000, text: '首次认定一次性奖励 20 万元（示例口径）' }, times: { valid: '现行有效', occur: '认定当年', window: '常态化受理', open: true },
+      keywords: ['高企', '高新技术企业'], materials: ['高企证书', '营业执照'], original: '对首次通过国家高新技术企业认定的企业，给予一次性奖励20万元。（示例口径，以局方清单为准）' }),
+    P({ id: 'PI-17', title: '专精特新企业奖励', doc: 'pd-2024-29', clause: '附件 2（示例）', object: '企业', sub: '中小企业', action: '获评专精特新',
+      conditions: [{ f: 'license', op: 'hasAny', v: ['专精特新', '专精特新小巨人'], label: '获评北京市专精特新或国家级小巨人' }],
+      pending: [], rule: { base: null, fixed: 300000, text: '市级 30 万元，国家级小巨人 50 万元（示例口径）' }, times: { valid: '现行有效', occur: '获评当年', window: '常态化受理', open: true },
+      keywords: ['专精特新', '小巨人'], materials: ['认定文件'], original: '对首次获评北京市专精特新中小企业的，给予30万元奖励；获评国家级专精特新“小巨人”的，给予50万元奖励。（示例口径）' }),
+    P({ id: 'PI-18', title: '机器人应用场景首购首用', doc: 'pd-2024-29', clause: '第八条（示例）', object: '企业', sub: '机器人企业', action: '首台套销售',
+      conditions: [{ f: 'tags', op: 'has', v: '机器人', label: '机器人整机或核心部件企业' }, { f: 'firstSale', op: '>', v: 0, label: '首台（套）产品在区内落地应用' }],
+      pending: ['首台套认定'], rule: { base: 'firstSale', ratio: 0.2, cap: 3000000, text: '按销售合同金额 20%，最高 300 万元（示例口径）' }, times: { valid: '现行有效', occur: '待指南', window: '本轮未核实', open: null },
+      keywords: ['机器人', '首台套'], materials: ['销售合同', '应用证明'], original: '对机器人首台（套）产品在区内场景落地应用的，按照合同金额的20%给予支持，最高300万元。（示例口径）' }),
+  ];
+
+  /* ---------- 企业台账（一企一档，虚构企业） ---------- */
+  const staff = ['刘翔', '陈浩', '冯宇', '王敏'];
+  const E = [
+    ['E001', '北京书香里文化发展有限公司', '书香里文化', '91110302MA01XXXX1A', '文化 · 实体书店', '小微', ['实体书店', '文化消费', '重点服务'], ['出版物经营许可证'], '2021-03-15', 5.6, 28, 680, { rent: 420000, area: 860 }, '科创十三街 18 号院 2 号楼 1 层'],
+    ['E002', '北京星河智驾科技有限公司', '星河智驾', '91110302MA02XXXX2B', '智能网联汽车', '中型', ['人工智能', '智能网联汽车', '重点服务', '高新技术'], ['高新技术企业', '专精特新'], '2019-07-02', 7.4, 312, 42000, { computePurchase: 6800000, sceneInvest: 12000000, dataPurchase: 2600000 }, '荣华南路 13 号院 5 号楼'],
+    ['E003', '北京亦庄数元科技有限公司', '亦庄数元', '91110302MA03XXXX3C', '数据服务', '小型', ['数据', '人工智能'], ['高新技术企业'], '2022-05-20', 4.5, 86, 9600, { dataPurchase: 1800000, datasetInvest: 4200000 }, '科创六街 88 号'],
+    ['E004', '北京经开汇购物中心管理有限公司', '经开汇购物中心', '91110302MA04XXXX4D', '商业 · 购物中心', '大型', ['购物中心', '商业'], [], '2016-11-08', 10.0, 420, 56000, { area: 82000, renovation: 26000000, digitalInvest: 3200000 }, '荣京东街 3 号'],
+    ['E005', '北京灵犀大模型科技有限公司', '灵犀大模型', '91110302MA05XXXX5E', '人工智能 · 大模型', '中型', ['人工智能', '大模型', '重点服务'], ['生成式AI备案', '高新技术企业'], '2023-02-14', 3.8, 168, 15000, { computePurchase: 22000000, dataPurchase: 3400000 }, '经海路 1 号院 7 号楼'],
+    ['E006', '北京天工机器人技术有限公司', '天工机器人', '91110302MA06XXXX6F', '机器人', '中型', ['机器人', '人工智能', '高新技术'], ['高新技术企业', '专精特新小巨人'], '2018-09-30', 8.1, 256, 31000, { firstSale: 8600000, sceneInvest: 5000000 }, '博兴二路 9 号'],
+    ['E007', '北京墨香书咖文化有限公司', '墨香书咖', '91110302MA07XXXX7G', '文化 · 实体书店', '微型', ['实体书店', '文化消费'], [], '2026-04-01', 0.6, 9, 120, { rent: 216000 }, '天华园二里 6 号底商'],
+    ['E008', '北京同仁康泰生物医药有限公司', '同仁康泰', '91110302MA08XXXX8H', '生物医药', '大型', ['生物医药', '高新技术'], ['高新技术企业'], '2012-06-18', 14.4, 980, 186000, {}, '科创十四街 99 号'],
+    ['E009', '北京亦城优品专卖有限公司', '亦城优品', '91110302MA09XXXX9J', '商业 · 专业专卖店', '小型', ['专业专卖店', '商业', '首店'], [], '2024-08-10', 2.3, 46, 5200, { area: 2400, renovation: 1600000 }, '文化园西路 8 号'],
+    ['E010', '北京芯视界半导体有限公司', '芯视界半导体', '91110302MA10XXXX0K', '集成电路', '中型', ['集成电路', '高新技术'], ['高新技术企业', '专精特新'], '2020-01-06', 6.9, 340, 72000, {}, '科创十街 15 号'],
+    ['E011', '北京众智算力服务有限公司', '众智算力', '91110302MA11XXXX1L', '算力服务', '中型', ['人工智能', '算力'], ['高新技术企业'], '2021-10-12', 5.1, 120, 38000, { dataPurchase: 600000 }, '凉水河二街 8 号'],
+    ['E012', '北京云帆数据交易服务有限公司', '云帆数据', '91110302MA12XXXX2M', '数据服务', '小型', ['数据', '服务机构'], [], '2023-06-01', 3.5, 38, 2400, { datasetInvest: 900000 }, '科创五街 38 号'],
+    ['E013', '北京安驰新能源汽车部件有限公司', '安驰新能源', '91110302MA13XXXX3N', '新能源汽车', '大型', ['新能源汽车', '高新技术'], ['高新技术企业'], '2015-04-22', 11.6, 1250, 260000, {}, '东区经海三路 116 号'],
+    ['E014', '北京慧眼视觉科技有限公司', '慧眼视觉', '91110302MA14XXXX4P', '人工智能 · 视觉', '小型', ['人工智能', '机器人'], ['高新技术企业'], '2022-12-01', 3.9, 64, 7800, { sceneInvest: 2200000, computePurchase: 900000 }, '科谷一街 10 号院'],
+    ['E015', '北京亦庄便利蜂连锁有限公司', '亦庄便利', '91110302MA15XXXX5Q', '商业 · 连锁便利', '中型', ['连锁便利', '商业'], [], '2017-03-03', 9.7, 410, 33000, { digitalInvest: 800000 }, '地盛北街 1 号'],
+    ['E016', '北京润禾医疗器械有限公司', '润禾医疗', '91110302MA16XXXX6R', '医疗器械', '中型', ['医疗器械', '高新技术'], ['高新技术企业', '专精特新'], '2014-09-09', 12.2, 290, 54000, {}, '永昌北路 3 号'],
+    ['E017', '北京启明一人智能工作室', '启明工作室', '—（个体）', '人工智能 · OPC', '微型', ['AI原生创业', '人工智能'], [], '2026-02-20', 0.7, 1, 80, {}, '亦庄智造空间 B 座 302', '个人'],
+    ['E018', '北京博睿精密仪器有限公司', '博睿精密', '91110302MA18XXXX8T', '高端装备', '中型', ['高端装备'], ['专精特新'], '2013-05-17', 13.5, 380, 61000, {}, '康定街 19 号'],
+    ['E019', '北京数坊科技有限公司', '数坊科技', '91110302MA19XXXX9U', '软件 · 数据', '小型', ['数据', '软件'], [], '2024-03-11', 2.7, 52, 3600, { dataPurchase: 420000 }, '科创十二街 8 号'],
+    ['E020', '北京知行大模型应用有限公司', '知行应用', '91110302MA20XXXX0V', '人工智能 · 应用', '小型', ['人工智能', '大模型'], [], '2025-01-08', 1.9, 35, 1900, { computePurchase: 1200000, sceneInvest: 800000 }, '经海四路 25 号'],
+    ['E021', '北京云栖阅读空间文化有限公司', '云栖阅读', '91110302MA21XXXX1W', '文化 · 实体书店', '小微', ['实体书店', '文化消费'], ['出版物经营许可证'], '2023-09-01', 3.2, 14, 410, { rent: 300000, renovation: 600000 }, '亦庄文化园 A2'],
+    ['E022', '北京恒信检测认证有限公司', '恒信检测', '91110302MA22XXXX2X', '检测认证', '小型', ['服务机构', '检测'], ['CMA资质'], '2019-12-12', 6.9, 76, 8800, {}, '兴盛街 6 号'],
+    ['E023', '北京智联物流科技有限公司', '智联物流', '91110302MA23XXXX3Y', '智慧物流', '中型', ['机器人', '物流'], ['高新技术企业'], '2020-07-07', 6.4, 230, 27000, { firstSale: 0 }, '马驹桥物流园 3 号'],
+    ['E024', '北京经开国际会展服务有限公司', '经开会展', '91110302MA24XXXX4Z', '会展服务', '小型', ['服务机构', '商业'], [], '2018-02-01', 8.8, 40, 4600, {}, '经开国际会展中心'],
+  ];
+  const contactsPool = [['张', '总经理'], ['李', '财务总监'], ['周', '行政主管'], ['孙', '政府事务经理'], ['吴', '董事会秘书'], ['陈', '运营负责人']];
+  D.enterprises = E.map((r, i) => {
+    const [id, name, short, code, industry, scale, tags, license, est, years, emp, revenue, amounts, addr, subjectType] = r;
+    const c1 = contactsPool[i % 6], c2 = contactsPool[(i + 2) % 6];
+    const lastVisitDays = [12, 45, 96, 130, 8, 33, 200, 61, 27, 150, 18, 74][i % 12];
+    const visitDate = new Date(Date.parse('2026-11-17') - lastVisitDays * 864e5).toISOString().slice(0, 10);
+    const quals = license.map((l, k) => ({ name: l, validTo: ['2026-12-31', '2027-08-15', '2028-05-30', '2026-12-08'][(i + k) % 4], verify: k % 2 ? '企业自报' : '已核实' }));
+    return {
+      id, name, short, creditCode: code, industry, scale, tags, license, subjectType: subjectType || '企业', established: est, yearsInZone: years, regInZone: true,
+      employees: emp, revenue: { value: revenue, unit: '万元', period: '2025 年度', source: '统计报表', verify: '已核实' },
+      amounts, regAddr: '北京经济技术开发区' + addr, opAddr: '北京经济技术开发区' + addr, formerNames: i % 5 === 0 ? [name.replace('有限公司', '') + '（筹）'] : [],
+      contacts: [{ name: c1[0] + ['伟', '静', '磊', '娜', '涛', '芳'][i % 6], title: c1[1], phone: '139' + String(10234567 + i * 7919371).slice(-8), main: true },
+                 { name: c2[0] + ['明', '丽', '强', '敏', '杰', '燕'][(i + 3) % 6], title: c2[1], phone: '186' + String(20345671 + i * 3571113).slice(-8) }],
+      servicer: staff[i % 4], lastVisit: visitDate, lastVisitDays,
+      qualifications: quals,
+      products: { E001: '社区书店 + 文创 + 阅读活动', E002: 'L4 自动驾驶系统、Robotaxi 运营', E003: '工业数据治理与数据集', E004: '区域型购物中心', E005: '政务 / 制造行业大模型', E006: '人形机器人整机', E007: '书咖 + 小型书店' }[id] || industry + '相关产品与服务',
+      fieldStatus: { revenue: '已核实', employees: i % 3 ? '企业自报' : '已核实', amounts: '企业自报' },
+    };
+  });
+
+  D.visits = [
+    { id: 'V-1102', entId: 'E001', date: '2026-11-05', staff: '刘翔', type: '上门走访', notes: '书店计划年底扩租二层 400㎡，用于亲子阅读区；反映 2026 年房租上涨到 48 万/年；询问房租补贴还能不能报、什么时候报。负责人张伟，新任行政主管周娜（电话 13910023456）。', followups: ['协助了解实体书店成本奖励申报时间', '告知许可证年检'] },
+    { id: 'V-1088', entId: 'E001', date: '2026-07-18', staff: '刘翔', type: '电话回访', notes: '经营正常，上半年举办阅读活动 46 场。', followups: [] },
+    { id: 'V-1091', entId: 'E002', date: '2026-10-03', staff: '陈浩', type: '上门走访', notes: '计划扩建测试场地，需协调亦庄新城路测牌照；算力采购今年约 680 万。', followups: ['对接路测牌照办理', '算力券政策解读'] },
+    { id: 'V-1095', entId: 'E005', date: '2026-11-09', staff: '王敏', type: '座谈', notes: '已完成生成式 AI 备案，询问备案奖励；数据采购约 340 万，想了解数据券后续批次。', followups: ['备案奖励申报指导', '关注数据券下一批次'] },
+    { id: 'V-1060', entId: 'E004', date: '2026-07-10', staff: '冯宇', type: '上门走访', notes: '三层餐饮区改造完成，投资约 2600 万，询问 2025 年度改造奖励。', followups: ['已提示 9 月申报窗口'] },
+    { id: 'V-1099', entId: 'E006', date: '2026-10-20', staff: '冯宇', type: '上门走访', notes: '人形机器人在经开汇商场落地导览场景，首台套合同 860 万。', followups: ['首台套认定材料'] },
+  ];
+  D.issues = [
+    { id: 'IS-2611-01', entId: 'E001', title: '咨询实体书店房租补贴申报时间', from: '走访', created: '2026-11-05', owner: '刘翔', status: '办理中', due: '2026-11-20', next: '联系政策兑现科确认 2026 年批次通知', steps: [['2026-11-05', '走访登记诉求'], ['2026-11-06', '转政策兑现科赵倩'], ['2026-11-12', '已查原文，等待批次通知']] },
+    { id: 'IS-2610-07', entId: 'E002', title: '路测牌照扩区协调', from: '走访', created: '2026-10-03', owner: '陈浩', status: '待补材料', due: '2026-11-25', next: '企业补交测试安全评估报告', steps: [['2026-10-03', '走访登记'], ['2026-10-10', '已对接交通部门'], ['2026-11-01', '缺测试安全评估报告']] },
+    { id: 'IS-2611-03', entId: 'E005', title: '大模型备案奖励申报指导', from: '座谈', created: '2026-11-09', owner: '王敏', status: '办理中', due: '2026-11-30', next: '发送一次性告知单', steps: [['2026-11-09', '座谈登记'], ['2026-11-10', '已匹配 PI-09']] },
+    { id: 'IS-2609-12', entId: 'E004', title: '2025 年度改造奖励申报', from: '走访', created: '2026-07-10', owner: '冯宇', status: '已办结', due: '2026-09-24', next: '—', steps: [['2026-07-10', '登记'], ['2026-09-02', '企业已提交'], ['2026-09-30', '已受理，转评审']] },
+    { id: 'IS-2610-15', entId: 'E006', title: '首台套认定材料辅导', from: '走访', created: '2026-10-20', owner: '冯宇', status: '办理中', due: '2026-12-05', next: '预审合同与应用证明', steps: [['2026-10-20', '登记']] },
+    { id: 'IS-2611-08', entId: 'E007', title: '新开书咖能否享受房租补贴', from: '电话', created: '2026-11-14', owner: '赵倩', status: '待分派', due: '2026-11-21', next: '确认经营年限与许可证', steps: [['2026-11-14', '12345 转办登记']] },
+    { id: 'IS-2611-10', entId: 'E003', title: '数据集开放平台对接', from: '会议', created: '2026-11-12', owner: '吴强', status: '办理中', due: '2026-12-10', next: '协调数据交易平台上架', steps: [['2026-11-12', '座谈会提出']] },
+  ];
+  D.proposals = []; // 走访后 AI 生成的台账更新建议，运行时产生
+
+  /* ---------- 会议（录音、转写、纪要、待办） ---------- */
+  D.meetings = [
+    { id: 'MT-1112', title: '2026 年第四季度文化企业座谈会', type: '企业座谈会', date: '2026-11-12 14:00', duration: '42:18', place: '经开区政务服务中心 3 层 2 会议室', host: '李阳',
+      participants: ['李阳（产业促进局）', '王敏（企业服务处）', '赵倩（政策兑现科）', '张伟（书香里文化）', '刘芳（云栖阅读）', '周涛（墨香书咖）'], file: '2026-11-12 文化企业座谈会.m4a', size: '38.6 MB', status: 'done', source: 'NAS · 会议档案/待转写',
+      transcript: [
+        ['00:00:12', '李阳', '各位企业代表下午好，今天主要听听大家今年经营情况和对政策的需求，我们产业促进局、政策兑现科都在。'],
+        ['00:01:05', '张伟', '书香里今年活动做了一百多场，客流还可以，但房租涨得厉害，一年到了四十八万，想问房租补贴今年还能报吗？'],
+        ['00:02:20', '赵倩', '实体书店成本奖励这个政策还是现行有效的，按实际房租物业费百分之五十，每店每年最高二十万，但今年批次的通知还没出。'],
+        ['00:03:02', '刘芳', '我们云栖去年做了升级改造，花了六十万左右，改造奖励是不是也能申请？'],
+        ['00:03:40', '赵倩', '有新建和升级改造奖励，最高五十万，需要验收材料。注意每年最多申请两个奖励项目。'],
+        ['00:04:55', '周涛', '我们墨香书咖今年四月才开，没有满一年，是不是就不行了？'],
+        ['00:05:30', '赵倩', '成本奖励要求经营满一年，你们明年四月以后可以再看。许可证要尽快办下来。'],
+        ['00:07:12', '李阳', '这个情况记一下，新开书店的诉求比较集中，会后王敏整理一个新开书店的政策告知口径。'],
+        ['00:08:40', '王敏', '好的，我这周五前整理好，发给三家企业。'],
+        ['00:10:15', '张伟', '还有一个是我们想办读书节，希望能用经开区的公共场地。'],
+        ['00:11:02', '李阳', '场地这个[听不清]……可以对接一下文化园，刘翔负责协调，下周给企业回复。'],
+        ['00:13:30', '刘芳', '我们还想了解数据券，书店的会员数据分析能不能用？'],
+        ['00:14:05', '赵倩', '数据券是针对通过合规交易平台采购数据产品的，今年批次十一月六号已经截止了，后续批次我们会通知。'],
+        ['00:16:48', '李阳', '那总结一下：第一，政策兑现科在批次通知发布后第一时间通知书店企业；第二，王敏周五前出新开书店告知口径；第三，刘翔对接文化园场地，下周回复；第四，下次座谈会放在明年一季度。'],
+        ['00:18:20', '张伟', '谢谢领导，我们会后把房租合同先准备好。'],
+      ],
+      topics: [
+        { t: '实体书店房租补贴', bg: '房租上涨至 48 万/年', views: ['企业：希望尽快申报', '政策兑现科：政策有效，批次通知未发布'], decision: '通知发布后第一时间告知书店企业', refs: ['00:01:05', '00:02:20'] },
+        { t: '升级改造奖励', bg: '云栖阅读改造投入约 60 万', views: ['可申请新建/改造奖励，最高 50 万，需验收材料', '每年最多申请两个奖励项目'], decision: '企业自行准备验收材料', refs: ['00:03:02', '00:03:40'] },
+        { t: '新开书店诉求', bg: '墨香书咖经营未满一年', views: ['成本奖励要求经营满一年'], decision: '整理新开书店政策告知口径', refs: ['00:04:55', '00:07:12'] },
+        { t: '公共场地使用', bg: '读书节场地需求', views: ['对接文化园'], decision: '刘翔协调，下周回复', refs: ['00:10:15', '00:11:02'] },
+      ],
+      todos: [
+        { id: 'TD-1', task: '书店成本奖励批次通知发布后通知书店企业', owner: '赵倩', due: '通知发布后 3 个工作日内', deliverable: '电话 + 书面通知', ref: '00:16:48', status: '待认领', certain: true },
+        { id: 'TD-2', task: '整理新开书店政策告知口径并发三家企业', owner: '王敏', due: '2026-11-14（周五）', deliverable: '告知口径文档', ref: '00:08:40', status: '待认领', certain: true },
+        { id: 'TD-3', task: '对接文化园读书节场地', owner: '刘翔', due: '2026-11-19', deliverable: '回复企业', ref: '00:11:02', status: '待认领', certain: true },
+        { id: 'TD-4', task: '准备 2027 年一季度文化企业座谈会', owner: '待确认', due: '待确认', deliverable: '会议通知', ref: '00:16:48', status: '待认领', certain: false },
+      ] },
+    { id: 'MT-1110', title: '产业促进局局务会（第 41 次）', type: '局务会', date: '2026-11-10 09:00', duration: '1:12:05', place: '局 5 层会议室', host: '李阳', participants: ['李阳', '郑丽', '王敏', '孙婷', '吴强', '周静'], file: '2026-11-10 局务会.mp3', size: '66.1 MB', status: 'new', source: 'NAS · 会议档案/待转写', scope: '仅局方' },
+    { id: 'MT-1106', title: 'AI 原生企业政策推进会', type: '专题推进会', date: '2026-11-06 15:30', duration: '55:40', place: '亦智大厦 8 层', host: '吴强', participants: ['吴强', '王敏', '星河智驾', '灵犀大模型', '知行应用'], file: '2026-11-06 AI政策推进会.m4a', size: '51.3 MB', status: 'new', source: '网页上传' },
+  ];
+  // 为未转写的会议准备“转写完成后”的结果（模拟长任务产物）
+  D.meetingResults = {
+    'MT-1110': {
+      transcript: [
+        ['00:00:20', '李阳', '开会。今天三个议题：四季度企业服务、数据券批次总结、共享智能体工作站试点。'],
+        ['00:03:10', '郑丽', '数据券今年批次十一月六号截止，共受理 47 家，金额约 2100 万，已转评审。'],
+        ['00:06:45', '王敏', '企业服务这边，十月走访 62 家，登记诉求 38 件，办结 29 件。'],
+        ['00:09:30', '李阳', '诉求办结率要再提一提，未办结的九件下周五前给出明确时间表。'],
+        ['00:15:02', '孙婷', '工作站试点准备在本月底给工作组开账号，先上政策咨询和会议记录。'],
+        ['00:18:40', '李阳', '同意。孙婷牵头，月底前完成试点账号开通和培训。'],
+        ['00:22:15', '吴强', 'AI 原生人才政策的申报指南还在起草，预计十二月中旬征求意见。'],
+        ['00:25:30', '李阳', '指南征求意见稿出来后发局务会审议。散会。'],
+      ],
+      topics: [
+        { t: '数据券批次总结', bg: '11 月 6 日截止', views: ['受理 47 家，约 2100 万元，已转评审'], decision: '按程序评审', refs: ['00:03:10'] },
+        { t: '企业服务', bg: '10 月走访 62 家，诉求 38 件，办结 29 件', views: ['办结率需提升'], decision: '未办结 9 件下周五前给出时间表', refs: ['00:06:45', '00:09:30'] },
+        { t: '工作站试点', bg: '本月底开账号', views: ['先上政策咨询、会议记录'], decision: '孙婷牵头月底前完成开通与培训', refs: ['00:15:02', '00:18:40'] },
+        { t: 'AI 原生人才政策指南', bg: '起草中', views: ['12 月中旬征求意见'], decision: '征求意见稿报局务会审议', refs: ['00:22:15', '00:25:30'] },
+      ],
+      todos: [
+        { id: 'TD-11', task: '9 件未办结诉求给出明确时间表', owner: '王敏', due: '2026-11-20', deliverable: '时间表', ref: '00:09:30', status: '待认领', certain: true },
+        { id: 'TD-12', task: '工作站试点账号开通与培训', owner: '孙婷', due: '2026-11-30', deliverable: '账号清单 + 培训记录', ref: '00:18:40', status: '待认领', certain: true },
+        { id: 'TD-13', task: 'AI 原生人才政策申报指南征求意见稿', owner: '吴强', due: '2026-12 中旬', deliverable: '征求意见稿', ref: '00:22:15', status: '待认领', certain: true },
+      ] },
+    'MT-1106': {
+      transcript: [
+        ['00:00:15', '吴强', '今天请三家 AI 企业来，主要了解算力券、备案奖励的诉求。'],
+        ['00:02:40', '灵犀大模型', '我们已经完成备案，算力今年采购两千二百万，最关心算力券能不能年内兑现。'],
+        ['00:05:10', '吴强', '算力券按十一月版政策，三成支持，要经过评审认定，指南在走流程。'],
+        ['00:08:30', '星河智驾', '我们的路测数据想做成数据集开放，有没有支持？'],
+        ['00:09:45', '王敏', '数据产业政策第九项有高质量数据集建设支持，最高三百万，需要评审。'],
+        ['00:14:20', '知行应用', '我们是小团队，想了解场景示范项目怎么报。'],
+        ['00:16:00', '吴强', '会后王敏把三家的诉求登记到企业台账，场景示范我们[听不清]下个月发征集通知。'],
+      ],
+      topics: [
+        { t: '算力券兑现', bg: '灵犀采购约 2200 万', views: ['11 月版 30%，需评审认定'], decision: '跟进指南进度', refs: ['00:02:40', '00:05:10'] },
+        { t: '数据集建设支持', bg: '星河智驾路测数据', views: ['可对照 PI-02'], decision: '企业准备方案', refs: ['00:08:30', '00:09:45'] },
+        { t: '场景示范', bg: '知行应用', views: ['下月发征集通知'], decision: '发布征集通知', refs: ['00:14:20', '00:16:00'] },
+      ],
+      todos: [
+        { id: 'TD-21', task: '三家企业诉求登记到企业台账', owner: '王敏', due: '2026-11-13', deliverable: '台账事项', ref: '00:16:00', status: '待认领', certain: true },
+        { id: 'TD-22', task: '起草 AI 场景示范项目征集通知', owner: '待确认', due: '2026-12', deliverable: '征集通知', ref: '00:16:00', status: '待认领', certain: false },
+      ] },
+  };
+  D.meetingTemplates = [
+    { id: 'zuotan', name: '企业座谈会', sections: ['会议概况', '企业反映的问题', '部门答复', '议定事项', '后续安排'] },
+    { id: 'juwu', name: '局务会', sections: ['会议概况', '议题及决定', '责任分工', '下次会议'] },
+    { id: 'tuijin', name: '专题推进会', sections: ['会议概况', '推进情况', '存在问题', '下一步工作'] },
+  ];
+  D.hotwords = ['书香里', '云栖阅读', '墨香书咖', '数据券', '算力券', '经开区', '亦庄', '政策兑现科', '星河智驾', '灵犀大模型'];
+
+  /* ---------- 公文场景模板（10 类，经开区公开原文为样本） ---------- */
+  D.docTemplates = [
+    { id: 'T01', group: 'A', groupName: '发布政策与安排', name: '政策措施印发通知', purpose: '将已形成的政策措施印发给相关机构', inputs: [['title', '政策名称', '关于支持人工智能原生人才发展的若干措施'], ['target', '印发对象', '各部门、各街道、各有关单位'], ['effect', '生效日期', '2026-12-01']], kind: '通知' },
+    { id: 'T02', group: 'A', groupName: '发布政策与安排', name: '工作方案印发通知', purpose: '把实施方案发给执行单位', inputs: [['title', '方案名称', '共享智能体工作站试点工作方案'], ['target', '印发对象', '局属各处室'], ['lead', '牵头部门', '综合科']], kind: '通知' },
+    { id: 'T03', group: 'B', groupName: '面向企业组织事项', name: '奖励申报通知', purpose: '某项政策进入申报期，告知企业如何申报', inputs: [['policy', '政策依据', 'PI-03'], ['start', '申报开始', '2026-12-01'], ['end', '申报截止', '2026-12-31'], ['contact', '咨询电话', '010-6788XXXX']], kind: '通知' },
+    { id: 'T04', group: 'B', groupName: '面向企业组织事项', name: '项目公开征集通知', purpose: '向企业征集项目、课题或方案', inputs: [['title', '征集方向', 'AI 场景应用示范项目'], ['end', '截止时间', '2026-12-20'], ['support', '支持方式', '按投入 30%，最高 500 万元']], kind: '通知' },
+    { id: 'T05', group: 'B', groupName: '面向企业组织事项', name: '项目榜单发布通知', purpose: '发布可揭榜的项目清单', inputs: [['batch', '榜单批次', '第四批'], ['count', '项目数量', '12']], kind: '通知' },
+    { id: 'T06', group: 'B', groupName: '面向企业组织事项', name: '申报期限调整通知', purpose: '已发布事项需要延长或变更时间', inputs: [['orig', '原通知名称', '关于开展 2026 年数据券申报工作的通知'], ['oldEnd', '原截止时间', '2026-11-02'], ['newEnd', '新截止时间', '2026-11-06'], ['reason', '调整原因', '部分企业交易凭证开具延迟']], kind: '通知' },
+    { id: 'T07', group: 'B', groupName: '面向企业组织事项', name: '企业经营情况调查通知', purpose: '要求企业按口径和期限填报经营数据', inputs: [['period', '统计期间', '2026 年 1—10 月'], ['end', '填报截止', '2026-11-28']], kind: '通知' },
+    { id: 'T08', group: 'C', groupName: '公开结果与回应', name: '拟推荐结果公示', purpose: '最终确定前公开候选名单', inputs: [['title', '公示事项', '2026 年度接诉即办先进单位'], ['days', '公示期（工作日）', '5'], ['list', '拟推荐名单', '书香里文化、星河智驾、天工机器人']], kind: '公示' },
+    { id: 'T09', group: 'C', groupName: '公开结果与回应', name: '行政许可事项公示', purpose: '许可事项依法公示', inputs: [['item', '许可事项', '互联网上网服务营业场所筹建'], ['applicant', '申请主体', '北京亦城网咖有限公司']], kind: '公示' },
+    { id: 'T10', group: 'C', groupName: '公开结果与回应', name: '企业诉求答复意见', purpose: '回应企业诉求，说明研究、办理和后续安排', inputs: [['ent', '企业', 'E001'], ['issue', '诉求内容', '咨询实体书店房租补贴申报时间'], ['policy', '政策依据', 'PI-03']], kind: '函' },
+  ];
+  D.documents = [
+    { id: 'DOC-1108', title: '关于数据券补贴申报延期的通知', templateId: 'T06', status: '已定稿', author: '孙婷', updated: '2026-11-03', versions: 3 },
+    { id: 'DOC-1112', title: '关于对书香里文化房租补贴诉求的答复意见', templateId: 'T10', status: '审签中', author: '王敏', updated: '2026-11-13', versions: 2 },
+    { id: 'DOC-1115', title: '共享智能体工作站试点工作方案（征求意见稿）', templateId: 'T02', status: '草稿', author: '孙婷', updated: '2026-11-15', versions: 1 },
+  ];
+
+  /* ---------- 共享 NAS 资料库（四个库） ---------- */
+  D.libraries = [
+    { id: 'policy', name: '政策法规库', icon: '政', nas: '/NAS/工作站/01-政策法规', count: 128 },
+    { id: 'enterprise', name: '企业台账库', icon: '企', nas: '/NAS/工作站/02-企业台账', count: 412 },
+    { id: 'meeting', name: '会议档案库', icon: '会', nas: '/NAS/工作站/03-会议档案', count: 86 },
+    { id: 'document', name: '公文范本库', icon: '文', nas: '/NAS/工作站/04-公文范本', count: 203 },
+  ];
+  const F = (id, lib, name, size, updated, cited, tags, status, extra) => Object.assign({ id, lib, name, size, updated, cited, tags, status: status || '已入库', version: 'v1' }, extra || {});
+  D.files = [
+    F('F001', 'policy', '京技管发〔2025〕16号 加快推进数据产业高质量发展的若干措施.pdf', '1.2 MB', '2026-11-13', 86, ['数据', '现行'], '已入库', { version: 'v2', snippet: '按照年度数据交易金额的10%给予支持，单个主体年度支持金额最高不超过100万元。' }),
+    F('F002', 'policy', '京技管〔2021〕161号 实体书店扶持暂行管理办法.pdf', '860 KB', '2026-11-13', 74, ['书店', '现行'], '已入库', { snippet: '按照其实际支付房租或物业费的50%给予成本奖励，每店每年最高不超过20万元。' }),
+    F('F003', 'policy', '京技管发〔2023〕17号 促进商业领域发展若干措施.pdf', '1.6 MB', '2026-11-12', 41, ['商业', '已到期'], '已入库', { snippet: '按照审定实际投资额的5%给予支持，单个项目最高500万元。' }),
+    F('F004', 'policy', '京技管发〔2024〕29号 AI原生产业创新高地政策（11月版）.pdf', '2.1 MB', '2026-11-12', 63, ['AI', '现行'], '已入库', { snippet: '经评审认定后，按照智能算力采购费用的30%给予支持。' }),
+    F('F005', 'policy', '京技管发〔2024〕10号 AI原生产业创新高地政策（3月版）.pdf', '2.0 MB', '2026-11-12', 12, ['AI', '已失效'], '来源已修订', { snippet: '算力采购费用按30%或40%给予支持（已被11月版替代）。' }),
+    F('F006', 'policy', '京技管发〔2026〕12号 支持人工智能原生人才发展的若干措施.pdf', '980 KB', '2026-11-13', 38, ['人才', '现行'], '已入库', { snippet: '对人工智能原生创业者，给予个人最高50万元奖励。' }),
+    F('F007', 'policy', '关于开展2026年数据券申报工作的通知.pdf', '420 KB', '2026-10-12', 29, ['数据券', '批次'], '已入库', { snippet: '申报时间：2026年10月12日至11月2日。' }),
+    F('F008', 'policy', '关于数据券申报延期的通知.pdf', '210 KB', '2026-11-03', 22, ['数据券', '批次'], '已入库', { snippet: '申报截止时间延长至2026年11月6日。' }),
+    F('F009', 'policy', '政策兑现内部问答 FAQ（2026版）.docx', '156 KB', '2026-11-01', 57, ['FAQ'], '已入库', { snippet: '问：新开书店能否申请房租补贴？答：需经营满一年。' }),
+    F('F010', 'enterprise', '重点企业台账 2026Q3.xlsx', '3.4 MB', '2026-10-15', 120, ['台账'], '已入库', { snippet: '共 412 家，字段 46 列。' }),
+    F('F011', 'enterprise', '书香里文化-营业执照.pdf', '1.1 MB', '2026-03-02', 4, ['E001'], '已入库'),
+    F('F012', 'enterprise', '书香里文化-出版物经营许可证.jpg', '640 KB', '2026-03-02', 6, ['E001'], '已入库'),
+    F('F013', 'enterprise', '星河智驾-走访记录-20261003.docx', '48 KB', '2026-10-03', 3, ['E002', '走访'], '已入库'),
+    F('F014', 'enterprise', '灵犀大模型-备案证明.pdf', '320 KB', '2026-09-20', 5, ['E005'], '已入库'),
+    F('F015', 'meeting', '2026-11-12 文化企业座谈会.m4a', '38.6 MB', '2026-11-12', 2, ['座谈会'], '已转写'),
+    F('F016', 'meeting', '2026-11-10 局务会.mp3', '66.1 MB', '2026-11-10', 0, ['局务会'], '待转写'),
+    F('F017', 'meeting', '2026-10-28 第四季度经济运行调度会纪要.docx', '62 KB', '2026-10-29', 9, ['纪要'], '已入库'),
+    F('F018', 'document', '公文范本-奖励申报通知（建筑业资质晋升）.docx', '38 KB', '2026-10-01', 31, ['T03'], '已入库', { snippet: '为贯彻落实……现将有关事项通知如下：一、申报对象……' }),
+    F('F019', 'document', '公文范本-申报期限调整通知（数据券）.docx', '22 KB', '2026-11-03', 18, ['T06'], '已入库'),
+    F('F020', 'document', '公文范本-拟推荐结果公示.docx', '25 KB', '2026-09-15', 12, ['T08'], '已入库'),
+    F('F021', 'document', '党政机关公文处理工作条例.pdf', '310 KB', '2026-01-05', 44, ['规范'], '已入库', { snippet: '函适用于不相隶属机关之间商洽工作、询问和答复问题。' }),
+    F('F022', 'document', '经开区公文格式规范（局内）.pdf', '520 KB', '2026-06-01', 27, ['规范'], '已入库'),
+  ];
+
+  /* ---------- 等我确认 / 消息 ---------- */
+  D.inbox = [
+    { id: 'R-01', type: 'todo', app: 'meeting', title: '确认座谈会纪要中的 4 条待办', meta: '会议记录 · 文化企业座谈会', ref: 'MT-1112', status: 'pending' },
+    { id: 'R-02', type: 'proposal', app: 'enterprise', title: '核对书香里文化的台账更新建议（3 处）', meta: '企业管理维护 · 来自 11-05 走访记录', ref: 'E001', status: 'pending' },
+    { id: 'R-03', type: 'review', app: 'document', title: '审签：关于对书香里文化房租补贴诉求的答复意见', meta: '公文协作 · 王敏提交 · 第 2 版', ref: 'DOC-1112', status: 'pending', approver: true },
+    { id: 'R-04', type: 'skill', app: 'skills', title: '技能上架申请：企业诉求答复口径', meta: '技能中心 · 赵倩 · 附 3 条效果样例', ref: 'sk-suqiu', status: 'pending', approver: true },
+  ];
+  D.feed = [
+    ['25 分钟前', '刘翔 复制改编了「走访随记转台账」'], ['1 小时前', '孙婷 发布「政策新旧版本对比」v1.0.3'], ['今天 08:15', 'NAS 同步 12 份资料到「政策法规库」'], ['昨天', '「京技管发〔2024〕10号」被新版替代，3 条历史答复已标记“来源已修订”'],
+  ];
+  D.audit = [
+    ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', 'DeepSeek-V4.1-Flash'], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', 'Qwen3-32B（本地）'],
+    ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', 'Qwen4-Max'], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
+    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', 'GLM-5.3'], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', 'SenseVoice（本地）'],
+  ];
+  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [['DeepSeek-V4.1-Flash', 34], ['Qwen3-32B（本地）', 27], ['Qwen4-Max', 18], ['GLM-5.3', 9], ['Kimi K3.1 Pro', 7], ['其他', 5]] };
+
+  /* ---------- 对话历史 ---------- */
+  D.conversations = [
+    { id: 'C-301', title: '书香里文化能申请哪些支持', app: 'policy', updated: '今天 09:12' },
+    { id: 'C-298', title: '星河智驾走访前摘要', app: 'enterprise', updated: '今天 08:40' },
+    { id: 'C-290', title: '座谈会纪要整理', app: 'meeting', updated: '昨天' },
+    { id: 'C-285', title: '数据券延期通知起草', app: 'document', updated: '11-03' },
+    { id: 'C-280', title: '帮我解释一下“三个时间”', app: null, updated: '11-02' },
+  ];
+
+  window.JK_DATA = D;
+})();

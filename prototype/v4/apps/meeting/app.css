@@ -1,0 +1,188 @@
+/* ==== 应用通用框架 2.0（multica 风格；由 apps/_shared/frame.css.tpl 生成，改模板后运行 node apps/_shared/build-css.js） ==== */
+/* .app-meeting 本身不加样式：抽屉/弹窗里也会复用 .app-<id> 前缀。.ap 是容器（container: ap），窄面板（对话分栏）下自动收紧 */
+.app-meeting .ap{max-width:880px;margin:0 auto;padding:var(--s6) clamp(16px,4.5%,40px) 0;min-height:100%;display:flex;flex-direction:column;container:ap/inline-size}
+.app-meeting .ap-h{display:flex;align-items:center;gap:var(--s3);min-height:40px}
+.app-meeting .ap-h h2{font-size:var(--fs-xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);line-height:1.25}
+.app-meeting .ap-sum{font-size:var(--fs-sm);color:var(--text-3);margin-top:2px;line-height:1.4}
+.app-meeting .ap-tabs{margin:var(--s4) 0 var(--s6)}
+.app-meeting .ap-body{flex:1;display:flex;flex-direction:column;min-width:0}
+.app-meeting .wiz-steps{margin-bottom:var(--s6)}
+.app-meeting .wiz-step[data-step]{cursor:pointer}
+.app-meeting .wiz-step[data-step]:hover{color:var(--text)}
+.app-meeting .wiz-body{max-width:none;min-width:0}
+.app-meeting .wiz-foot{margin-top:auto;padding-top:var(--s3);padding-bottom:var(--s4)}
+.app-meeting .wiz-body{padding-bottom:var(--s6)}
+.app-meeting .q{font-size:var(--fs-lg);font-weight:var(--fw-b);letter-spacing:var(--track-tight);line-height:1.35;margin-bottom:4px}
+.app-meeting .q-sub{font-size:var(--fs-sm);color:var(--text-3);margin-bottom:var(--s5);line-height:1.5}
+.app-meeting .stack{display:flex;flex-direction:column;gap:var(--s4)}
+.app-meeting.stack{display:flex;flex-direction:column;gap:var(--s5)}
+.app-meeting.stack .sec{margin:0 0 var(--s2)}
+.app-meeting.stack>div>.meta:first-child{margin-bottom:2px}
+.app-meeting .meta{font-size:var(--fs-xs);color:var(--text-3);line-height:1.5}
+.app-meeting .big{font-size:var(--fs-2xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);font-variant-numeric:tabular-nums;line-height:1.1}
+/* 指标卡：数字黑色，颜色只在标签前的小圆点 */
+.app-meeting .kpis{display:grid;grid-template-columns:repeat(var(--n,3),minmax(0,1fr));gap:var(--s3)}
+.app-meeting .kpi-c{display:flex;flex-direction:column;gap:6px;padding:var(--s4);border:1px solid var(--border-strong);border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow-1);cursor:pointer;text-align:left;font:inherit;color:inherit;transition:border-color var(--dur),background var(--dur)}
+.app-meeting .kpi-c:hover{border-color:var(--border-hover)}
+.app-meeting .kpi-c .v{font-size:var(--fs-2xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);color:var(--text);font-variant-numeric:tabular-nums;line-height:1}
+.app-meeting .kpi-c .l{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--text-2);line-height:1.3}
+.app-meeting .kpi-c .l::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tf,var(--text-3));flex:none}
+.app-meeting .kpi-c.on{border-color:var(--accent-line);box-shadow:0 0 0 1px var(--accent-line)}
+.app-meeting .pick{position:relative}
+.app-meeting .dd{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:20;padding:4px;border-radius:var(--r-lg);background:var(--surface-3);border:1px solid var(--border);box-shadow:var(--shadow-menu);max-height:340px;overflow:auto}
+.app-meeting .dd .mi{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 10px;border-radius:6px;cursor:pointer}
+.app-meeting .dd .mi:hover,.app-meeting .dd .mi.on{background:var(--hover)}
+/* 首字母头像：白底细边，字用类别色 */
+.app-meeting .ini{width:32px;height:32px;border-radius:var(--r-md);display:grid;place-items:center;font-weight:var(--fw-b);font-size:var(--fs-sm);flex:none;background:var(--surface);color:var(--tf,var(--text-2));border:1px solid var(--border-strong);box-shadow:var(--shadow-1)}
+.app-meeting .ini .ico{width:16px;height:16px}
+.app-meeting .ini.lg{width:40px;height:40px;font-size:var(--fs-lg);border-radius:var(--r-lg)}
+.app-meeting .ini.sm{width:24px;height:24px;font-size:11px;border-radius:50%;box-shadow:none}
+.app-meeting .chips{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.app-meeting .chip-btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-md);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2);font-size:var(--fs-sm);cursor:pointer;box-shadow:var(--shadow-1);white-space:nowrap;transition:border-color var(--dur),background var(--dur)}
+.app-meeting .chip-btn:hover{border-color:var(--border-hover);color:var(--text)}
+.app-meeting .chip-btn.on{background:var(--active);border-color:var(--border-hover);color:var(--text);font-weight:var(--fw-m);box-shadow:none}
+.app-meeting .ck{width:18px;height:18px;border-radius:50%;display:inline-grid;place-items:center;flex:none;font-size:11px;font-weight:var(--fw-b);background:var(--tg);color:var(--tf);border:1px solid var(--tb)}
+.app-meeting .ck-row{display:flex;align-items:flex-start;gap:10px;padding:5px 0;font-size:var(--fs-sm);line-height:1.5}
+.app-meeting .ck-row .ck{margin-top:1px}
+.app-meeting .times{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s2)}
+.app-meeting .times>div{padding:var(--s2) var(--s3);border-radius:var(--r-md);background:var(--canvas);border:1px solid var(--border);font-size:var(--fs-sm)}
+.app-meeting .times b{display:block;font-size:var(--fs-xs);color:var(--text-3);font-weight:var(--fw-m)}
+.app-meeting .fold{border-top:1px solid var(--border);margin-top:var(--s3);padding-top:var(--s3)}
+.app-meeting .link{color:var(--accent);cursor:pointer;font-size:var(--fs-sm);background:none;border:0;padding:0;display:inline-flex;align-items:center;gap:4px}
+.app-meeting .link:hover{text-decoration:underline;text-underline-offset:2px}
+.app-meeting .link .ico{width:13px;height:13px}
+.app-meeting .quote{padding:var(--s3) var(--s4);border-left:2px solid var(--border-hover);background:var(--canvas);border-radius:0 var(--r-md) var(--r-md) 0;font-size:var(--fs-sm);line-height:1.8;color:var(--text)}
+.app-meeting .lock-note{display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--text-2)}
+.app-meeting .err-box{padding:var(--s6);text-align:center;color:var(--text-2)}
+.app-meeting .skel-list{display:flex;flex-direction:column;gap:var(--s3)}
+.app-meeting .skel-list .skel{height:60px;border-radius:var(--r-lg)}
+.app-meeting .sec{display:flex;align-items:center;gap:var(--s2);font-size:var(--fs-xs);font-weight:var(--fw-m);color:var(--text-3);margin:var(--s6) 0 var(--s2);line-height:20px}
+.app-meeting .row-click{cursor:pointer}
+.app-meeting .num{font-variant-numeric:tabular-nums}
+.app-meeting .muted-tag{color:var(--text-3)}
+.app-meeting .cb{width:15px;height:15px;accent-color:var(--primary);flex:none;cursor:pointer}
+.app-meeting tr.click{cursor:pointer}
+/* 窄面板（对话分栏 ≤ 640px）：向导只显示当前步文字，指标卡收紧 */
+@container ap (max-width:640px){
+  .app-meeting .wiz-step:not(.on){font-size:0;gap:0}
+  .app-meeting .wiz-step:not(.on) .n{font-size:11px}
+  .app-meeting .kpis{gap:var(--s2)}
+  .app-meeting .kpi-c{padding:var(--s3)}
+  .app-meeting .kpi-c .v{font-size:var(--fs-xl)}
+  .app-meeting .times{grid-template-columns:1fr}
+}
+
+/* 列表两行：标题 .t + 元信息 .s */
+.app-meeting .li .t{font-size:var(--fs-md);font-weight:var(--fw-m);color:var(--text);line-height:1.45;min-width:0}
+.app-meeting .li .s{font-size:var(--fs-xs);color:var(--text-3);line-height:1.5;margin-top:1px;min-width:0}
+.app-meeting .li .s .link{font-size:inherit}
+
+/* ==== 2.2 multica 对齐：分组标题条、卡片列表改发丝线行、字重 ≤500 ==== */
+.app-meeting .q{font-weight:var(--fw-m)}
+.app-meeting .kpi-c .v{font-weight:var(--fw-n)}
+.app-meeting .kpi-c.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.app-meeting .ini{font-weight:var(--fw-m)}
+.app-meeting .ck{font-weight:var(--fw-m)}
+.app-meeting .chip-btn{border-radius:var(--r-pill)}
+.app-meeting .sec{height:32px;margin:var(--s5) 0 var(--s1);padding:0 var(--s3);border-radius:var(--r-md);background:var(--fill);color:var(--text-2);font-size:var(--fs-sm)}
+
+/* ==== 以下为本应用专属样式 ==== */
+.app-meeting .mt-local{gap:4px}
+.app-meeting .mt-local .ico{width:12px;height:12px}
+.app-meeting .mt-drop{display:flex;align-items:center;gap:var(--s4);padding:var(--s8) var(--s6);border:1px dashed var(--border-hover);border-radius:var(--r-lg);background:var(--canvas);color:var(--text-2);cursor:pointer;transition:border-color var(--dur),background var(--dur)}
+.app-meeting .mt-drop:hover,.app-meeting .mt-drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--text)}
+.app-meeting .mt-drop b{color:var(--text);font-weight:var(--fw-m)}
+.app-meeting .mt-live{display:flex;flex-direction:column;align-items:center;gap:var(--s3);padding:var(--s8) var(--s5)}
+.app-meeting .mt-mic{width:72px;height:72px;border-radius:50%;border:1.5px solid var(--border-strong);background:var(--surface);color:var(--text-2);display:grid;place-items:center;cursor:pointer;transition:border-color var(--dur),color var(--dur),box-shadow var(--dur)}
+.app-meeting .mt-mic:hover{border-color:var(--border-hover);color:var(--text)}
+.app-meeting .mt-live.on .mt-mic{border-color:var(--danger);color:var(--danger);box-shadow:0 0 0 4px color-mix(in srgb,var(--danger) 12%,transparent);background:var(--surface)}
+.app-meeting .mt-wave{display:flex;align-items:center;gap:2px;height:44px;width:100%;overflow:hidden}
+.app-meeting .mt-wave i{flex:1;min-width:1px;border-radius:2px;background:var(--text-3);opacity:.7}
+.app-meeting .mt-wave.sm{height:32px;max-width:320px}
+.app-meeting .mt-wave.xs{height:28px}
+.app-meeting .mt-wave.live i{background:var(--accent);opacity:.55;animation:mtw 1.1s ease-in-out infinite alternate}
+.app-meeting .mt-wave.live i:nth-child(3n){animation-delay:.2s}.app-meeting .mt-wave.live i:nth-child(3n+1){animation-delay:.45s}
+@keyframes mtw{from{transform:scaleY(.5)}to{transform:scaleY(1)}}
+.app-meeting .mt-tpls{margin-bottom:var(--s4)}
+.app-meeting .mt-tpl{width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;background:var(--surface)}
+.app-meeting .rows>.mt-tpl{margin:0;align-self:stretch;width:100%;border-radius:0}
+.app-meeting .mt-tpl .meta{margin-top:4px;line-height:1.5}
+.app-meeting .rows>.mt-tpl:hover{background:var(--hover)}
+.app-meeting .mt-steps{margin-top:var(--s4);display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--s2)}
+.app-meeting .mt-st{display:flex;flex-direction:column;align-items:flex-start;gap:8px;font-size:var(--fs-sm);color:var(--text-3);padding:var(--s3);border:1px solid var(--border-strong);border-radius:var(--r-lg);background:var(--surface);min-width:0}
+.app-meeting .mt-st.on{color:var(--text);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.app-meeting .mt-st.done{color:var(--text-2)}
+.app-meeting .mt-si{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--border-strong);display:grid;place-items:center;flex:none}
+.app-meeting .mt-st.done .mt-si{background:var(--primary);border-color:var(--primary);color:var(--primary-fg)}
+.app-meeting .mt-si .ico{width:12px;height:12px}
+.app-meeting .mt-spin{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--accent);border-top-color:transparent;animation:spin .8s linear infinite}
+.app-meeting .mt-st.on .mt-si{border-color:var(--accent)}
+.app-meeting .mt-sl{line-height:1.4;min-width:0}
+.app-meeting .mt-stats{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s6);align-items:baseline;font-size:var(--fs-sm);color:var(--text-2)}
+.app-meeting .mt-stats>span{display:inline-flex;align-items:baseline;gap:6px}
+.app-meeting .mt-stats>span::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--text-3);flex:none;align-self:center}
+.app-meeting .mt-stats .num,.app-meeting .mt-stats b{font-size:var(--fs-xl);font-weight:var(--fw-n);color:var(--text);letter-spacing:var(--track-tight);font-variant-numeric:tabular-nums;line-height:1}
+.app-meeting .mt-stats .warn{color:var(--t-amber-fg)}
+.app-meeting .mt-stats .warn::before{background:var(--warn)}
+.app-meeting .mt-player{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) 0;position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--border)}
+.app-meeting .mt-seek{position:relative;cursor:pointer}
+.app-meeting .mt-seek .mt-wave i{opacity:.45;background:var(--text-3)}
+.app-meeting .mt-ph{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--accent);border-radius:1px;transition:left .25s linear}
+.app-meeting .mt-dot{width:8px;height:8px;border-radius:50%;background:var(--tf);display:inline-block;margin-right:6px}
+.app-meeting [data-spk]{display:inline-flex;align-items:center;gap:2px}
+.app-meeting [data-spk] .ico{width:12px;height:12px;opacity:.5}
+.app-meeting .mt-tr{display:flex;flex-direction:column;border:1px solid var(--border-strong);border-radius:var(--r-xl);background:var(--surface);overflow:hidden;margin-top:var(--s1)}
+.app-meeting .mt-line{display:flex;gap:var(--s3);padding:var(--s3) var(--s4);border-bottom:1px solid var(--border);border-radius:0;transition:background var(--dur)}
+.app-meeting .mt-line:last-child{border-bottom:0}
+.app-meeting .mt-line.on{background:var(--active)}
+.app-meeting .mt-line:hover{background:var(--hover)}
+.app-meeting .mt-line.flash{animation:mtf 1.4s ease}
+@keyframes mtf{0%,40%{box-shadow:inset 2px 0 0 var(--accent)}100%{box-shadow:none}}
+.app-meeting .mt-t{flex:none;width:48px;text-align:left;border:0;background:none;color:var(--text-3);font-size:var(--fs-sm);cursor:pointer;padding-top:2px}
+.app-meeting .mt-t:hover{color:var(--accent)}
+.app-meeting .ini.sm{width:24px;height:24px;font-size:var(--fs-xs);border-radius:50%}
+.app-meeting .mt-x{line-height:1.7;margin-top:2px}
+.app-meeting [data-edit]{cursor:text}
+.app-meeting .mt-unk{background:var(--t-amber-bg);color:var(--t-amber-fg);border:1px dashed var(--t-amber-bd);padding:0 6px;border-radius:4px;cursor:pointer}
+.app-meeting .mt-hw{border-bottom:1px dotted var(--tf,var(--accent))}
+.app-meeting .mt-todo{align-items:center;cursor:default}
+.app-meeting .rows>.mt-todo:hover{background:var(--hover)}
+.app-meeting .mt-todo.done .t{color:var(--text-2)}
+.app-meeting .rows>.mt-todo.miss{box-shadow:inset 2px 0 0 var(--warn);background:color-mix(in srgb,var(--warn) 6%,var(--surface))}
+.app-meeting .mt-own{width:96px;height:var(--ctl-h-sm);font-size:var(--fs-sm);flex:none}
+.app-meeting .mt-due{width:112px;flex:none}
+.app-meeting .warn{border-color:var(--t-amber-bd);color:var(--t-amber-fg)}
+.app-meeting .mt-warn{color:var(--warn)}
+.app-meeting .cb{width:16px;height:16px;accent-color:var(--primary);flex:none;cursor:pointer}
+.app-meeting .mt-paper{background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-xl);padding:var(--s6) var(--s8);margin-bottom:var(--s4)}
+.app-meeting .mt-paper h3{text-align:center;font-size:var(--fs-xl);font-weight:var(--fw-m);letter-spacing:var(--track-tight);margin-bottom:var(--s3)}
+.app-meeting .mt-meta{color:var(--text-2);font-size:var(--fs-sm);text-align:center}
+.app-meeting .mt-sec{margin-top:var(--s5)}
+.app-meeting .mt-sec h4{font-size:var(--fs-sm);font-weight:var(--fw-m);margin-bottom:6px}
+.app-meeting .mt-sec p{line-height:1.85;color:var(--text);border-radius:var(--r-sm);padding:2px 4px;margin:0 -4px}
+.app-meeting .mt-sec p[data-mp]{cursor:text}
+.app-meeting .mt-sec p[data-mp]:hover{background:var(--hover)}
+.app-meeting .mt-refs{display:flex;gap:6px;margin-top:6px}
+.app-meeting .mt-ref{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 8px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:var(--fs-xs);cursor:pointer}
+.app-meeting .mt-ref .ico{width:10px;height:10px}
+.app-meeting .mt-ref:hover{border-color:var(--accent);color:var(--accent)}
+.app-meeting .mt-search{position:relative}
+.app-meeting .mt-search>.ico{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+.app-meeting .mt-search .input{padding-left:32px}
+.app-meeting .mt-tblw{padding:0;overflow:hidden}
+.app-meeting tr.click{cursor:pointer}
+.app-meeting .rows>.card.li,.app-meeting .rows>.card.mt-tpl{padding:10px 14px}
+.app-meeting .rows>.card.li:hover{background:var(--hover)}
+.app-meeting .mt-player .grow{min-width:0}
+.app-meeting .mt-player .mt-wave.xs{gap:1px}
+.app-meeting #mpt{flex:none;white-space:nowrap}
+@container ap (max-width:640px){
+  .app-meeting .mt-steps{grid-template-columns:minmax(0,1fr)}
+  .app-meeting .mt-st{flex-direction:row;align-items:center}
+  .app-meeting .mt-paper{padding:var(--s5)}
+  .app-meeting .mt-todo{flex-wrap:wrap;row-gap:var(--s2)}
+  .app-meeting .mt-todo>.grow{flex:1 1 calc(100% - 40px)}
+  .app-meeting .mt-todo>.mt-own,.app-meeting .mt-todo>.grow+.meta{margin-left:28px}
+  .app-meeting .mt-todo>.tag{margin-left:auto}
+  .app-meeting .mt-stats{gap:var(--s2) var(--s4)}
+}
