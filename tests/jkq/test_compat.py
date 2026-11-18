@@ -88,9 +88,9 @@ def test_admin_mapping_preserves_query_and_reaches_core(client):
     params = {"q": "测试管理员"}
     users = client.get("/api/v1/admin/users", params=params)
     assert users.status_code == 200
-    assert users.json() == client.get("/api/admin/users", params=params).json()
-    assert [user["username"] for user in users.json()["users"]] == ["test-admin"]
-    assert client.get("/api/v1/admin/users", params={"q": "无匹配"}).json() == {"users": []}
+    assert {"items", "roles", "departments"} <= set(users.json())
+    assert [user["username"] for user in users.json()["items"]] == ["test-admin"]
+    assert client.get("/api/v1/admin/users", params={"q": "无匹配"}).json()["items"] == []
 
 
 def test_kb_mapping_reaches_core(client):
@@ -136,10 +136,9 @@ def test_unmapped_routes_use_error_envelope(client, path):
     ("POST", "/api/v1/admin/departments"),
     ("DELETE", "/api/v1/admin/departments/example"),
 ])
-def test_unavailable_contract_routes_have_explicit_stub(client, method, path):
+def test_admin_department_routes_require_login(client, method, path):
     response = client.request(method, path)
-    assert_error(response, 404, "NOT_FOUND")
-    assert response.json()["error"]["message"] == "接口待接入"
+    assert_error(response, 401, "UNAUTHENTICATED")
 
 
 def test_wrong_method_preserves_allow_header(client):

@@ -25,6 +25,18 @@ curl --fail --show-error --output /dev/null --write-out '%{http_code}\n' https:/
 docker compose -f deploy/docker-compose.yml restart
 ```
 
+## 前端接口模式开关（演示兜底）
+
+容器内前端默认走同源真实接口（`http`）。截至 2026-11-19，真后端尚未覆盖一键演示用到的全部接口（政策、公文、知识库、技能、电脑操作等仍有 404），12 段演示只在 mock 下全部通过。演示环境在 deploy/.env 写入下面一行，重建 app 后前端保留浏览器内 mock，账号登录、健康检查和首管入口关闭不受影响：
+
+```sh
+JKQ_FRONTEND_API_MODE=mock
+docker compose -f deploy/docker-compose.yml up -d --force-recreate app
+curl -s https://<演示域名>/config/app.config.js | grep "api: {"
+```
+
+预期输出含 `mode: 'mock'`。mock 模式的业务数据存在各浏览器的 localStorage，不写 HAIKNOW_DATA_DIR，头像菜单「重置演示数据」只清本机浏览器。真后端接口补齐后，把该值改为 `http`（或删除该行）再重建 app，即回到同源真实会话。deploy/env.example 默认写 `mock`。
+
 ## 快照与重置
 
 首次用公开演示种子初始化实例，在四账号可登录且无活动任务时执行以下命令。snapshot 停应用后复制整个 data 目录（含 SQLite 辅助文件），随后启动；再次执行会替换基准。reset 停应用后从基准复制到同一文件系统的临时目录，交换目录并重建应用容器。重置丢弃基准之后的业务修改。Caddy 证书保存在独立命名卷。保留至少两份数据目录的空闲空间。
