@@ -22,9 +22,20 @@ def test_demo_fixture_contains_twelve_distinct_script_utterances():
     scripts = [prototype / "config/demo-script.js", *prototype.glob("apps/*/app.js"),
                prototype / "apps/kb/config.js"]
     source = "\n".join(path.read_text(encoding="utf-8") for path in scripts)
+    seed = json.loads((ROOT / "data/seed/demo.json").read_text(encoding="utf-8"))
+    for ent in seed["enterprises"]:
+        source = source.replace(f"${{seedShort('{ent['id']}')}}", ent["short"])
     texts = {item["text"] for item in DEMO}
     assert len(DEMO) == len(texts) == 12
-    assert all(f"'{text}'" in source for text in texts)
+    missing = [text for text in texts if f"'{text}'" not in source and f"`{text}`" not in source]
+    assert not missing
+
+
+def test_rules_accept_seed_short_and_full_names():
+    assert match_rule("书香里文化能申请哪些支持？") == ToolCall("policy.match", {"entId": "E001"})
+    assert match_rule("给书香里文化生成政策告知单") == ToolCall("policy.notice", {"entId": "E001"})
+    assert match_rule("查一下书香里") == ToolCall("enterprise.get", {"id": "E001"})
+    assert match_rule("查一下星河智驾") is None
 
 
 def test_rules_preserve_original_question_and_leave_general_chat_to_model():
