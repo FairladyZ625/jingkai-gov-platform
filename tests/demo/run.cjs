@@ -10,12 +10,12 @@ const checks = [
   ['政策兑现', '.pview.on #ps', '告知单已生成'],
   ['企业走访', '#chatcol .msgs', '高新技术企业共'],
   ['会议纪要', '#chatcol .msgs', '已派发 '],
-  ['公文协作', '.pview.on .dc-diff', '第 1 版 → 第 2 版'],
+  ['公文协作', '#chatcol .msgs', '第 1 版 → 第 2 版：新增'],
   ['知识库', '.pview.on', '未找到依据'],
   ['技能中心', '#chatcol .msgs', '已运行'],
   ['电脑操作', '#chatcol .msgs', '存进知识库'],
-  ['审签', 'body', '已通过'],
-  ['外部协作者', '.pview.on', '星河智驾'],
+  ['审签', '.toast', '已通过'],
+  ['外部协作者', '.pview.on', '外部协作者视图：联系人电话、营收已打码'],
   ['管理后台', '.pview.on [data-csv]', '导出'],
   ['浅色主题', 'html[data-theme="light"] .demo-caption', '深色、浅色'],
 ];
@@ -32,6 +32,7 @@ async function login(browser, width, theme, onError) {
   assert.equal(await page.evaluate(() => JK_CONFIG.api.mode), 'mock');
   await page.click('[data-u="wangmin"]');
   await page.locator('#btn-demo').waitFor();
+  assert.equal(await page.locator('html').getAttribute('data-theme'), theme);
   return page;
 }
 
@@ -53,6 +54,11 @@ async function walkthrough(browser, width, theme) {
     for (const [i, [, selector, key]] of checks.entries()) {
       current = i;
       const row = rows[i];
+      const name = [width, theme, String(i + 1).padStart(2, '0')].join('-');
+      // 若关键文字没有出现，保留本段入口截图，避免误用下一段画面。
+      if (await page.evaluate(i => JKDemo.state.on && JKDemo.state.i === i, i)) {
+        row.file = await shot(page, name);
+      }
       // 同时等待业务结果和段落结束。跳段、异常退出都不能替代业务结果。
       const match = await page.waitForFunction(({ i, selector, key }) => {
         const { on, i: active } = JKDemo.state;
@@ -61,7 +67,7 @@ async function walkthrough(browser, width, theme) {
           el.getClientRects().length && el.innerText.includes(key))) return '匹配';
       }, { i, selector, key }, { timeout: 90000 });
       if (await match.jsonValue() !== '匹配') row.errors.push('本段未出现「' + key + '」');
-      row.file = await shot(page, [width, theme, String(i + 1).padStart(2, '0')].join('-'));
+      else row.file = await shot(page, name);
       await page.waitForFunction(i => !JKDemo.state.on || JKDemo.state.i > i, i, { timeout: 90000 });
     }
     assert.equal(await page.evaluate(() => JKDemo.state.i), checks.length, '一键演示提前退出');
