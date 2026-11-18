@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成「开发计划」页的静态数据：prototype/v4/plan-data.json + plan-data.js
+"""生成「开发计划」页的静态数据：web/plan-data.json + plan-data.js
 
 数据来源：
   1. 本仓库 docs/plan/issues.json（任务、里程碑、验收标准、依赖、卫华复用点）
@@ -21,7 +21,7 @@ REPO = os.environ.get('PLAN_GH_REPO', 'FairladyZ625/jingkai-gov-platform')
 ROOT = Path(__file__).resolve().parent.parent
 GOV = ROOT
 DEFAULT_SRC = GOV / 'docs' / 'plan' / 'issues.json'
-OUT_DIR = Path(os.environ.get('PLAN_OUT_DIR', ROOT / 'prototype' / 'v4'))
+OUT_DIR = Path(os.environ.get('PLAN_OUT_DIR', ROOT / 'web'))
 HA_CWD = Path(os.environ.get('PLAN_HA_CWD', GOV))
 WORKER_CAP = int(os.environ.get('PLAN_WORKER_CAP', '8'))
 STALL_MIN = int(os.environ.get('PLAN_STALL_MIN', '60'))
