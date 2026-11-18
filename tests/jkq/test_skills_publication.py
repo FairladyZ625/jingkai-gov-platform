@@ -100,6 +100,7 @@ def test_review(api, reviewer, choice):
         assert not listed(api, user, path)
     assert listed(api, reviewer, path, "?review=true")
     assert not listed(api, "sampleextra", path, "?review=true")
+    error(call(api, "GET", "?review=true", "sampleoutsider"), 403, "FORBIDDEN")
     queue = api.get("/api/v1/reviews", headers={"x-test-user": reviewer}).json()["items"]
     assert [entry["id"] for entry in queue] == [review["id"]]
     error(call(api, "POST", path + "/review", "sampleextra", {"decision": choice}), 403, "FORBIDDEN")

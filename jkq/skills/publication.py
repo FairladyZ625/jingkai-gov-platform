@@ -143,6 +143,7 @@ class PublishedSkills(SkillCatalog):
     def list_items(self, user, *, mine, review):
         if not review:
             return super().list_items(user, mine=mine, review=False)
+        self.records.app(user, "skills")
         items = []
         for pending, doc in self.pending_reviews(user):
             item = self.view(user, doc, history=False)
