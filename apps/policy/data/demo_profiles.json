@@ -1,0 +1,30 @@
+{
+  "enterprises": [
+    {
+      "id": "E001",
+      "short": "书香里文化",
+      "subjectType": "企业",
+      "industry": "文化 · 实体书店",
+      "scale": "小微",
+      "tags": ["实体书店", "文化消费", "重点服务"],
+      "license": ["出版物经营许可证"],
+      "regInZone": true,
+      "yearsInZone": 5.6,
+      "employees": 28,
+      "amounts": {"rent": 420000, "area": 860}
+    },
+    {
+      "id": "E002",
+      "short": "星河智驾",
+      "subjectType": "企业",
+      "industry": "智能网联汽车",
+      "scale": "中型",
+      "tags": ["人工智能", "智能网联汽车", "重点服务", "高新技术"],
+      "license": ["高新技术企业", "专精特新"],
+      "regInZone": true,
+      "yearsInZone": 7.4,
+      "employees": 312,
+      "amounts": {"computePurchase": 6800000, "sceneInvest": 12000000, "dataPurchase": 2600000}
+    }
+  ]
+}
