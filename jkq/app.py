@@ -30,7 +30,7 @@ def install_platform(app: FastAPI) -> None:
     """安装需要包住 core 路由或挂平台存储的模块，每个模块一行。"""
     from haiknow_core.main import current_user  # 登录依赖只在这里指定
 
-    from . import admin, apps_bridge, jobs_api, reviews_api
+    from . import admin, apps_bridge, demo, jobs_api, reviews_api
     from .skills.storage import Skills
     from .conversations import routes as conversations
     from .kb import ask as kb_ask
@@ -55,6 +55,7 @@ def install_platform(app: FastAPI) -> None:
         ]
 
     apps_bridge.install(app, current_user, list_skills=list_skills, register_catalog=False)
+    demo.install(app)
     admin.install(app)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。

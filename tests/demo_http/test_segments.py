@@ -1,0 +1,104 @@
+"""按 demo-script.js 顺序验证 HTTP 动作；显示层走查由 #51 负责。"""
+
+import re
+import time
+from pathlib import Path
+
+import pytest
+
+httpx = pytest.importorskip("httpx")
+pytest.importorskip("fastapi")
+
+SCRIPT = Path(__file__).resolve().parents[2] / "prototype/v4/config/demo-script.js"
+TITLES = re.findall(r"\{ title: '([^']+)', steps:", SCRIPT.read_text(encoding="utf-8"))
+assert len(TITLES) == 12
+
+# 已知缺口只按具体段落登记，新增段落或改名均须更新对应动作。
+WAITING = {
+    "企业走访": "PR #116 走访建议与写入确认，Issue #42 四应用 HTTP",
+    "会议纪要": "PR #125 纪要和待办，Issue #42 四应用 HTTP",
+    "公文协作": "PR #111 版本比对、#112 送审、#126 操作员计划",
+    "技能中心": "PR #109 起草与 #118 分享",
+}
+
+
+def data(response):
+    response.raise_for_status()
+    return response.json()
+
+
+def login(c, username, password):
+    return data(c.post("/api/v1/auth/login", json={"username": username, "password": password}))
+
+
+@pytest.mark.parametrize("title", TITLES, ids=TITLES)
+def test_segment(server, title):
+    if title in WAITING:
+        pytest.skip(WAITING[title])
+    url, password = server
+    with httpx.Client(base_url=url, trust_env=False) as c:
+        me = login(c, "wangmin", password)
+        if title == "开场":
+            assert me["role"]["id"] == "member"
+            assert data(c.get("/api/v1/me"))["user"]["username"] == "wangmin"
+        elif title == "政策兑现":
+            chat = data(c.post("/api/v1/ai/chat", json={"messages": [
+                {"role": "user", "content": "帮我查一下示例企业能申报哪些政策"},
+            ]}))
+            assert "预置结果" in chat["content"] and "规则意图优先" in chat["routeNote"]
+            response = c.post("/api/apps/policy/match", json={"entId": "E001"})
+            if response.status_code == 404 and "/api/apps/policy/match" not in data(c.get("/openapi.json"))["paths"]:
+                pytest.skip("PR #127 挂载政策匹配路由")
+            assert data(response)["results"]
+        elif title == "知识库":
+            hits = data(c.post("/api/v1/kb/search", json={"q": "算力券 封顶", "space": "policy"}))["hits"]
+            assert hits
+            assert data(c.get("/api/v1/kb/docs/" + hits[0]["id"]))["item"]["id"] == hits[0]["id"]
+            missing = data(c.post("/api/v1/kb/ask", json={"q": "火星基地XYZ999"}))
+            assert missing["notFound"] and not missing["citations"]
+            pytest.skip("PR #132 网址导入尚待接入，#42 后补全完整知识库演示")
+        elif title == "电脑操作":
+            pytest.importorskip("playwright.async_api", reason="专用 HTTP job 安装 Chromium")
+            runs = "/api/apps/computer/runs"
+            run = data(c.post(runs, json={"task": "apply", "ent": "E001"}))["item"]
+            url = runs + "/" + run["id"]
+            for kind in ("otp", "submit"):
+                deadline = time.monotonic() + 20
+                while True:
+                    state = data(c.get(url))["item"]
+                    if state["status"] == "waiting" and state["pending"]["kind"] == kind:
+                        break
+                    assert state["status"] not in ("failed", "stopped", "done") and time.monotonic() < deadline
+                    time.sleep(0.1)
+                assert state["result"] is None
+                data(c.post(url + "/confirm", json={"kind": kind, "decision": "approve" if kind == "otp" else "decline"}))
+            assert data(c.get(url))["item"]["status"] == "stopped"
+        elif title == "审签":
+            record = data(c.post("/api/v1/apps/document/records", json={
+                "project": "jkq", "type": "report", "data": {"title": "演示通知"},
+            }))
+            review = data(c.post("/api/v1/reviews", json={"appId": "document", "recordId": record["id"],
+                          "version": 1, "assignee": "u-liyang"}))
+            login(c, "liyang", password)
+            assert review["id"] in [item["id"] for item in data(c.get("/api/v1/reviews"))["items"]]
+            decided = data(c.post(f"/api/v1/reviews/{review['id']}/decisions",
+                                  json={"version": 1, "decision": "approve"}))
+            assert decided["item"]["status"] == "done"
+        elif title == "外部协作者":
+            path = "/api/apps/enterprise/companies"
+            item = data(c.post(path, json={"name": "纸鹿二号智驾示例", "phone": "13900001111"}))["item"]
+            me = login(c, "hejun", password)
+            assert me["grants"]["enterprise"] == ["view"]
+            assert data(c.get(path + "/" + item["id"]))["item"]["phone"] == "139****1111"
+        elif title == "管理后台":
+            admin = login(c, "admin", password)
+            assert "admin" in admin["grants"]["*"]
+            assert data(c.get("/api/v1/admin/users"))["users"]
+            assert data(c.get("/api/v1/models"))["items"]
+            assert data(c.get("/api/audit"))["items"]
+        elif title == "浅色主题":
+            for theme in ("light", "dark"):
+                data(c.patch("/api/v1/me/prefs", json={"theme": theme}))
+                assert data(c.get("/api/v1/me"))["prefs"]["theme"] == theme
+        else:
+            pytest.fail(f"未登记演示段落 {title}")
