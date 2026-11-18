@@ -72,7 +72,7 @@ def client_factory(make_client, isolated_platform, monkeypatch):
     manifest = apps / "sample-app/app.json"
     manifest.write_text(json.dumps({
         **json.loads(manifest.read_text()),
-        "tools": [{"name": TOOL, "desc": "匹配演练事项", "params": {"entId": "string"}}],
+        "tools": [{"name": TOOL, "desc": "匹配演练事项", "params": {"entId": "string", "tags": "string[]?"}}],
     }), encoding="utf-8")
 
     def create():
@@ -159,7 +159,13 @@ def test_registered_tool_requires_app_operate(client_factory):
         login(client, "sampleobserver")
         response = client.post(PATH, json={**REQUEST, "stream": True, "tools": [TOOL]})
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "FORBIDDEN"
+        error = response.json()["error"]
+        assert error["code"] == "FORBIDDEN"
+        assert error["details"] == {"app": "sample-app", "need": "operate"}
+        audit = client.app.state.platform.store.audit_list("sample-app")
+        assert [(row["user"], row["detail"]) for row in audit if row["action"] == "ai.tool_forbidden"] == [
+            ("sampleobserver", {"need": "operate"}),
+        ]
 
 
 def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeypatch):
@@ -179,7 +185,8 @@ def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeyp
             "type": "function", "function": {"name": ALIAS, "description": "匹配演练事项",
                                            "parameters": {"type": "object", "properties": {
                                                "entId": {"type": "string"},
-                                           }}},
+                                               "tags": {"type": "array", "items": {"type": "string"}},
+                                           }, "required": ["entId"]}},
         }]}
         return httpx.Response(200, stream=upstream)
 
