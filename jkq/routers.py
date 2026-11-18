@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, FastAPI, HTTPException
 
 from .kb import install as install_kb
+from .models import install as install_models
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
 ROUTERS: tuple[APIRouter, ...] = ()
@@ -34,6 +35,7 @@ def register_routes(app: FastAPI) -> None:
     core_route_count = len(routes)
     app.include_router(health)
     install_kb(app, app.state.platform, current_user)
+    install_models(app)
     for router in ROUTERS:
         app.include_router(router)
     routes[:] = routes[core_route_count:] + routes[:core_route_count]

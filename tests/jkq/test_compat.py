@@ -357,3 +357,21 @@ def test_seed_repairs_existing_empty_project_library_without_replacing_data(data
     subprocess.run(command, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=True)
     with sqlite3.connect(data_dir / "platform.db") as db:
         assert list(db.iterdump()) == snapshot
+
+
+def test_model_catalog_and_default_on_instance(client):
+    create_admin(client)
+    catalog = client.get("/api/v1/models").json()
+    assert set(catalog) == {"items", "current", "capabilities"}
+    assert catalog["current"] == "auto"
+    items = {item["id"]: item for item in catalog["items"]}
+    assert items["mock"]["enabled"] is True
+    assert items["overseas"]["enabled"] is False
+    chat = client.post("/api/v1/ai/chat", json={"messages": [{"role": "user", "content": "公开演练消息"}]})
+    assert chat.status_code == 200
+    assert chat.json()["mock"] is True
+    assert client.put("/api/v1/models/current", json={"model": "mock"}).json() == {"current": "mock"}
+    profile = client.get("/api/v1/me").json()
+    assert profile["isAdmin"] is True
+    assert profile["defaultModel"] == "mock"
+    assert profile["settings"]["defaultModel"] == "mock"
