@@ -38,6 +38,7 @@ class ProviderDefinition(BaseModel):
     env: Optional[str] = None
     name: Optional[str] = None
     enabled: StrictBool = True
+    stream_usage: StrictBool = True
 
 
 class ModelConfig(BaseModel):
@@ -114,6 +115,7 @@ def provider_from_environment(definition, confidential=False):
         "id": definition.id, "kind": definition.kind, "model": model,
         "base_url": base_url, "api_key": api_key,
         "allow_outbound": "confidential" if allows_confidential else "internal",
+        "stream_usage": definition.stream_usage,
     }
 
 
@@ -135,7 +137,10 @@ async def openai_chat(base_url, api_key, model, payload, timeout, *, transport=N
         if not response.is_success:
             raise ProviderRejected("模型服务商拒绝了请求。")
         body = response.json()
-        reply = body["choices"][0]["message"]
+        choice = body["choices"][0]
+        if choice.get("finish_reason") not in (None, *streaming.SUCCESSFUL_FINISH_REASONS):
+            raise ProviderRejected("模型服务商中断了对话生成。")
+        reply = choice["message"]
         if message:
             result = streaming.chat_message(reply)
         else:
@@ -191,15 +196,16 @@ class ChatGateway(Gateway):
                 usage = result["usage"]
             elif mock:
                 message = streaming.mock_message(provider) if structured else {"content": streaming.MOCK_CONTENT}
-                result = streaming.chat_message(message) if structured else message
+                result = payload.validate_message(streaming.chat_message(message)) if structured else message
                 usage = {"input": 0, "output": 0}
             else:
                 request = {key: value for key, value in payload.items() if key != "classification"}
-                reply, usage = await openai_chat(
+                reply, reported_usage = await openai_chat(
                     provider["base_url"], provider["api_key"], model, request,
                     attempt_timeout, transport=self.transport, message=structured,
                 )
-                result = reply if structured else {"content": reply}
+                result = payload.validate_message(reply) if structured else {"content": reply}
+                usage = reported_usage
             status = "success"
             return {**result, "usage": usage, "mock": mock}
         except TimeoutError:
