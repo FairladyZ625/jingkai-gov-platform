@@ -1,0 +1,37 @@
+:root { font-family: "PingFang SC","Microsoft YaHei",sans-serif; color: #193e46; background: #f5f7f5; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { min-height: 74px; background: #11494c; color: white; display: flex; align-items: center; justify-content: space-between; padding: 15px max(5vw, calc((100vw - 1060px)/2)); gap: 12px; flex-wrap: wrap; }
+header strong { font-size: 20px; }
+header span { font-size: 14px; color: #dbede5; }
+main { max-width: 1100px; margin: 58px auto; padding: 0 20px; }
+h1 { font-family: "Songti SC","SimSun",serif; font-size: clamp(32px,4vw,46px); margin: 0 0 27px; }
+.workspace { display: grid; grid-template-columns: 230px 1fr; border: 1px solid #cddbd5; background: white; }
+aside { padding: 30px; background: #edf3ed; }
+aside h2 { font-size: 17px; margin: 0 0 28px; }
+ol { padding-left: 25px; }
+li { padding: 7px 0 7px 8px; margin-bottom: 10px; color: #526961; }
+li[aria-current] { font-weight: bold; color: #035e55; border-right: 3px solid; }
+article { min-height: 410px; padding: clamp(24px,4vw,54px); }
+section h2 { font-size: 28px; margin: 0; }
+p { line-height: 1.7; color: #4b6665; }
+dl { background: #f6f8f5; padding: 18px 22px; border-left: 3px solid #98b2a5; margin: 24px 0; }
+dt,label { color: #4a6564; font-size: 14px; }
+dd { margin: 5px 0 0; font-weight: 600; }
+dd + dt { margin-top: 16px; }
+button,input,select { font: inherit; border-radius: 4px; padding: 10px 16px; }
+button { border: 1px solid transparent; background: #106660; color: white; cursor: pointer; }
+button:disabled { background: #dae1de; color: #52615b; cursor: default; }
+.back { background: white; border-color: #b9c9c2; color: #214944; }
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+input,select { display: block; margin: 8px 0 22px; border: 1px solid #8ba49c; width: min(100%, 360px); background: white; color: inherit; }
+.code { font: bold 28px monospace; letter-spacing: 8px; margin: 20px 0; }
+[role=alert] { color: #973c29; }
+:focus-visible { outline: 3px solid #b67729; outline-offset: 3px; }
+@media(max-width:700px) {
+  main { margin: 28px auto; }
+  .workspace { grid-template-columns: 1fr; }
+  aside { padding: 16px 24px; }
+  aside h2, li:not([aria-current]) { display: none; }
+  ol, li { margin: 0; }
+}
