@@ -9,6 +9,7 @@ import pytest
 from fastapi import Depends
 from fastapi.testclient import TestClient
 
+from conftest import set_provider_credential
 from haiknow_core.main import create_app
 from haiknow_sdk import AppContext, app_context
 from haiknow_sdk import AppContext, app_context
@@ -25,7 +26,7 @@ def login(tmp_path, monkeypatch, user='sampleadmin'):
 
 
 def mock_provider(client, ident='fake', **extra):
-    body = {'kind': 'mock', 'models': ['mock-tools'], 'api_key': 'test-placeholder-key', **extra}
+    body = {'kind': 'mock', 'models': ['mock-tools'], **extra}
     assert client.put(f'/api/v1/admin/ai/providers/{ident}', json=body).status_code == 200
 
 
@@ -263,8 +264,7 @@ def test_provider_kinds_and_probe_endpoint(tmp_path, monkeypatch):
     refused = client.put('/api/v1/admin/ai/providers/mineru', json={'kind': 'mineru', 'models': ['vlm']})
     assert refused.status_code == 422 and refused.json()['error']['code'] == 'invalid_request'
     assert client.put('/api/v1/admin/ai/providers/mineru', json={
-        'kind': 'mineru', 'base_url': 'https://mineru.net/api/v4', 'api_key': 'test-placeholder-key',
-        'models': ['vlm'], 'allow_outbound': 'confidential'}).status_code == 200
+        'kind': 'mineru', 'base_url': 'https://mineru.net/api/v4', 'models': ['vlm'], 'allow_outbound': 'confidential'}).status_code == 200
     probed = client.post('/api/v1/admin/ai/providers/reader/probe')
     assert probed.status_code == 200 and probed.json()['ok'] is True
     assert client.post('/api/v1/admin/ai/providers/missing/probe').status_code == 404
@@ -281,7 +281,8 @@ def test_timeout_error_carries_task_id(tmp_path, monkeypatch):
     import httpx
 
     store = AISettings(tmp_path)
-    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', 'test-placeholder-key', ['vlm'], True)
+    set_provider_credential(monkeypatch, 'mineru', 'https://mineru.example.test/api/v4', 'test-placeholder-key')
+    store.put_provider('mineru', 'mineru', 'https://mineru.example.test/api/v4', ['vlm'], True)
     store.put_route('parse', 'mineru', 'vlm')
 
     class Files:

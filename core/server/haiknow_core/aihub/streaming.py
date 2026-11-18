@@ -9,6 +9,7 @@ from typing import Callable
 import httpx
 from anyio import create_task_group, sleep
 
+from .config import auth_headers
 from .errors import AIError, TRANSPORT_ERRORS, transport_error
 
 
@@ -36,16 +37,16 @@ async def request(provider, model, payload, timeout, channel: Channel):
         channel.send(_sse({}, 'stop'))
         channel.send('data: [DONE]\n\n')
         return None
-    if provider['kind'] not in ('ark', 'openai', 'deepseek'):
+    if provider['kind'] not in ('ark', 'openai', 'deepseek', 'local'):
         raise AIError('provider_error', '当前服务商不支持原生工具流。')
 
     async def read():
         complete = False
         # classification 只用于平台出站策略，不传上游；路由模型始终由能力中心决定。
         body = {k: v for k, v in payload.items() if k not in ('classification', 'model', 'stream')}
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=provider['kind'] != 'local') as client:
             async with client.stream('POST', provider['base_url'] + '/chat/completions',
-                                     headers={'Authorization': 'Bearer ' + provider['api_key']},
+                                     headers=auth_headers(provider),
                                      json={**body, 'model': model, 'stream': True}) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
