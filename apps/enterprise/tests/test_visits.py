@@ -15,7 +15,7 @@ PREFIX = "/api/apps/enterprise"
 
 
 @pytest.fixture
-def enterprise(isolated_platform, make_client, tmp_path, monkeypatch):
+def enterprise(isolated_platform, make_client, tmp_path_factory, monkeypatch):
     config, apps = isolated_platform
     app_dir = apps / "enterprise"
     shutil.copytree(Path(__file__).resolve().parents[1] / "api", app_dir / "api")
@@ -36,7 +36,8 @@ def enterprise(isolated_platform, make_client, tmp_path, monkeypatch):
     users = json.loads((config / "users.yaml").read_text())
     users["users"].append({"id": "partner", "name": "外部协作", "roles": ["partner"], "projects": ["jkq"]})
     (config / "users.yaml").write_text(json.dumps(users))
-    monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", str(tmp_path / "enterprise.sqlite"))
+    raw_dir = tmp_path_factory.mktemp("enterprise-raw")
+    monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", str(raw_dir / "enterprise.sqlite"))
     with make_client() as client:
         assert client.post("/api/auth/login", json={"user_id": "sampleadmin"}).is_success
         yield client

@@ -53,7 +53,7 @@ def run_tool(ctx, name, args, *, destination: Destination, allowlist, extractor)
 def execute(ctx, name, args, extractor):
     if name not in TOOLS:
         return ledger.error(404, "TOOL_NOT_FOUND", "企业工具不存在")
-    if not ctx.can("view"):
+    if ctx.app_id != "enterprise" or not ctx.can("view"):
         raise DataError("forbidden", "无权查看企业台账")
     if not isinstance(args, dict):
         return ledger.error(400, "INVALID_REQUEST", "工具参数必须为对象")
