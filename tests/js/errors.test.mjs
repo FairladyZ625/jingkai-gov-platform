@@ -35,6 +35,8 @@ assert.equal(errorMessage(new TypeError('Failed to fetch')), PLATFORM_ERROR_MESS
 assert.equal(errorMessage(err('x', { code: 'xxx_failed' }), { xxx_failed: '导出失败，请重试' }), '导出失败，请重试');
 defineErrors('app-a', { xxx_failed: 'A 应用导出失败' });
 assert.equal(appErrorMessage('app-a', err('x', { code: 'xxx_failed' })), 'A 应用导出失败');
+assert.equal(appErrorMessage('app-a', err('x', { code: 'XXX_FAILED' })), 'A 应用导出失败');
+assert.equal(errorMessage(err('操作失败（forbidden）', { code: 'FORBIDDEN' })), PLATFORM_ERROR_MESSAGES.forbidden);
 assert.equal(appErrorMessage('app-b', err('x', { code: 'xxx_failed' })), GENERIC_ERROR_MESSAGE);
 // 从 errors.json 加载；缺失文件静默
 await loadAppErrors('app-c', async (url) => {
