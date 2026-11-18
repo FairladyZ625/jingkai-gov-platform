@@ -8,11 +8,13 @@ from haiknow_sdk import KV
 from .checking_router import router as checking_router
 from .collaboration_router import router as collaboration_router
 from .drafting_router import DocumentRoute, Viewer, router as drafting_router
+from .review_export import router as review_export_router
 
 router = APIRouter(route_class=DocumentRoute)
 router.include_router(drafting_router)
 router.include_router(checking_router)
 router.include_router(collaboration_router)
+router.include_router(review_export_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:

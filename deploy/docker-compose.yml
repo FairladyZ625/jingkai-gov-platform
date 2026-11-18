@@ -16,6 +16,7 @@ services:
       HAIKNOW_CONFIG_DIR: /srv/app/config
       APP_PORT: ${APP_PORT:-8000}
       JKQ_DEPLOY_RUNTIME: "1"
+      JKQ_FRONTEND_API_MODE: ${JKQ_FRONTEND_API_MODE:-http}
     command: ["python", "deploy/entrypoint.py"]
     volumes:
       - ${DEMO_STATE_DIR:-/var/lib/jkq-demo}/data:/state/live
