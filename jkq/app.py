@@ -48,11 +48,13 @@ def create_app() -> FastAPI:
         seed = load_project_seed(Path(os.environ["HAIKNOW_CONFIG_DIR"]))
         from haiknow_core.main import create_app as create_core_app
 
+        from .auth import install as install_auth
         from .routers import register_routes
 
         app = create_core_app(root)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
+        install_auth(app)
         install_platform(app)
 
     app.title = "北京经开区共享智能体工作站"
