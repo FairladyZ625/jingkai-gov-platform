@@ -12,8 +12,14 @@
     "data/public/rules.json": [
       "接受竞买报价，签订成交确认书"
     ],
+    "data/seed/real/rules.json": [
+      "接受竞买报价，签订成交确认书"
+    ],
     "prototype/v4/data/real-kb.js": [
       "通用人形机器人天工3.0"
+    ],
+    "prototype/v4/data/real-supplement.js": [
+      "接受竞买报价，签订成交确认书"
     ]
   }
 }
