@@ -5,8 +5,24 @@
   const KEY = window.JK_STATE_KEY || 'jkq-workstation-state-v3';
   const clone = (o) => JSON.parse(JSON.stringify(o));
   let S;
+  function refreshExtensionNoticeSeeds() {
+    // 已存状态也包含种子副本。只更新延期通知的模板示例和往期标注。
+    const template = S.docTemplates?.find((t) => t.id === 'T06');
+    if (template) template.inputs = clone(SEED.docTemplates.find((t) => t.id === 'T06').inputs);
+    const notice = S.files?.find((f) => f.id === 'F008');
+    if (notice) {
+      const { name, snippet } = SEED.files.find((f) => f.id === 'F008');
+      Object.assign(notice, { name, snippet });
+    }
+  }
   function load() {
-    try { const raw = localStorage.getItem(KEY); if (raw) { S = JSON.parse(raw); return; } } catch (e) {}
+    let cached;
+    try { cached = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+    if (cached) {
+      S = cached;
+      refreshExtensionNoticeSeeds();
+      return;
+    }
     S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
     seedDrafts();
   }
@@ -176,12 +192,34 @@
     }
     return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '京技产促〔2026〕【待补】号' };
   }
+  const DOC_DATE_PREFIX = /^\s*(\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-])))/;
+  const EXTENSION_DATES = /申报截止时间\s*由([^。；]*?)延长至([^。；]+)/;
+  function docDateValue(text) {
+    // 规则按日历日比较，日期后的时分和时区注记不参与比较。
+    const match = DOC_DATE_PREFIX.exec(text || '');
+    if (!match) return NaN;
+    const [year, month, day] = match[1].match(/\d+/g);
+    const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const time = Date.parse(iso);
+    return Number.isFinite(time) && new Date(time).toISOString().startsWith(iso) ? time : NaN;
+  }
   function checkDoc(d) {
     const issues = []; const all = [d.title, d.to, ...d.paragraphs].join('\n');
     if (/【待补/.test(d.docNo)) issues.push({ id: 'c1', level: 'warn', kind: '文号', text: '发文字号未填写', fix: '京技产促〔2026〕58号', target: 'docNo' });
     d.paragraphs.forEach((p, i) => {
       if (/【待补：/.test(p)) issues.push({ id: 'c-m' + i, level: 'error', kind: '缺要素', text: `第 ${i + 1} 段有未填写的要素：${p.match(/【待补：(.+?)】/)[1]}`, para: i });
       if (/\d{4}-\d{2}-\d{2}/.test(p)) issues.push({ id: 'c-d' + i, level: 'warn', kind: '日期格式', text: `第 ${i + 1} 段日期写法不规范（应为“2026年12月1日”）`, para: i, fix: 'date' });
+      if (d.templateId === 'T06') {
+        const dates = EXTENSION_DATES.exec(p);
+        if (dates) {
+          const [, oldEnd, newEnd] = dates;
+          const end = docDateValue(newEnd);
+          const reasons = [];
+          if (end <= docDateValue(oldEnd)) reasons.push('原截止日');
+          if (end <= docDateValue(d.date)) reasons.push('发文日期');
+          if (reasons.length) issues.push({ id: 'c-order' + i, level: 'warn', kind: '日期先后', text: `新截止日须晚于${reasons.join('和')}`, para: i });
+        }
+      }
       if (/的的|申报申报|载止|截至日期/.test(p)) issues.push({ id: 'c-t' + i, level: 'warn', kind: '错别字', text: `第 ${i + 1} 段疑似错别字：${p.match(/的的|申报申报|载止|截至日期/)[0]}`, para: i, fix: 'typo' });
       if (/咱们|赶紧|搞|弄好|大家/.test(p)) issues.push({ id: 'c-s' + i, level: 'info', kind: '语体', text: `第 ${i + 1} 段有口语化表达：“${p.match(/咱们|赶紧|搞|弄好|大家/)[0]}”`, para: i, fix: 'polish' });
     });
@@ -211,7 +249,22 @@
     const v1 = clone(c); v1.paragraphs[3] = '三、申报时间。今年的通知还没出来，出来以后咱们马上告诉你们。';
     S.drafts['DOC-1112'] = { id: 'DOC-1112', title: c.title, templateId: 'T10', policyId: 'PI-03', status: '审签中', author: '王敏', versions: [{ v: 1, at: '2026-11-12 16:20', by: '王敏', content: v1 }, { v: 2, at: '2026-11-13 10:05', by: '王敏', content: c }],
       comments: [{ id: 'cm1', para: 1, by: '孙婷', at: '2026-11-13 11:02', text: '政策原文引用建议只保留关键句，太长了。', replies: [{ by: '王敏', text: '好的，审签后统一精简。' }], resolved: false }, { id: 'cm2', para: 3, by: '李阳', at: '2026-11-13 14:30', text: '申报时间表述可以，注意不要承诺具体日期。', replies: [], resolved: true }] };
-    S.documents.forEach((d) => { if (!S.drafts[d.id]) { const tt = S.docTemplates.find((x) => x.id === d.templateId); const inp = {}; tt.inputs.forEach((x) => (inp[x[0]] = x[2])); const c2 = genDoc(tt, inp); c2.title = d.title; if (d.status === '已定稿') c2.docNo = '京技产促〔2026〕51号'; S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author, versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content: c2 }], comments: [] }; } });
+    S.documents.forEach((d) => {
+      if (S.drafts[d.id]) return;
+      const tt = S.docTemplates.find((x) => x.id === d.templateId);
+      // 往期定稿沿用原批次的要素，新建通知使用当前模板示例。
+      const inp = d.id === 'DOC-1108' ? {
+        orig: '关于开展 2026 年数据券申报工作的通知',
+        oldEnd: '2026-11-02',
+        newEnd: '2026-11-06',
+        reason: '部分企业交易凭证开具延迟',
+      } : Object.fromEntries(tt.inputs.map(([key, , value]) => [key, value]));
+      const content = genDoc(tt, inp);
+      content.title = d.title;
+      if (d.status === '已定稿') content.docNo = '京技产促〔2026〕51号';
+      S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author,
+        versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content }], comments: [] };
+    });
   }
   function docSummary(dr) { return { id: dr.id, title: dr.title, templateId: dr.templateId, status: dr.status, author: dr.author, updated: dr.versions[dr.versions.length - 1].at, versions: dr.versions.length, comments: dr.comments.filter((c) => !c.resolved).length }; }
 
