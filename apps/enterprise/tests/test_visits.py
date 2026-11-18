@@ -2,7 +2,10 @@
 
 import json
 import shutil
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from os import environ
 from importlib import import_module
 from pathlib import Path
 
@@ -299,3 +302,205 @@ def test_tools_use_pending_path_and_egress_guard(enterprise):
     assert len(calls) == 2
     assert version(enterprise, cid) == 1
     assert detail(enterprise, cid)["item"]["employees"] == 7
+
+
+def raw_company(client, ident):
+    doc = client.get(f"/api/v1/apps/enterprise/records/{ident}").json()
+    with sqlite3.connect(environ["JKQ_ENTERPRISE_PRIVATE_DB"]) as db:
+        raw, = db.execute("SELECT body FROM snapshots WHERE ref = ?", (doc["data"]["snapshot"],)).fetchone()
+    return json.loads(raw)
+
+
+@pytest.mark.parametrize(("unit", "expected"), [("万元", 120), ("元", 1_200_000), ("亿元", 0.012)])
+def test_revenue_uses_ledger_unit(enterprise, unit, expected):
+    cid = company(enterprise, revenue={"value": 45, "unit": unit})
+    proposal, = visit(enterprise, cid, "营收为120万元。").json()["proposals"]
+    assert decision(enterprise, proposal, "accept").is_success
+    assert raw_company(enterprise, cid)["revenue"] == {"value": expected, "unit": unit}
+    assert version(enterprise, cid) == 2
+    change, = detail(enterprise, cid)["history"]
+    assert change["field"] == "revenue.value"
+
+
+@pytest.mark.parametrize(("unit", "notes"), [
+    ("", "营收为120万元。"), ("美元", "营收为120万元。"),
+    ("万元", "营收为120。"), ("万元", "营收为120万欧元。"),
+])
+def test_unknown_revenue_unit_requires_manual_review(enterprise, unit, notes):
+    cid = company(enterprise, revenue={"value": 45, "unit": unit})
+    result = visit(enterprise, cid, notes).json()
+    assert result["proposals"] == []
+    assert "人工核对" in result["visit"]["warning"]
+    assert raw_company(enterprise, cid)["revenue"] == {"value": 45, "unit": unit}
+    assert version(enterprise, cid) == 1
+
+
+@pytest.mark.parametrize(("notes", "candidate", "field", "initial"), [
+    ("职工现有30人。", {"new": 300, "source": "职工现有30人"}, "employees", 25),
+    ("办公室容纳30人。", {"new": 30, "source": "办公室容纳30人"}, "employees", 25),
+    ("职工现有30人次。", {"new": 30, "source": "职工现有30人"}, "employees", 25),
+    ("职工现有30人至50人。", {"new": 30, "source": "职工现有30人"}, "employees", 25),
+    ("目前尚未确认，已取得出版物经营许可证的说法待核实。", {
+        "new": "出版物经营许可证", "source": "已取得出版物经营许可证",
+    }, "license", []),
+    ("营收为120万元。", {"new": 120, "source": "营收为120万元"}, "revenue.value", {"value": 45, "unit": "万元"}),
+    *[
+        (f"目前{negative}取得出版物经营许可证。", {"new": "出版物经营许可证", "source": source}, "license", [])
+        for negative, source in [
+            ("尚未", "取得出版物经营许可证"),
+            ("没有", "出版物经营许可证"),
+            ("未", "取得出版物经营许可证"),
+        ]
+    ],
+])
+def test_model_evidence_must_support_field_value_and_unit(enterprise, notes, candidate, field, initial):
+    visits = module("visits")
+    extraction = module("visit_extraction")
+    enterprise.app.dependency_overrides[visits.visit_extractor] = lambda: extraction.Extractor(
+        extraction.Destination("private-test", "local"),
+        lambda *_: {"proposals": [{"field": field, **candidate}], "issues": []},
+    )
+    key = field.split(".")[0]
+    cid = company(enterprise, **{key: initial})
+    assert visit(enterprise, cid, notes).json()["proposals"] == []
+    assert raw_company(enterprise, cid)[key] == initial
+    assert version(enterprise, cid) == 1
+    assert detail(enterprise, cid)["history"] == []
+
+
+@pytest.mark.parametrize("amount", ["四十八万", "四十八万元", "肆拾捌萬圓", "四十点八万", "48万"])
+def test_partner_and_tools_receive_safe_summaries(enterprise, amount):
+    cid = company(enterprise, employees=7)
+    notes = f"年房租约{amount}每年，需要协调。职工现有30人。"
+    payload = visit(enterprise, cid, notes, type=f"含{amount}的走访").json()
+    assert payload["proposals"]
+    ident = payload["visit"]["id"]
+    issue = enterprise.post("/api/v1/apps/enterprise/records", json={
+        "project": "jkq", "type": "enterprise.issue", "data": {"item": {
+            "entId": cid, "title": f"需要协调每年{amount}的房租",
+        }},
+    })
+    assert issue.is_success, issue.text
+    assert amount in detail(enterprise, cid)["issues"][0]["title"]
+
+    # 工具即使以经办人身份调用，也只返回面向模型的展示。
+    def tool_get():
+        return enterprise.post(f"{PREFIX}/tools/enterprise.get", json={"args": {"id": cid}})
+
+    tool = tool_get()
+    assert tool.is_success and amount not in tool.text
+    assert tool.json()["result"]["visits"][0]["id"] == ident
+    assert tool.json()["result"]["visits"][0].get("notes", "") == ""
+    safe = enterprise.post(f"{PREFIX}/tools/enterprise.propose_update", json={"args": {
+        "id": cid, "notes": notes, "type": f"含{amount}的走访",
+    }})
+    assert safe.is_success and amount not in safe.text and safe.json()["result"]["issues"]
+    assert safe.json()["result"]["proposals"][0].get("source", "") == ""
+
+    assert enterprise.post("/api/auth/login", json={"user_id": "partner"}).is_success
+    lookup = enterprise.get(f"{PREFIX}/companies/{cid}")
+    assert lookup.is_success and amount not in lookup.text
+    assert lookup.json()["visits"][-1]["id"] == ident
+    assert lookup.json()["visits"][-1].get("notes", "") == ""
+    assert lookup.json()["proposals"][0].get("source", "") == ""
+    assert amount not in tool_get().text
+    with sqlite3.connect(environ["JKQ_ENTERPRISE_PRIVATE_DB"]) as db:
+        row, = db.execute("SELECT body FROM visit_notes WHERE id = ?", (ident,)).fetchone()
+    assert json.loads(row)["notes"] == notes
+
+
+@pytest.mark.parametrize("fail_model", [False, True])
+def test_saved_visit_refreshes_detail_sort_and_overdue_filter(enterprise, fail_model):
+    visits = module("visits")
+    extraction = module("visit_extraction")
+    today = datetime.now(visits.BEIJING).date()
+    old = (today - timedelta(days=120)).isoformat()
+    cid = company(enterprise, lastVisit=old, lastVisitDays=120)
+    other = company(enterprise, name="仍未回访的企业", lastVisitDays=110)
+
+    def listing(**params):
+        reply = enterprise.get(f"{PREFIX}/companies", params=params)
+        assert reply.is_success
+        return reply.json()
+
+    assert [row["id"] for row in listing(alert=1)["items"]] == [cid, other]
+    if fail_model:
+        def fail(*_):
+            raise RuntimeError("模拟模型故障")
+        enterprise.app.dependency_overrides[visits.visit_extractor] = lambda: extraction.Extractor(
+            extraction.Destination("private-test", "local"), fail,
+        )
+    result = visit(enterprise, cid, "员工现有8人。").json()
+    assert ("warning" in result["visit"]) == fail_model
+    date = result["visit"]["date"]
+    item = detail(enterprise, cid)["item"]
+    assert (item["lastVisit"], item["lastVisitDays"]) == (date, 0)
+    first, refreshed = listing(sort="lastVisit")["items"]
+    assert first["id"] == other and refreshed["id"] == cid
+    assert (refreshed["lastVisit"], refreshed["lastVisitDays"]) == (date, 0)
+    assert [row["id"] for row in listing(alert=1)["items"]] == [other]
+    assert version(enterprise, cid) == 1
+    assert detail(enterprise, cid)["history"] == []
+
+
+def test_generic_record_write_cannot_mark_proposal_accepted(enterprise):
+    cid = company(enterprise, employees=4)
+    proposal, = visit(enterprise, cid, "职工现有5人。").json()["proposals"]
+    path = f"/api/v1/apps/enterprise/records/{cid}"
+    original = enterprise.get(path).json()
+    forged = enterprise.put(path, json={"baseVersion": 1, "data": {
+        **original["data"], "change": {"proposalId": proposal["id"]},
+    }})
+    assert forged.is_success, forged.text
+    assert detail(enterprise, cid)["proposals"] == [proposal]
+    assert decision(enterprise, proposal, "accept").is_success
+    assert version(enterprise, cid) == 3
+    assert raw_company(enterprise, cid)["employees"] == 5
+    assert decision(enterprise, proposal, "accept").status_code == 409
+
+
+def test_revenue_unit_change_makes_pending_amount_stale(enterprise):
+    cid = company(enterprise, revenue={"value": 45, "unit": "万元"})
+    proposal, = visit(enterprise, cid, "营收为120万元。").json()["proposals"]
+    assert enterprise.patch(f"{PREFIX}/companies/{cid}", json={"revenue": {"value": 45, "unit": "元"}}).is_success
+    stale = decision(enterprise, proposal, "accept")
+    assert (stale.status_code, stale.json()["error"]["code"]) == (409, "STALE_VERSION")
+    assert raw_company(enterprise, cid)["revenue"] == {"value": 45, "unit": "元"}
+    assert version(enterprise, cid) == 2
+
+
+def test_acceptance_recovered_after_commit_reply_is_interrupted(enterprise, monkeypatch):
+    cid = company(enterprise, employees=4)
+    proposal, = visit(enterprise, cid, "职工现有5人。").json()["proposals"]
+    write = Records.save
+
+    def commit_then_interrupt(self, **body):
+        write(self, **body)
+        raise DataError("internal_error", "模拟 core 提交后中断")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Records, "save", commit_then_interrupt)
+        assert decision(enterprise, proposal, "accept").status_code == 500
+
+    assert raw_company(enterprise, cid)["employees"] == 5
+    assert detail(enterprise, cid)["proposals"] == []
+    assert decision(enterprise, proposal, "accept").status_code == 409
+    assert version(enterprise, cid) == 2
+    assert len(detail(enterprise, cid)["history"]) == 1
+
+
+def test_legacy_proposal_is_retained_but_requires_reextraction(enterprise):
+    cid = company(enterprise, employees=4)
+    with sqlite3.connect(environ["JKQ_ENTERPRISE_PRIVATE_DB"]) as db:
+        db.execute("CREATE TABLE visit_notes (id TEXT PRIMARY KEY, company TEXT, body TEXT)")
+        db.execute("""CREATE TABLE visit_proposals (
+            id TEXT PRIMARY KEY, company TEXT, body TEXT, rejected INTEGER NOT NULL DEFAULT 0
+        )""")
+        db.execute("INSERT INTO visit_proposals VALUES (?, ?, ?, 0)", ("old", cid, json.dumps({"entId": cid})))
+    assert detail(enterprise, cid)["proposals"] == []
+    assert decision(enterprise, {"id": "old"}, "accept").status_code == 409
+    assert version(enterprise, cid) == 1
+    proposal, = visit(enterprise, cid, "职工现有5人。").json()["proposals"]
+    assert decision(enterprise, proposal, "accept").is_success
+    with sqlite3.connect(environ["JKQ_ENTERPRISE_PRIVATE_DB"]) as db:
+        assert db.execute("SELECT status FROM visit_proposals WHERE id = 'old'").fetchone() == ("legacy",)

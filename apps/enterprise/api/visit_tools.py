@@ -9,7 +9,7 @@ from starlette.responses import Response
 
 from . import ledger
 from .visit_extraction import Destination
-from .visits import add_visit, visit_detail, visit_extractor
+from .visits import add_visit, company_summary, visit_detail, visit_extractor, visit_listing
 
 router = APIRouter(route_class=ledger.LedgerRoute)
 
@@ -62,13 +62,15 @@ def execute(ctx, name, args, extractor):
         if not isinstance(q, str):
             return ledger.error(400, "INVALID_REQUEST", "搜索词必须为文本")
         request = Request({"type": "http", "query_string": urlencode({"q": q}).encode()})
-        result = ledger.companies(request, ctx)
+        result = visit_listing(request, ctx)
+        if isinstance(result, dict):
+            result = {"items": [company_summary(row) for row in result["items"]], "total": result["total"]}
     else:
         company_id = args.get("id")
         if not isinstance(company_id, str) or not company_id.strip():
             return ledger.error(400, "INVALID_REQUEST", "请提供企业编号")
-        result = visit_detail(company_id, ctx) if name == "enterprise.get" else add_visit(
-            ctx, company_id, args, extractor,
+        result = visit_detail(company_id, ctx, summary=True) if name == "enterprise.get" else add_visit(
+            ctx, company_id, args, extractor, summary=True,
         )
     if isinstance(result, Response):
         return result
