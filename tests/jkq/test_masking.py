@@ -6,7 +6,6 @@ from pathlib import Path
 import shutil
 
 import pytest
-import yaml
 
 from jkq.masking import MaskRules, _apply, enterprise_card, install
 
@@ -42,6 +41,7 @@ def test_malformed_contact_cannot_pass_through():
 
 
 def test_reload(tmp_path):
+    pytest.importorskip("yaml")
     path = tmp_path / "rules.yaml"
     shutil.copy(ROOT / "config/mask_rules.yaml", path)
     rules = MaskRules(path)
@@ -84,13 +84,16 @@ class Source:
 
 
 @pytest.fixture
-def instance(isolated_platform, cheap_password_hash, reuse_loaded_routers):
+def instance(request):
     pytest.importorskip("fastapi")
+    yaml = pytest.importorskip("yaml")
     from fastapi import Depends
     from fastapi.testclient import TestClient
     from haiknow_core.main import create_app
 
-    config, _apps = isolated_platform
+    request.getfixturevalue("cheap_password_hash")
+    request.getfixturevalue("reuse_loaded_routers")
+    config, _apps = request.getfixturevalue("isolated_platform")
     shutil.copy(ROOT / "config/mask_rules.yaml", config / "mask_rules.yaml")
     roles = {
         "admin": {"name": "管理员", "mask": False,
@@ -167,6 +170,7 @@ def test_kb_libraries(instance, role):
 
 @pytest.mark.parametrize("mask", [True, False])
 def test_partner_space_and_write_boundaries(instance, mask):
+    yaml = pytest.importorskip("yaml")
     client = login(instance)
     path = instance[1] / "roles.yaml"
     roles = yaml.safe_load(path.read_text())
