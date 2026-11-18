@@ -156,7 +156,7 @@ def test_invalid_values_and_limits(client, monkeypatch):
 
     monkeypatch.setattr(module, 'MAX_AUDIO_BYTES', len(sample_audio()) - 1)
     oversized = upload(client)
-    assert oversized.status_code == 413 and oversized.json()['error']['code'] == 'INVALID_REQUEST'
+    assert oversized.status_code == 413 and oversized.json()['error']['code'] == 'PAYLOAD_TOO_LARGE'
     assert client.get(MEETINGS).json()['total'] == 0
     missing = client.post(f'{MEETINGS}/absent/transcribe')
     assert missing.status_code == 404 and missing.json()['error']['code'] == 'NOT_FOUND'
@@ -184,6 +184,81 @@ def test_views_and_writes_require_session_and_authorization(client):
     assert client.get(url).status_code == 404
     assert upload(client).status_code == 403
 
+
+
+def test_unauthenticated_or_extra_files_are_rejected(client):
+    client.cookies.clear()
+    denied = upload(client)
+    assert denied.status_code == 401 and denied.json()['error']['code'] == 'UNAUTHENTICATED'
+    login(client)
+    assert client.get(MEETINGS).json()['total'] == 0
+    extra = client.post(
+        MEETINGS,
+        data={'title': '重复上传'},
+        files=[
+            ('file', ('公开演示.webm', sample_audio(), 'audio/webm')),
+            ('extra', ('另一份.webm', sample_audio(), 'audio/webm')),
+        ],
+    )
+    assert extra.status_code == 413 and extra.json()['error']['code'] == 'PAYLOAD_TOO_LARGE'
+    assert client.get(MEETINGS).json()['total'] == 0
+
+
+def test_cancelled_transcription_can_restart_with_a_new_key(client, monkeypatch):
+    module = transcription_module()
+    original = module.transcribe_part
+    release = Event()
+    entered = Event()
+
+    def pause_first(part, **options):
+        if part['number'] == 1:
+            entered.set()
+            assert release.wait(6)
+        return original(part, **options)
+
+    monkeypatch.setattr(module, 'transcribe_part', pause_first)
+    meeting_id, job_id = submit_demo(client)
+    assert entered.wait(6)
+    cancelled = client.post(f'{JOBS}/{job_id}/cancel?app=meeting')
+    release.set()
+    assert cancelled.status_code == 200, cancelled.text
+    wait_job(client, job_id, lambda job: job.get('cancelled') or job['status'] in {'failed', 'cancelled'})
+    replay = client.post(
+        f'{MEETINGS}/{meeting_id}/transcribe',
+        headers={'Idempotency-Key': f'meeting:{meeting_id}'},
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json()['job']['id'] == job_id
+    assert replay.json()['job']['cancelled'] is True
+    restart = client.post(
+        f'{MEETINGS}/{meeting_id}/transcribe',
+        headers={'Idempotency-Key': f'meeting:{meeting_id}:restart-test'},
+    )
+    assert restart.status_code == 202, restart.text
+    new_job = restart.json()['job']
+    assert new_job['id'] != job_id
+    assert new_job['cancelled'] is False
+    assert client.get(f'{MEETINGS}/{meeting_id}').json()['item']['jobId'] == new_job['id']
+    wait_job(client, new_job['id'], lambda job: job['status'] == 'done')
+    assert len(client.get(f'{MEETINGS}/{meeting_id}').json()['item']['transcript']) == 2
+
+
+def test_archive_pagination_reaches_the_earliest_meeting(client):
+    ids = []
+    for index in range(51):
+        created = client.post(MEETINGS, data={'title': f'档案 {index:02d}', 'source': 'demo'})
+        assert created.status_code == 201, created.text
+        ids.append(created.json()['item']['id'])
+    first = client.get(MEETINGS, params={'limit': 50, 'offset': 0}).json()
+    rest = client.get(MEETINGS, params={'limit': 50, 'offset': 50}).json()
+    assert first['total'] == 51
+    assert len(first['items']) == 50
+    assert len(rest['items']) == 1
+    listed = [item['id'] for item in first['items'] + rest['items']]
+    assert set(listed) == set(ids)
+    earliest = ids[0]
+    assert earliest in listed
+    assert client.get(f'{MEETINGS}/{earliest}').json()['item']['id'] == earliest
 
 CHILD = """
 import json, sys, time

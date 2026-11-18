@@ -131,7 +131,16 @@
   }
 
   async function loadList() {
-    const { items } = await api(base);
+    const items = [];
+    let offset = 0;
+    let total = Infinity;
+    while (offset < total) {
+      const page = await api(`${base}?limit=100&offset=${offset}`);
+      total = Number(page.total);
+      items.push(...page.items);
+      if (!page.items.length) break;
+      offset += page.items.length;
+    }
     $('library').replaceChildren(new Option('选择会议', ''),
       ...items.map((item) => new Option(item.title, item.id)));
     $('library').value = selected;
@@ -224,9 +233,9 @@
     }
   }
 
-  async function start(id) {
+  async function start(id, key = `meeting:${id}`) {
     return (await api(`${base}/${encodeURIComponent(id)}/transcribe`, {
-      method: 'POST', headers: { 'Idempotency-Key': `meeting:${id}` },
+      method: 'POST', headers: { 'Idempotency-Key': key },
     })).job;
   }
 
@@ -270,9 +279,9 @@
     $('resume').hidden = true;
     showError('detail-error', '');
     try {
-      const next = job?.status === 'failed'
+      const next = job?.status === 'failed' && !job.cancelled
         ? jobView(await api(`${jobs}/${encodeURIComponent(job.id)}/retry?app=meeting`, { method: 'POST' }))
-        : await start(id);
+        : await start(id, job?.cancelled ? `meeting:${id}:${Date.now()}` : `meeting:${id}`);
       if (token === selection) await poll(next.id, token);
     } catch (error) {
       if (token === selection) {
