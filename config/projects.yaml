@@ -1,0 +1,6 @@
+companies:
+  - id: jingkai
+    name: 北京经济技术开发区
+    projects:
+      - id: jkq
+        name: 经开区共享智能体工作站

@@ -275,6 +275,9 @@ class Gateway:
         route = self.settings.route(capability)
         if not route:
             raise AIError('not_configured', '该能力尚未配置。')
+        if route['provider'] == ENVIRONMENT_PROVIDER and self.settings.environment.explicit:
+            # 显式环境路由的模型由运维配置决定，应用传入的旧 model 参数不再覆盖。
+            model = None
         pairs = [(route['provider'], model or route['model'])]
         if route['fallback_provider']:
             pairs.append((route['fallback_provider'], model or route['fallback_model']))
