@@ -60,6 +60,11 @@ def test_public_proxy_rejects_bootstrap_before_forwarding():
     ignore = (DEPLOY / "Dockerfile.dockerignore").read_text(encoding="utf-8")
     for line in ("!deploy/entrypoint.py", "!deploy/healthcheck.py", "!deploy/hold/jkq-hold/**"):
         assert line in ignore
+    # 后匹配优先：敏感文件排除必须写在所有放行规则之后，deploy/.env 不能进镜像
+    rules = [line.strip() for line in ignore.splitlines() if line.strip()]
+    last_allow = max(i for i, line in enumerate(rules) if line.startswith("!"))
+    for secret in ("**/.env*", "**/*.key", "**/*.pem"):
+        assert rules.index(secret) > last_allow
     assert "cp -a deploy/hold/jkq-hold apps/jkq-hold" in (DEPLOY / "Dockerfile").read_text(encoding="utf-8")
 
 
