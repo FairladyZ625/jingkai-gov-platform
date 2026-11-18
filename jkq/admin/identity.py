@@ -89,6 +89,17 @@ def _department(db, did):
     return dict(zip(('id', 'name', 'parent'), row))
 
 
+def _department_path(nodes, did):
+    parts, visited = [], set()
+    while did in nodes and did not in visited:
+        visited.add(did)
+        name, parent = nodes[did]
+        if parent or did not in {'d-root', 'd-ext'} or not parts:
+            parts.append(name)
+        did = parent
+    return ' · '.join(reversed(parts))
+
+
 def _users(db, demo, *, uid='', q='', dept='', role='', status=None):
     # 列表展示主关系，筛选按全部关联判断，保留核心已有的多部门/多角色账号。
     sql = """
@@ -105,14 +116,14 @@ def _users(db, demo, *, uid='', q='', dept='', role='', status=None):
           and (:role='' or exists(select 1 from user_roles where user_id=u.id and role_id=:role))
         order by u.rowid
     """
-    names = dict(db.execute('select id,name from departments'))
+    nodes = {did: (name, parent) for did, name, parent in db.execute('select id,name,parent_id from departments')}
     result = []
     for ident, username, name, state, login, did, title, primary_role in db.execute(
         sql, dict(demo=demo, uid=uid, status=status, dept=dept, role=role)
     ):
         if q.casefold() in (username + ' ' + name).casefold():
             result.append(dict(id=ident, username=username, name=name, status=state, lastLogin=login,
-                               deptId=did, dept=names.get(did, ''), title=title or '', role=primary_role))
+                               deptId=did, dept=_department_path(nodes, did), title=title or '', role=primary_role))
     return result
 
 
