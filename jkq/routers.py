@@ -1,5 +1,7 @@
 """实例路由注册。各业务模块导出带完整路径前缀的 APIRouter。"""
 
+import os
+
 from fastapi import APIRouter, FastAPI, HTTPException
 
 from .kb import install as install_kb
@@ -35,4 +37,12 @@ def register_routes(app: FastAPI) -> None:
     for router in ROUTERS:
         app.include_router(router)
     routes[:] = routes[core_route_count:] + routes[:core_route_count]
+    # #48：配置了本地模拟站时挂载电脑操作运行器。见 Issue #48 评论。
+    mock_url = os.environ.get("JKQ_MOCK_GOV_URL", "").strip()
+    if mock_url:
+        from haiknow_core.main import current_user
+        from .computer.api import install as install_computer
+
+        install_computer(app, current_user, url=mock_url,
+                         channel=os.environ.get("JKQ_BROWSER_CHANNEL") or None)
     app.include_router(stubs)
