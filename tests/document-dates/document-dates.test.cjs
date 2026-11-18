@@ -155,7 +155,6 @@ test('首次加载的 DOC-1108 保留往期批次，新建 T06 使用后续批�
   const previousBatch = /《关于开展 2026 年数据券申报工作的通知》/;
   const previousDates = /由2026年11月2日延长至2026年11月6日/;
   assert.equal(item.status, '已定稿');
-  // #7：发文字号由经办人填写，种子定稿不自动填自造代字。往期日期与批次仍保留。
   assert.equal(content.docNo, '');
   assert.match(content.paragraphs[0], previousBatch);
   assert.match(content.paragraphs[0], previousDates);

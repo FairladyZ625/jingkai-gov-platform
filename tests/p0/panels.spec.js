@@ -460,17 +460,17 @@ test('往返恢复实际政策步骤、企业筛选和公文页签', async ({ pa
     await say(page, '打开企业台账筛选高新企业');
     const target = page.locator('[data-conv]').filter({ hasText: '打开企业台账筛选高新企业' });
     await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
-    await op(page, 'enterprise.list-q').fill('星河');
+    await op(page, 'enterprise.list-q').fill('纸鹿二号');
     await op(page, 'enterprise.list-alert').check();
     await page.locator('#lsort').selectOption('name');
     await expect(op(page, 'enterprise.list-count')).toBeVisible();
     await other.click();
     await target.click();
     await expect(op(page, 'enterprise.list-tag')).toHaveValue('高新技术');
-    await expect(op(page, 'enterprise.list-q')).toHaveValue('星河');
+    await expect(op(page, 'enterprise.list-q')).toHaveValue('纸鹿二号');
     await expect(op(page, 'enterprise.list-alert')).toBeChecked();
     await expect(page.locator('#lsort')).toHaveValue('name');
-    await expectRoute(page, 'enterprise', 'list', { tag: '高新技术', q: '星河', alert: 1, sort: 'name' });
+    await expectRoute(page, 'enterprise', 'list', { tag: '高新技术', q: '纸鹿二号', alert: 1, sort: 'name' });
   });
 
   await test.step('公文从起草改看我的文稿', async () => {
