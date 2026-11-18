@@ -48,6 +48,29 @@
     }
   }
 
+  // 混合模式：平台走 HTTP、部分应用留在 mock 时，按 HTTP 会话的角色建立本地演示会话。
+  // 真实账号口令只发往 HTTP 后端，本地只记录映射到的演示账号。
+  const sessionPaths = /^\/api\/v1\/(?:auth\/(?:login|logout|session)|me)$/;
+  function syncMockSession(path, out) {
+    const X = window.JKAPI && window.JKAPI.ext;
+    if (!X || !sessionPaths.test(path)) return;
+    const S = X.state();
+    const user = path.endsWith('/logout') ? null : out && out.user;
+    if (!user) {
+      if (S.session && S.session.bridged) { S.session = null; X.save(); }
+      return;
+    }
+    const role = typeof user.role === 'string' ? user.role : (out.role && out.role.id) || (user.role && user.role.id);
+    const active = (S.users || []).filter((u) => u.status === 'active');
+    const local = active.find((u) => u.username === user.username && u.role === role) || active.find((u) => u.role === role);
+    if (!local) {
+      if (S.session && S.session.bridged) { S.session = null; X.save(); }
+      return;
+    }
+    if (S.session && S.session.userId === local.id) return;
+    S.session = { userId: local.id, at: X.now(), bridged: true }; S.me = local.id; X.save();
+  }
+
   const loginPath = '/api/v1/auth/login';
   const retryLimit = 3;
   const actionNames = { view: '查看', operate: '操作', approve: '审批', admin: '管理' };
@@ -139,12 +162,16 @@
           });
           if (!r.ok) throw responseError(r, data, route);
           if (route === loginPath || route === '/api/v1/auth/logout') sessionVersion++;
+          if (moduleFor(path) === 'platform' && (route === loginPath || sessionVersion === version ||
+              route === '/api/v1/auth/logout')) syncMockSession(route, data);
           return data;
         } catch (cause) {
           const timedOut = ctl.signal.aborted;
           const error = cause?.status !== undefined ? cause : { status: 0, code: timedOut ? 'TIMEOUT' : 'NETWORK',
             message: timedOut ? '服务器响应超时' : '网络不可用，请检查连接' };
           if (error.status === 401 && route !== loginPath && version === sessionVersion) {
+            sessionVersion++;
+            syncMockSession('/api/v1/auth/logout', null);
             event('unauthenticated', error);
           } else if ((error.status === 0 || error.status >= 500) && retryable &&
                      attempt < retryLimit && version === sessionVersion) {
@@ -165,8 +192,6 @@
       window.JKAPI.reset();
       return { ok: true };
     }
-    // §7 的简写路径与 §3.6 的恢复路径共用同一个现有 mock 处理器。
-    if (method === 'POST' && /^\/api\/v1\/kb\/docs\/[^/?]+$/.test(path)) path += '/restore';
     return window.JKAPI.request(method, path, body);
   }
   const qs = (o) => { const p = Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''); return p.length ? '?' + p.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&') : ''; };
