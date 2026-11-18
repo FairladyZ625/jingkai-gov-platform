@@ -1,3 +1,9 @@
 {$DEMO_DOMAIN} {
-    reverse_proxy app:{$APP_PORT}
+    @bootstrap path /api/auth/bootstrap /api/v1/auth/bootstrap
+    handle @bootstrap {
+        respond 404
+    }
+    handle {
+        reverse_proxy app:{$APP_PORT}
+    }
 }
