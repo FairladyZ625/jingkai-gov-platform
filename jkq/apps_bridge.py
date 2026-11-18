@@ -1,16 +1,19 @@
 """经开区应用目录及界面、对话共用的工具调用入口。"""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware import Middleware
+from starlette.routing import Match
 
 from haiknow_core.manifest_ext import endpoint_parts, safe_segment, validate_extensions
-from haiknow_core.stability import AppUnavailable
+from haiknow_core.stability import AppIsolation, AppUnavailable
 from haiknow_sdk import DataError, User
 
 if TYPE_CHECKING:
@@ -36,6 +39,79 @@ class _BridgeError(DataError):
 class _CallBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     args: dict[str, Any]
+
+
+WritePreflight = Callable[[User, dict[str, Any]], None]
+
+_HTTP_ERRORS = {
+    401: ("UNAUTHENTICATED", "请先登录"),
+    403: ("FORBIDDEN", "没有执行此操作的权限"),
+    404: ("NOT_FOUND", "应用工具的目标资源不存在"),
+}
+_PUBLIC_FIELDS = (
+    "contract", "sdk", "id", "name", "summary", "sector", "kind", "owner", "status", "version",
+    "scenes", "starters", "chatCards", "dataClass", "routes",
+)
+_PUBLIC_LIST_FIELDS = {
+    "tools": ("name", "description", "write", "input", "endpoint"),
+    "accepts": ("kind", "ext", "match"),
+    "intents": ("id", "action", "plan"),
+}
+
+
+class _BridgeIsolation(AppIsolation):
+    def __init__(self, app, platform, routes):
+        super().__init__(app, platform)
+        self.routes = routes
+
+    async def __call__(self, scope, receive, send):
+        # 桥的路由依赖先验证登录，随后桥自身按权限、可用性的顺序处理。
+        if (scope["type"] == "http" and scope["path"].startswith("/api/v1/apps/")
+                and any(route.matches(scope)[0] is Match.FULL for route in self.routes)):
+            return await self.app(scope, receive, send)
+        return await super().__call__(scope, receive, send)
+
+
+def _require_available(entry: AppEntry) -> None:
+    if reason := entry.unavailable_reason():
+        raise AppUnavailable(entry.manifest["id"], reason, entry.circuit.retry_after())
+
+
+def _public_manifest(entry: AppEntry, actions: frozenset[str], is_admin: bool) -> dict:
+    manifest = entry.manifest
+    result = {key: manifest[key] for key in _PUBLIC_FIELDS if key in manifest}
+    for key, fields in _PUBLIC_LIST_FIELDS.items():
+        if key in manifest:
+            result[key] = [{field: item[field] for field in fields} for item in manifest[key]]
+    if "deepLink" in manifest:
+        result["deepLink"] = {"params": manifest["deepLink"]["params"]}
+    reason = entry.unavailable_reason()
+    result.update(
+        actions=sorted(actions), url=manifest.get("url") if is_admin else None,
+        available=not bool(reason), hasWeb=entry.has_web,
+        hasPrototype=(entry.dir / "prototype" / "index.html").is_file(),
+    )
+    if is_admin and reason:
+        result["error"] = reason
+    return result
+
+
+def _template_record_model(app: FastAPI, path: str) -> type[BaseModel]:
+    # FastAPI 旧版直接展开 include_router，新版在保留前缀的路由上下文中保存同一个入参模型。
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            candidates = (route,)
+        else:
+            expand = getattr(route, "effective_route_contexts", None)
+            candidates = expand() if expand else ()
+        for candidate in candidates:
+            if getattr(candidate, "path", None) == path and "POST" in (getattr(candidate, "methods", None) or ()):
+                field = candidate.body_field
+                model = field.field_info.annotation if field else None
+                if isinstance(model, type) and issubclass(model, BaseModel) and "project" in model.model_fields:
+                    return model
+                break
+    raise DataError("internal_error", "工具业务入参模型尚未接入")
 
 
 def _tool_target(tool: dict, app_id: str, args: dict) -> tuple[str, str, dict]:
@@ -67,12 +143,8 @@ async def _dispatch(request: Request, method: str, path: str, args: dict) -> Any
         raise DataError("internal_error", "应用工具未返回 JSON 结果") from None
     if response.is_success:
         return result
-    if response.status_code in (401, 403, 404):
-        code, message = {
-            401: ("UNAUTHENTICATED", "请先登录"),
-            403: ("FORBIDDEN", "没有执行此操作的权限"),
-            404: ("NOT_FOUND", "应用工具的目标资源不存在"),
-        }[response.status_code]
+    if response.status_code in _HTTP_ERRORS:
+        code, message = _HTTP_ERRORS[response.status_code]
         raise _BridgeError(response.status_code, code, message)
     error = result.get("error") if isinstance(result, dict) else None
     if isinstance(error, dict) and isinstance(error.get("code"), str) and isinstance(error.get("message"), str):
@@ -91,11 +163,13 @@ class AppsBridge:
         current_user: Callable[[Request], User],
         review_sink: ReviewSink | None,
         list_skills: Callable[[User], list[dict]] | None,
+        write_preflights: Mapping[str, WritePreflight] | None = None,
     ):
         self.platform = platform
         self.current_user = current_user
         self.review_sink = review_sink
         self.list_skills = list_skills
+        self.write_preflights = dict(write_preflights or {})
 
     def user(self, request: Request) -> User:
         try:
@@ -111,30 +185,33 @@ class AppsBridge:
             raise _BridgeError(404, "NOT_FOUND", "应用不存在")
         return entry
 
-    def _visible(self, user: User) -> list[AppEntry]:
-        return [
-            entry for app_id, entry in self.platform.apps.copy().items()
-            if "view" in self.platform.rbac.actions(user, app_id) and not validate_extensions(entry.manifest)
-        ]
+    def _visible(self, user: User) -> Iterator[tuple[AppEntry, frozenset[str]]]:
+        for app_id, entry in self.platform.apps.copy().items():
+            actions = self.platform.rbac.actions(user, app_id)
+            if "view" in actions and not validate_extensions(entry.manifest):
+                yield entry, actions
 
     def apps(self, user: User) -> dict:
+        is_admin = "admin" in self.platform.rbac.actions(user, "*")
         return {
-            "items": [entry.manifest for entry in self._visible(user)],
+            "items": [_public_manifest(entry, actions, is_admin) for entry, actions in self._visible(user)],
             "skills": self.list_skills(user) if self.list_skills is not None else [],
         }
 
     def app(self, user: User, app_id: str) -> dict:
         entry = self._entry(app_id)
-        if "view" not in self.platform.rbac.actions(user, app_id):
+        actions = self.platform.rbac.actions(user, app_id)
+        if "view" not in actions:
             self.platform.store.audit(app_id, user.id, "app.view", {"need": "view", "outcome": "FORBIDDEN"})
             raise _BridgeError(403, "FORBIDDEN", "没有查看此应用的权限", app=app_id, need="view")
-        return entry.manifest
+        _require_available(entry)
+        return _public_manifest(entry, actions, "admin" in self.platform.rbac.actions(user, "*"))
 
     def tools(self, user: User) -> dict:
         return {
             "items": [
                 {"name": tool["name"], "app": entry.manifest["id"], "write": tool["write"]}
-                for entry in self._visible(user) if not entry.unavailable_reason()
+                for entry, _ in self._visible(user) if not entry.unavailable_reason()
                 for tool in entry.manifest.get("tools", [])
             ]
         }
@@ -143,6 +220,19 @@ class AppsBridge:
         """供对话编排在已登录请求内调用。"""
         user = await run_in_threadpool(self.user, request)
         return await self._call(request, user, app_id, tool, args, via="chat")
+
+    def _preflight(self, app: FastAPI, user: User, tool: dict, path: str, body: dict, args: dict) -> None:
+        if validate := self.write_preflights.get(tool["name"]):
+            validate(user, args)
+        elif tool.get("preflight") == "record.create":
+            model = _template_record_model(app, path)
+            try:
+                record = model.model_validate(body)
+            except ValidationError:
+                raise DataError("invalid_request", "工具参数缺失或类型不正确") from None
+            self.platform.data.projects.require(user, record.project)
+        else:
+            raise DataError("internal_error", "工具业务预检尚未接入")
 
     async def _call(self, request: Request, user: User, app_id: str, name: str, args: dict, *, via: str) -> dict:
         name = name if "." in name else f"{app_id}.{name}"
@@ -159,13 +249,12 @@ class AppsBridge:
                 detail["need"] = "operate"
                 if "operate" not in actions:
                     raise _BridgeError(403, "FORBIDDEN", "没有执行此工具的权限", app=app_id, need="operate")
-            if reason := entry.unavailable_reason():
-                detail["outcome"] = "app_unavailable"
-                raise AppUnavailable(app_id, reason, entry.circuit.retry_after())
+            _require_available(entry)
             method, path, body = _tool_target(tool, app_id, args)
             if via == "chat" and tool["write"]:
                 if self.review_sink is None:
                     raise DataError("internal_error", "工具审签服务尚未接入")
+                await run_in_threadpool(self._preflight, request.app, user, tool, path, body, args)
                 review_id = await run_in_threadpool(self.review_sink.create_tool_review, app_id, name, args, user)
                 result = {"status": "pending", "reviewId": review_id, "message": "待确认"}
                 detail.update(outcome="pending", reviewId=review_id)
@@ -173,11 +262,17 @@ class AppsBridge:
                 result = await _dispatch(request, method, path, body)
                 detail["outcome"] = "ok"
             return {"tool": name, "result": result}
+        except AppUnavailable:
+            detail["outcome"] = "app_unavailable"
+            raise
         except DataError as error:
+            http_error = _HTTP_ERRORS.get(error.status)
+            if http_error and error.code == http_error[0].lower():
+                error = _BridgeError(error.status, *http_error)
             detail["outcome"] = error.code
             if error.status == 403:
                 error.error.setdefault("details", {"app": app_id, "need": detail["need"]})
-            raise
+            raise error
         finally:
             await run_in_threadpool(self.platform.store.audit, app_id, user.id, "tool.call", detail)
 
@@ -188,9 +283,12 @@ def install(
     *,
     review_sink: ReviewSink | None = None,
     list_skills: Callable[[User], list[dict]] | None = None,
+    write_preflights: Mapping[str, WritePreflight] | None = None,
 ) -> AppsBridge:
-    """实例注册桥接路由。技能目录回调只返回当前用户可见的技能。"""
-    bridge = AppsBridge(app.state.platform, current_user, review_sink, list_skills)
+    """启动前注册。业务写工具的预检负责同一请求人的入参和资源授权，全程只读。"""
+    if app.middleware_stack is not None:
+        raise RuntimeError("应用工具桥须在实例启动前注册")
+    bridge = AppsBridge(app.state.platform, current_user, review_sink, list_skills, write_preflights)
     app.state.apps_bridge = bridge
     router = APIRouter(prefix="/api/v1")
 
@@ -211,4 +309,9 @@ def install(
         return await bridge._call(request, user, app_id, tool, body.args, via="ui")
 
     app.include_router(router)
+    for index, middleware in enumerate(app.user_middleware):
+        if middleware.cls is AppIsolation:
+            app.user_middleware[index] = Middleware(
+                _BridgeIsolation, *middleware.args, **middleware.kwargs, routes=tuple(router.routes),
+            )
     return bridge

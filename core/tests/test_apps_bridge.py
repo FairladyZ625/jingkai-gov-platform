@@ -13,6 +13,7 @@ from fastapi import Request
 from conftest import ROOT
 from haiknow_core.main import current_user
 from haiknow_core.manifest_ext import validate_extensions
+from haiknow_core.stability import FAILURE_THRESHOLD
 from jkq.apps_bridge import install
 
 APP = "tool-sample"
@@ -62,13 +63,27 @@ def api(make_client, isolated_platform):
                 "endpoint": f"GET /api/apps/{APP}/records/{{rid}}",
             })
         (target / "app.json").write_text(json.dumps(data), encoding="utf-8")
+    embed = apps / "sample-embed"
+    embed.mkdir()
+    data = manifest(embed.name)
+    data.update(
+        kind="embed", url="https://embed.example.invalid/sample", tools=[],
+        defaultRoles={"partner": ["view"]}, privateMetadata={"backend": "示例内部字段"},
+    )
+    (embed / "app.json").write_text(json.dumps(data), encoding="utf-8")
     client = make_client()
     reviews = MemoryReviewSink()
 
     def list_skills(user):
         return [{"id": "sample-skill"}] if "sampleoperator" in user.roles else []
 
-    bridge = install(client.app, current_user, review_sink=reviews, list_skills=list_skills)
+    def preflight_update(user, args):
+        client.app.state.platform.data.get_record(user, APP, args["rid"])
+
+    bridge = install(
+        client.app, current_user, review_sink=reviews, list_skills=list_skills,
+        write_preflights={f"{APP}.update_record": preflight_update},
+    )
 
     @client.app.post("/api/v1/chat-fixture/{app}/{tool}")
     async def chat(request: Request, app: str, tool: str, body: dict):
@@ -102,9 +117,9 @@ def test_catalog_and_details_use_real_partner_grants(api):
     login(client, "partner")
     catalog = client.get("/api/v1/apps").json()
     assert set(catalog) == {"items", "skills"}
-    assert [entry["id"] for entry in catalog["items"]] == [APP]
+    assert {entry["id"] for entry in catalog["items"]} == {APP, "sample-embed"}
     assert catalog["skills"] == []
-    assert client.get(f"/api/v1/apps/{APP}").json() == catalog["items"][0]
+    assert client.get(f"/api/v1/apps/{APP}").json() == next(entry for entry in catalog["items"] if entry["id"] == APP)
     assert client.get("/api/v1/tools").json()["items"] == [
         {"name": f"{APP}.list_records", "app": APP, "write": False},
         {"name": f"{APP}.create_record", "app": APP, "write": True},
@@ -169,6 +184,106 @@ def test_chat_write_creates_one_pending_review_without_touching_business_records
     assert {(row["detail"]["via"], row["detail"]["need"], row["detail"]["outcome"]) for row in rows} == {
         ("chat", "operate", "pending"), ("ui", "operate", "ok"),
     }
+
+
+@pytest.mark.parametrize(("args", "status", "code"), [
+    ({"project": "limited-project", "title": "样例"}, 404, "NOT_FOUND"),
+    ({"project": "sample-project"}, 422, "invalid_request"),
+    ({"project": "sample-project", "title": ""}, 422, "invalid_request"),
+    ({"project": "sample-project", "title": "样例", "content": "字" * 2001}, 422, "invalid_request"),
+])
+def test_write_tool_checks_business_input_and_scope_before_review(api, args, status, code):
+    client, reviews = api
+    login(client, "sampleoperator")
+    for path in (f"{BASE}/create_record", f"/api/v1/chat-fixture/{APP}/create_record"):
+        assert_error(client.post(path, json={"args": args}), status, code)
+    assert reviews.items == {}
+    assert client.get(f"/api/apps/{APP}/records").json()["items"] == []
+    rows = tool_audit(client)
+    assert {(row["detail"]["via"], row["detail"]["outcome"]) for row in rows} == {("ui", code), ("chat", code)}
+    assert len(rows) == 2
+
+
+def test_chat_write_requires_registered_preflight_and_checks_target_record(api):
+    client, reviews = api
+    platform = client.app.state.platform
+    platform.apps[APP].manifest["tools"].append({
+        "name": f"{APP}.update_record", "description": "修改样例记录",
+        "write": True, "input": {"rid": "string", "baseVersion": "integer", "title": "string"},
+        "endpoint": f"PUT /api/apps/{APP}/records/{{rid}}",
+    })
+    login(client, "sampleadmin")
+    target = client.post(f"/api/apps/{APP}/records", json={**ARGS, "project": "limited-project"}).json()
+    login(client, "sampleoperator")
+    args = {"rid": target["id"], "baseVersion": 1, "title": "修改样例"}
+    chat = f"/api/v1/chat-fixture/{APP}/update_record"
+    for path in (f"{BASE}/update_record", chat):
+        assert_error(client.post(path, json={"args": args}), 404, "NOT_FOUND")
+    client.app.state.apps_bridge.write_preflights.clear()
+    assert_error(client.post(chat, json={"args": args}), 500, "internal_error")
+    assert reviews.items == {}
+    login(client, "sampleadmin")
+    assert client.get(f"/api/apps/{APP}/records/{target['id']}").json() == target
+    assert {(row["detail"]["via"], row["detail"]["outcome"]) for row in tool_audit(client)} == {
+        ("ui", "NOT_FOUND"), ("chat", "NOT_FOUND"), ("chat", "internal_error"),
+    }
+
+
+@pytest.mark.parametrize("unavailable", ["disabled", "circuit"])
+def test_unavailable_app_checks_permissions_before_availability_and_audits(api, unavailable):
+    client, reviews = api
+    entry = client.app.state.platform.apps[APP]
+    if unavailable == "disabled":
+        login(client, "sampleadmin")
+        assert client.put(f"/api/v1/admin/apps/{APP}", json={"enabled": False}).status_code == 200
+        client.cookies.clear()
+    else:
+
+        for _ in range(FAILURE_THRESHOLD):
+            entry.circuit.record(True)
+
+    detail = f"/api/v1/apps/{APP}"
+    paths = (f"{BASE}/create_record", f"/api/v1/chat-fixture/{APP}/create_record")
+    assert_error(client.get(detail), 401, "UNAUTHENTICATED")
+    for path in paths:
+        assert_error(client.post(path, json={"args": ARGS}), 401, "UNAUTHENTICATED")
+
+    login(client, "sampleoutsider")
+    assert_error(client.get(detail), 403, "FORBIDDEN")
+    login(client, "partner")
+    for path in paths:
+        assert_error(client.post(path, json={"args": ARGS}), 403, "FORBIDDEN")
+    assert_error(client.get(f"{detail}/records"), 503, "app_unavailable")
+    assert_error(client.get(f"/api/apps/{APP}/records"), 503, "app_unavailable")
+
+    login(client, "sampleoperator")
+    detail_response = client.get(detail)
+    assert_error(detail_response, 503, "app_unavailable")
+    if unavailable == "circuit":
+        assert int(detail_response.headers["retry-after"]) > 0
+    for path in paths:
+        assert_error(client.post(path, json={"args": ARGS}), 503, "app_unavailable")
+
+    rows = tool_audit(client)
+    assert len(rows) == 4
+    assert {(row["user"], row["detail"]["via"], row["detail"]["outcome"]) for row in rows} == {
+        ("partner", "ui", "FORBIDDEN"), ("partner", "chat", "FORBIDDEN"),
+        ("sampleoperator", "ui", "app_unavailable"), ("sampleoperator", "chat", "app_unavailable"),
+    }
+    assert reviews.items == {}
+
+
+def test_catalog_and_detail_only_show_embed_url_to_platform_admin(api):
+    client, _ = api
+    for user, url in (("partner", None), ("sampleadmin", "https://embed.example.invalid/sample")):
+        login(client, user)
+        legacy = next(item for item in client.get("/api/apps").json()["apps"] if item["id"] == "sample-embed")
+        summary = next(item for item in client.get("/api/v1/apps").json()["items"] if item["id"] == "sample-embed")
+        detail = client.get("/api/v1/apps/sample-embed").json()
+        assert detail == summary
+        assert detail["url"] == legacy["url"] == url
+        assert "privateMetadata" not in detail and "defaultRoles" not in detail
+        assert detail["deepLink"] == {"params": ["project", "recordId"]}
 
 
 @pytest.mark.parametrize(("app", "tool", "need"), [
@@ -269,6 +384,22 @@ def test_manifest_rejects_unscoped_and_mismatched_tool_endpoints(endpoint):
     data = manifest()
     data["tools"][0]["endpoint"] = endpoint
     assert "tools[0].endpoint" in validate_extensions(data)[0]
+
+
+@pytest.mark.parametrize("target", ["read-tool", "other-endpoint", "invalid-value"])
+def test_manifest_restricts_template_preflight(target):
+    data = manifest()
+    read, write = data["tools"]
+    if target == "read-tool":
+        read["preflight"] = "record.create"
+        field = "tools[0].preflight"
+    else:
+        field = "tools[1].preflight"
+        if target == "other-endpoint":
+            write["endpoint"] += "/other"
+        else:
+            write["preflight"] = {}
+    assert field in validate_extensions(data)[0]
 
 
 def test_template_and_generated_app_pass_manifest_cli(tmp_path):
