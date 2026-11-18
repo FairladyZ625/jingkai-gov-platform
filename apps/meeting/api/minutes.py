@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 ShortText = Annotated[Text, StringConstraints(max_length=160)]
 UNCONFIRMED = '待确认'
-DECISION = re.compile(r'(?:结论|会议议定|议定|决定)[：:]\s*(.+)|^(?:会议一致同意|会议决定|会议议定)(.+)')
+DECISION = re.compile(r'^(?:结论|会议议定|会议决定|议定|决定)[：:]\s*(.+)|^(?:会议一致同意|会议决定|会议议定)(.+)')
 ACTION = re.compile(r'^(?:待办[：:]\s*|(?:我会|我们会|请)(?=\S))(.+)')
 
 
@@ -49,7 +49,7 @@ class SectionEdit(BaseModel):
 
 class MinutesEdit(BaseModel):
     # 接受把 GET 返回的纪要整体传回来，引用原话和待办由服务端重新计算。
-    title: ShortText
+    title: Annotated[Text, StringConstraints(max_length=320)]
     meta: str = ''
     attendees: str = ''
     template: str = ''

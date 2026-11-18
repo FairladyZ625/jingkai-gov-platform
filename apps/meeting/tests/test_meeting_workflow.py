@@ -56,11 +56,11 @@ def instance(make_client, isolated_platform):
     return agent
 
 
-def seed(agent, *, transcript=True):
+def seed(agent, *, transcript=True, title='公开演示例会'):
     response = agent.post(RECORDS, json={
         'type': 'meeting', 'project': 'sample-project',
         'data': {
-            'title': '公开演示例会', 'date': '2026-11-17', 'type': '专题推进会',
+            'title': title, 'date': '2026-11-17', 'type': '专题推进会',
             'host': '发言人 1', 'participants': ['发言人 1', '发言人 2'],
             'transcript': [
                 ['00:00', '发言人 1', '会议决定：公开材料。待办：起草工作方案。'],
@@ -138,7 +138,9 @@ def test_invalid_edits_and_transcript_visibility(instance):
     draft = seed(admin, transcript=False)
     assert ok(admin.get(draft))['minutes'] is None
     fails(admin.post(draft + '/todos/commit', json={'ids': []}), 409, 'INVALID_STATE')
-    fails(instance('sampleobserver').patch(path, json={'line': {'index': 0, 'text': '无权限'}}), 403, 'FORBIDDEN')
+    denied = instance('sampleobserver').patch(path, json={'line': {'index': 0, 'text': '无权限'}})
+    assert denied.status_code == 403, denied.text
+    assert denied.json()['error']['code'] == 'FORBIDDEN'
     fails(instance('sampleoutsider').get(path), 404, 'NOT_FOUND')
     fails(TestClient(admin.app).get(path), 401, 'UNAUTHENTICATED')
     fails(admin.get(MEETING + '/meetings/不存在'), 404, 'NOT_FOUND')
@@ -217,3 +219,12 @@ def test_link_enters_company_detail_and_document_navigation(instance):
             'from': {'app': 'meeting', 'id': meeting_id, 'title': '公开演示例会'},
         }}
     fails(admin.get(path + '/todos/unknown/document-link'), 404, 'NOT_FOUND')
+
+
+
+def test_minutes_with_max_length_meeting_title_can_be_saved(instance):
+    admin = instance()
+    path = seed(admin, title='长' * 160)
+    minutes = ok(admin.get(path))['minutes']
+    assert len(minutes['title']) == 162
+    assert ok(admin.patch(path, json={'minutes': minutes}))['minutes'] == minutes

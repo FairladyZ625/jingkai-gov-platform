@@ -3,10 +3,9 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
-from .workflow import router as workflow_router
+from .workflow import error_response, router as workflow_router
 
 router = APIRouter()
 router.include_router(workflow_router)
@@ -38,8 +37,8 @@ def health(request: Request):
     except HTTPException as exc:
         if exc.status_code != 401:
             raise
-        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "未登录", "details": {}}}, status_code=401)
+        return error_response("UNAUTHENTICATED", "未登录", 401)
     except PermissionDenied as exc:
         details = {"app": exc.app_id, "need": exc.action}
-        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "无权查看此应用", "details": details}}, status_code=403)
+        return error_response("FORBIDDEN", "无权查看此应用", 403, details)
     return {"id": ctx.app_id, "status": "ok"}

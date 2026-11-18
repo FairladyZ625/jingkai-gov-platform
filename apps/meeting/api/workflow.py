@@ -36,6 +36,10 @@ class LinkRequest(Input):
     title: ShortText | None = None
 
 
+def error_response(code, message, status, details=None):
+    return JSONResponse({'error': {'code': code, 'message': message, 'details': details or {}}}, status)
+
+
 class MeetingRoute(APIRoute):
     def get_route_handler(self):
         handler = super().get_route_handler()
@@ -55,7 +59,7 @@ class MeetingRoute(APIRoute):
                 status, message, details = exc.status_code, str(exc.detail), {}
                 code = {401: 'UNAUTHENTICATED', 403: 'FORBIDDEN', 404: 'NOT_FOUND',
                         409: 'INVALID_STATE', 503: 'APP_UNAVAILABLE'}.get(status, 'INVALID_REQUEST')
-            return JSONResponse({'error': {'code': code, 'message': message, 'details': details}}, status)
+            return error_response(code, message, status, details)
 
         return handle
 
