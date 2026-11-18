@@ -86,43 +86,63 @@ auth、admin、kb 的前缀分别映射到 core 的 `/api/auth`、`/api/admin`�
    超时秒数（默认 30），`JKQ_CODEX_MODEL_MAX_CONCURRENCY` 配置同时执行的上限
    （默认 2）。如需优先自动路由，可在启动前另设 `JKQ_MODEL_PROVIDER=codex-cli`。
 3. 在另一终端运行以下脚本，输入本地**实例**的有效账号和密码。若新库尚无账号，先在本机服务的 `/docs` 中调用 `POST /api/auth/bootstrap`，按其请求格式建立首个管理员。
-   脚本在内存中保留会话，列出 Codex 目录项，保存该用户的当前模型偏好，再用
-   公开合成输入验证真实回复。它会检查实际模型、`mock` 标记和内容，跑完恢复原偏好。
+   脚本默认通过请求参数选模，保留账户的模型偏好。使用专用验收账号时，可以输入 `y` 保存当前模型，再验证没有 `model` 参数的请求能用上该偏好。
+   若同时验证工具，使用对政策应用有操作权限的账号。
 
    ```sh
    python3.12 - <<'PY'
+   import json
    from getpass import getpass
    import httpx
 
+   user = getpass("实例用户名（输入不回显）：")
+   password = getpass("实例密码：")
+   save_current = getpass("专用验收账号是否保存当前模型 [y/N]：") == "y"
+   check_tool = getpass("同时验证政策工具 SSE [y/N]：") == "y"
+
    with httpx.Client(base_url="http://127.0.0.1:8000", timeout=60, trust_env=False) as api:
-       # 从终端读取账号；脚本本身通过标准输入提供。
-       user = getpass("实例用户名（输入不回显）：")
-       password = getpass("实例密码：")
        api.post("/api/v1/auth/login", json={"username": user, "password": password}).raise_for_status()
        catalog = api.get("/api/v1/models").raise_for_status().json()
        cli = next(item for item in catalog["items"] if item["id"] == "codex-cli")
        print(cli["id"], cli["name"], cli["enabled"])
        assert cli["enabled"]
-       path = "/api/v1/models/current"
-       api.put(path, json={"model": "codex-cli"}).raise_for_status()
-       try:
-           reply = api.post("/api/v1/ai/chat", json={
-               "classification": "public",
-               "messages": [{"role": "user", "content": "请仅回复 JKQ_CODEX_OK"}],
-           }).raise_for_status().json()
-           print(reply["model"], reply["mock"], reply["content"])
-           assert reply["model"] == cli["name"] and reply["mock"] is False
-           assert reply["content"].strip() == "JKQ_CODEX_OK"
-       finally:
-           api.put(path, json={"model": catalog["current"]}).raise_for_status()
+       payload = {"classification": "public"}
+       if save_current:
+           saved = api.put("/api/v1/models/current", json={"model": "codex-cli"})
+           assert saved.raise_for_status().json()["current"] == "codex-cli"
+       else:
+           payload["model"] = "codex-cli"
+       path = "/api/v1/ai/chat"
+       reply = api.post(path, json={
+           **payload, "messages": [{"role": "user", "content": "请仅回复 JKQ_CODEX_OK"}],
+       }).raise_for_status().json()
+       print(reply["model"], reply["mock"], reply["content"])
+       assert reply["model"] == cli["name"] and reply["mock"] is False
+       assert reply["content"].strip() == "JKQ_CODEX_OK"
+
+       if check_tool:
+           with api.stream("POST", path, json={
+               **payload, "stream": True, "tools": ["policy.match"],
+               "messages": [{"role": "user", "content": "请调用政策匹配工具，企业编号为公开演练值 E001"}],
+           }) as response:
+               response.raise_for_status()
+               assert response.headers["content-type"].startswith("text/event-stream")
+               event = None
+               seen = {}
+               for line in response.iter_lines():
+                   if line.startswith("event: "):
+                       event = line.removeprefix("event: ")
+                   elif line.startswith("data: "):
+                       seen.setdefault(event, []).append(json.loads(line.removeprefix("data: ")))
+               assert seen["meta"][0]["model"] == cli["name"]
+               assert {"tool": "policy.match", "args": {"entId": "E001"}} in seen["tool"]
+               print("工具事件", seen["tool"], "完成", seen["done"][0]["messageId"])
    PY
    ```
 
 ### 工具、流式与故障
 
-拥有对应应用操作权限的用户可以在上述对话请求中加上
-`"tools":["policy.match"],"stream":true`，并将消息改为“请调用政策匹配工具，企业编号为公开演练值 E001”。
-实例把已注册的工具声明传给 CLI。带工具的模型输出须为单个 JSON 对象，例如
+上方脚本的工具验收读取 SSE 事件。实例把已注册的工具声明传给 CLI。带工具的模型输出须为单个 JSON 对象，例如
 
 ```json
 {"content":null,"tool_calls":[{"name":"policy_match","arguments":{"entId":"E001"}}]}
