@@ -6,7 +6,17 @@
   const clone = (o) => JSON.parse(JSON.stringify(o));
   let S;
   function load() {
-    try { const raw = localStorage.getItem(KEY); if (raw) { S = JSON.parse(raw); return; } } catch (e) {}
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        S = JSON.parse(raw);
+        // 刷新后使用当前模型配置，同时保留管理员在原型内设置的启停状态。
+        const enabled = new Map(S.models.map((m) => [m.id, m.enabled]));
+        S.models = SEED.models.map((m) => ({ ...m, enabled: enabled.get(m.id) ?? m.enabled }));
+        S.capabilities = clone(SEED.capabilities);
+        return;
+      }
+    } catch (e) {}
     S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
     seedDrafts();
   }
@@ -108,7 +118,7 @@
   }
 
   /* ================= 会议长任务 ================= */
-  const JOB_STEPS = ['上传与校验', '语音转写（本地 SenseVoice）', '区分发言人', '热词纠错', '生成纪要与待办'];
+  const JOB_STEPS = ['上传与校验', `语音转写（${SEED.capabilities.find((c) => c.id === 'transcribe').route}）`, '区分发言人', '热词纠错', '生成纪要与待办'];
   function jobState(j) {
     const speed = S.demoFast ? 0.45 : 1;
     const elapsed = (Date.now() - j.started) / 1000, total = 6 * speed;
@@ -233,8 +243,13 @@
   /* ================= 对话编排（意图识别 → 调用小应用工具 → 卡片） ================= */
   function pickModel(requested, sensitive) {
     const m = S.models.find((x) => x.id === requested) || S.models[0];
-    if (sensitive && (m.kind === 'cloud' || m.id === 'auto')) return { used: S.models.find((x) => x.id === 'local-qwen-32b'), note: m.id === 'auto' ? '涉及企业台账，已自动路由到本地模型' : `涉及企业台账（内部数据），已从 ${m.name} 切换到本地模型，数据不出局` };
-    if (m.id === 'auto') return { used: S.models.find((x) => x.id === 'deepseek-v4.1-flash'), note: '自动选择：高频问答 → DeepSeek-V4.1-Flash' };
+    const routing = window.JK_CONFIG.modelRouting;
+    if (m.id === 'auto' || (sensitive && m.kind !== 'local')) {
+      const channel = sensitive ? 'local' : routing.defaultChannel;
+      const used = S.models.find((x) => x.id === routing.channels[channel] && x.kind === channel && x.enabled);
+      if (!used) err(503, 'MODEL_UNAVAILABLE', '配置的模型通道不可用');
+      return { used, note: sensitive ? '涉及企业台账，已自动路由到本地模型' : `自动选择：高频问答 → ${used.name}` };
+    }
     return { used: m, note: '' };
   }
   function detectIntent(text, forced) {
@@ -363,7 +378,7 @@
   on('POST', '/api/apps/policy/match', (b) => {
     let pf; if (b.entId) { const e = ent(b.entId); pf = profileOf(e); Object.assign(pf, b.overrides || {}); if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])]; }
     else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
-    const results = matchAll(pf); audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, 'DeepSeek-V4.1-Flash');
+    const results = matchAll(pf); audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, pickModel(S.modelId, !!b.entId).used.name);
     return { profile: pf, results, summary: { ok: results.filter((r) => r.level === 'ok').length, check: results.filter((r) => r.level === 'check').length, no: results.filter((r) => r.level === 'no').length } };
   });
   on('POST', '/api/apps/policy/calc', (b) => { const p = pol(b.itemId); const pf = {}; if (p.rule.base) pf[p.rule.base] = +b.amount; return { item: p.id, rule: p.rule.text, result: calcOf(p, pf), note: '试算按政策原文规则确定性计算，实际金额以评审结果为准' }; });
@@ -372,7 +387,7 @@
     const lines = [`${e.name}：`, `根据你单位情况，经初步核对，可关注以下政策事项（仅供参考，以正式申报审核为准）：`];
     items.forEach((p, i) => { lines.push(`${i + 1}. ${p.title}（${pdoc(p.doc).no} ${p.clause}）`); lines.push(`   支持标准：${p.rule.text}`); lines.push(`   申报时间：${p.times.window}`); lines.push(`   需准备材料：${p.materials.join('、') || '以申报通知为准'}`); if (p.pending.length) lines.push(`   尚需确认：${p.pending.join('、')}`); });
     lines.push('如有疑问请联系企业服务处，电话 010-6788XXXX。', `北京经济技术开发区产业促进局　${cnDate('2026-11-17')}`);
-    audit('政策兑现咨询', `生成一次性告知单 · ${e.short}`, 'Qwen4-Max');
+    audit('政策兑现咨询', `生成一次性告知单 · ${e.short}`, pickModel(S.modelId, true).used.name);
     return { text: lines.join('\n') };
   });
   // 企业管理维护
@@ -396,7 +411,7 @@
     S.visits.unshift(v); e.lastVisit = '2026-11-17'; e.lastVisitDays = 0;
     const { proposals, issues } = extractVisit(e, b.notes);
     S.proposals.push(...proposals);
-    audit('企业管理维护', `记录走访 · ${e.short}`, 'Qwen3-32B（本地）');
+    audit('企业管理维护', `记录走访 · ${e.short}`, pickModel(S.modelId, true).used.name);
     return { visit: v, proposals, issues };
   });
   on('POST', '/api/apps/enterprise/proposals/:id/decision', (b, p) => { const x = S.proposals.find((y) => y.id === p.id); if (!x) err(404, 'NOT_FOUND', '建议不存在'); if (b.value) x.new = b.value; x.status = b.decision === 'accept' ? 'accepted' : 'rejected'; if (x.status === 'accepted') applyProposal(x); audit('企业管理维护', `${x.status === 'accepted' ? '确认写入' : '忽略'} · ${x.label}`); const left = S.proposals.filter((y) => y.entId === x.entId && y.status === 'pending').length; if (!left) S.inbox.forEach((i) => { if (i.type === 'proposal' && i.ref === x.entId) i.status = 'done'; }); return { item: x, pending: left }; });
@@ -409,7 +424,7 @@
   // 会议记录
   on('GET', '/api/apps/meeting/meetings', () => ({ items: S.meetings.map((m) => ({ id: m.id, title: m.title, type: m.type, date: m.date, duration: m.duration, status: m.status, file: m.file, size: m.size, source: m.source, scope: m.scope, participants: m.participants, todoCount: (m.todos || []).length })), templates: S.meetingTemplates, hotwords: S.hotwords }));
   on('POST', '/api/apps/meeting/meetings', (b) => { const m = { id: nid('MT'), title: b.title || '未命名会议', type: b.type || '企业座谈会', date: b.date || now(), duration: b.duration || '18:32', place: b.place || '—', host: me().name, participants: b.participants && b.participants.length ? b.participants : [me().name], file: b.file || '现场录音.m4a', size: b.size || '12.4 MB', status: 'new', source: b.source || '网页上传' }; S.meetings.unshift(m); return { item: m }; });
-  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, 'SenseVoice（本地）'); return { job: jobState(j) }; });
+  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, SEED.capabilities.find((c) => c.id === 'transcribe').route); return { job: jobState(j) }; });
   on('GET', '/api/v1/jobs/:id', (b, p) => { const j = S.jobs[p.id]; if (!j) err(404, 'NOT_FOUND', '任务不存在'); return { job: jobState(j) }; });
   on('GET', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (!m) err(404, 'NOT_FOUND', '会议不存在'); return { item: m, minutes: m.status === 'done' ? (m.minutesEdited || minutesOf(m)) : null }; });
   on('PATCH', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id);
@@ -426,7 +441,7 @@
   // 公文协作
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
-  on('POST', '/api/apps/document/drafts', (b) => { const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: (b.inputs || {}).policy, status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, 'Qwen4-Max'); return { item: S.drafts[id] }; });
+  on('POST', '/api/apps/document/drafts', (b) => { const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: (b.inputs || {}).policy, status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used.name); return { item: S.drafts[id] }; });
   on('GET', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404, 'NOT_FOUND', '文稿不存在'); return { item: d }; });
   on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
   on('POST', '/api/apps/document/drafts/:id/check', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; return { issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
@@ -450,7 +465,7 @@
   // 资料库（NAS 归集 + 检索）
   on('GET', '/api/v1/kb/libraries', () => ({ items: S.libraries.map((l) => ({ ...l, files: S.files.filter((f) => f.lib === l.id).length })) }));
   on('GET', '/api/v1/kb/files', (b, p, q) => { let items = S.files; if (q.lib) items = items.filter((f) => f.lib === q.lib); if (q.q) items = items.filter((f) => (f.name + f.tags.join('')).includes(q.q)); if (q.sort === 'cited') items = items.slice().sort((a, c) => c.cited - a.cited); return { items, total: items.length }; });
-  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, 'MinerU（本地）'); return { item: f, job: jobState(j) }; });
+  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, SEED.capabilities.find((c) => c.id === 'parse').route); return { item: f, job: jobState(j) }; });
   on('POST', '/api/v1/kb/search', (b) => ({ hits: kbSearch(b.q) }));
   on('GET', '/api/v1/kb/files/:id', (b, p) => { if (p.id.startsWith('POL:')) { const x = pol(p.id.slice(4)); return { item: { id: p.id, name: pdoc(x.doc).title, no: pdoc(x.doc).no, clause: x.clause, text: x.original, state: pdoc(x.doc).state, verifiedAt: x.verifiedAt, versionNote: x.versionNote } }; } const f = S.files.find((x) => x.id === p.id); return { item: { ...f, text: f.snippet || '（演示：文件全文在 NAS 中，正式环境可在线预览并定位页码）' } }; });
   // 技能中心 / 造应用（复用卫华 builder：对话 → 需求包 → 试跑 → 发布）
@@ -523,7 +538,7 @@
     onChange: (f) => listeners.push(f),
     reset() { localStorage.removeItem(KEY); load(); loadHooks.forEach((f) => f(S)); save(); listeners.forEach((f) => f('RESET', '')); },
     /* 扩展点：账号权限模块（assets/auth.js）通过它注册路由、读写状态，不改本文件 */
-    ext: { on, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, save, clone, nid, now },
+    ext: { on, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now },
     onLoad(f) { loadHooks.push(f); f(S); save(); },
     guard: null,
     setFast(v) { S.demoFast = v; window.JKAPI.latency = v ? 90 : 260; },

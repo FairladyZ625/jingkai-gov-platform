@@ -30,27 +30,10 @@
   ];
 
   /* ---------- 模型（统一模型网关，可随时替换） ---------- */
-  D.models = [
-    { id: 'auto', name: '自动选择', provider: '模型网关', group: '推荐', kind: 'route', desc: '按任务自动路由：敏感数据走本地，写作走旗舰，问答走高速', tags: ['推荐'], enabled: true },
-    { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '复杂推理、政策条件分析', tags: ['推理'], ctx: '1M', enabled: true },
-    { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', provider: '深度求索', group: '国产云端', kind: 'cloud', desc: '高频问答、信息提取，速度快', tags: ['高速'], ctx: '1M', enabled: true },
-    { id: 'qwen4-max', name: '通义千问 Qwen4-Max', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '旗舰多模态，长文写作与工具调用', tags: ['旗舰', '写作'], ctx: '1M', enabled: true },
-    { id: 'qwen3.8-flash', name: '通义千问 Qwen3.8-Flash', provider: '阿里云百炼', group: '国产云端', kind: 'cloud', desc: '低成本日常任务', tags: ['高速'], ctx: '1M', enabled: true },
-    { id: 'glm-5.3', name: '智谱 GLM-5.3', provider: '智谱 AI', group: '国产云端', kind: 'cloud', desc: '规则梳理、方案检查', tags: ['推理'], ctx: '1M', enabled: true },
-    { id: 'kimi-k3.1-pro', name: 'Kimi K3.1 Pro', provider: '月之暗面', group: '国产云端', kind: 'cloud', desc: '超长文档阅读，政策原文通读', tags: ['长文'], ctx: '1M', enabled: true },
-    { id: 'doubao-seed-2', name: '豆包 Seed-2.0', provider: '字节跳动', group: '国产云端', kind: 'cloud', desc: '口语化改写、通知摘要，响应快', tags: ['快速'], ctx: '256K', enabled: true },
-    { id: 'ernie-5.5', name: '文心 5.5', provider: '百度智能云', group: '国产云端', kind: 'cloud', desc: '可经“亦智”平台纳管调用', tags: ['亦智'], ctx: '128K', enabled: true },
-    { id: 'hunyuan-hy4', name: '腾讯混元 Hy4', provider: '腾讯云', group: '国产云端', kind: 'cloud', desc: '视觉理解、读图', tags: ['读图'], ctx: '1M', enabled: true },
-    { id: 'local-qwen-32b', name: 'Qwen3-32B（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '企业台账、未公开公文等敏感数据只走本地', tags: ['数据不出局'], ctx: '128K', enabled: true },
-    { id: 'local-deepseek', name: 'DeepSeek 蒸馏版（本地）', provider: '局内机房', group: '本地部署', kind: 'local', desc: '离线兜底', tags: ['数据不出局'], ctx: '64K', enabled: true },
-    { id: 'gpt', name: 'GPT 系列', provider: 'OpenAI', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
-    { id: 'claude', name: 'Claude 系列', provider: 'Anthropic', group: '海外模型（默认关闭）', kind: 'overseas', desc: '政务数据不出境，默认关闭；管理员可对公开资料开放', tags: ['需审批'], enabled: false },
-  ];
-  D.capabilities = [
-    { id: 'chat', name: '对话', route: 'auto' }, { id: 'transcribe', name: '语音转写', route: 'FunASR / SenseVoice（本地）' },
-    { id: 'embedding', name: '向量检索', route: 'BGE-M3（本地）' }, { id: 'parse', name: '文档解析', route: 'MinerU（本地）' },
-    { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
-  ];
+  const routing = window.JK_CONFIG.modelRouting;
+  D.models = routing.models;
+  D.capabilities = routing.capabilities;
+  const modelName = (id) => D.models.find((m) => m.id === id).name;
 
   /* ---------- 小应用注册表（复用卫华 apps/<id>/app.json 清单规范） ---------- */
   D.apps = [
@@ -398,11 +381,11 @@
     ['25 分钟前', '刘翔 复制改编了「走访随记转台账」'], ['1 小时前', '孙婷 发布「政策新旧版本对比」v1.0.3'], ['今天 08:15', 'NAS 同步 12 份资料到「政策法规库」'], ['昨天', '「京技管发〔2024〕10号」被新版替代，3 条历史答复已标记“来源已修订”'],
   ];
   D.audit = [
-    ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', 'DeepSeek-V4.1-Flash'], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', 'Qwen3-32B（本地）'],
-    ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', 'Qwen4-Max'], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
-    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', 'GLM-5.3'], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', 'SenseVoice（本地）'],
+    ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', modelName(routing.channels.local)], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', modelName(routing.channels.local)],
+    ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', modelName(routing.taskModels.writing)], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
+    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', modelName(routing.taskModels.rules)], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', D.capabilities.find((c) => c.id === 'transcribe').route],
   ];
-  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [['DeepSeek-V4.1-Flash', 34], ['Qwen3-32B（本地）', 27], ['Qwen4-Max', 18], ['GLM-5.3', 9], ['Kimi K3.1 Pro', 7], ['其他', 5]] };
+  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [[modelName(routing.channels.cloud), 34], [modelName(routing.channels.local), 27], [modelName(routing.taskModels.writing), 18], [modelName(routing.taskModels.rules), 9], [modelName(routing.taskModels.longText), 7], ['其他', 5]] };
 
   /* ---------- 对话历史 ---------- */
   D.conversations = [
