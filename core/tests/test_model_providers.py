@@ -36,11 +36,16 @@ def test_configured_model_is_used_and_audited(tmp_path, monkeypatch, mode):
         assert model.chat(MESSAGES) == ('云端桩结果' if mode == 'cloud' else '桩服务真实往返')
         name = requests[0]['body']['model']
         assert name == 'operator-selected-model'
+        # 旧应用仍可能传 model 参数；显式环境路由按运维配置的模型请求。
+        assert model.chat(MESSAGES, model='legacy-app-model')
+        assert requests[1]['body']['model'] == name
         assert client.get('/api/model/usage').json()['model_name'] == name
         env_route = client.get('/api/v1/admin/ai/routes').json()['items'][0]
         assert env_route['model'] == name and env_route['provider'] == ENVIRONMENT_PROVIDER
         assert client.app.state.platform.model.aihub.settings.stored_routes()[0]['model'] == 'offline-model'
         audit = client.get('/api/audit?app_id=sample-app').json()['items']
+        assert all(a['detail'] == {'provider': ENVIRONMENT_PROVIDER, 'model': name}
+                   for a in audit if a['action'] == 'ai.chat')
         assert next(a['detail'] for a in audit if a['action'] == 'ai.chat') == {
             'provider': ENVIRONMENT_PROVIDER, 'model': name}
         refused = client.put('/api/v1/admin/ai/providers/@environment', json={'kind': 'mock', 'models': ['other']})
@@ -153,3 +158,23 @@ def test_real_codex_cli_smoke(tmp_path, monkeypatch):
     assert client.get('/api/model/usage').json()['model_name'] == name
     version = subprocess.check_output(['codex', '--version'], text=True).strip()
     print(f'{version} | provider=codex-cli | model={name} | result={result}')
+
+
+def test_explicit_mock_serves_both_chat_entries_offline(tmp_path, monkeypatch):
+    monkeypatch.setenv('HAIKNOW_MODEL_PROVIDER', 'mock')
+    for name in ('HAIKNOW_MODEL_BASE_URL', 'HAIKNOW_MODEL_NAME', 'HAIKNOW_MODEL_API_KEY'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('HTTP_PROXY', 'http://127.0.0.1:1')
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:1')
+    client = _admin_client(tmp_path, monkeypatch)
+    platform = client.app.state.platform
+    model = platform.model.for_app('sample-app')
+    assert model.available
+    assert '模拟' in model.chat(MESSAGES)
+    assert '模拟' in model.chat(MESSAGES, model='legacy-app-model')
+    hub = platform.model.aihub
+    route = hub.settings.route('chat')
+    assert route['provider'] == ENVIRONMENT_PROVIDER
+    result = hub.call('sample-app', 'chat', {'messages': MESSAGES, 'classification': 'confidential'}, 5)
+    assert '模拟' in result['result']
+    assert not list(tmp_path.glob('*.key'))

@@ -77,9 +77,13 @@ class AISettings:
         routes = self.stored_routes()
         if self.environment.explicit:
             routes = [route for route in routes if route['capability'] != 'chat']
-        environment_chat = self.environment.mode != 'mock' and (self.environment.explicit or self.environment.ready())
+        environment = self.environment
+        if environment.mode == 'mock':
+            environment_chat, model = environment.explicit, environment.model or 'mock'
+        else:
+            environment_chat, model = environment.explicit or environment.ready(), environment.model
         if environment_chat and not any(route['capability'] == 'chat' for route in routes):
-            routes.append(dict(capability='chat', provider=ENVIRONMENT_PROVIDER, model=self.environment.model,
+            routes.append(dict(capability='chat', provider=ENVIRONMENT_PROVIDER, model=model,
                                fallback_provider=None, fallback_model=None))
         return sorted(routes, key=lambda route: route['capability'])
 
