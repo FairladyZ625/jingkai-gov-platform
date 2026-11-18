@@ -1,3 +1,4 @@
+import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -164,6 +165,8 @@ def sample_pdf(text):
 
 @pytest.mark.parametrize(("text", "app"), [(b"[2026]8#", "policy"), (b"sample", None)])
 def test_pdf_body(text, app):
+    if shutil.which("pdftotext") is None:
+        pytest.skip("需要 pdftotext 才能核验 PDF 正文文号")
     item, route = prepare("file", "材料.pdf", sample_pdf(text), MANIFESTS)
     assert route["app"] == app
     if app:

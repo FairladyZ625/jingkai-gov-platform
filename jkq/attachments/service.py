@@ -83,8 +83,8 @@ def pdf_sample(data):
             )
         except subprocess.TimeoutExpired:
             return ""
-        except FileNotFoundError as exc:
-            raise InputError(500, "internal_error", "PDF 文本提取服务尚未安装") from exc
+        except FileNotFoundError:
+            return ""
         output.seek(0)
         return output.read(4096).decode("utf-8", errors="ignore") if result.returncode == 0 else ""
 
