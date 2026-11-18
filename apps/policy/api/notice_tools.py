@@ -44,9 +44,9 @@ def notice(body: NoticeRequest, ctx: AppContext = Depends(notice_operator)):
     return result
 
 
-@router.post("/tools/match", dependencies=[Depends(app_context)])
-def match_tool(body: dict):
-    result = match(body)
+@router.post("/tools/match")
+def match_tool(body: dict, ctx: AppContext = Depends(app_context)):
+    result = match(body, ctx)
     if "entId" in body:
         result["cards"] = [match_card(body["entId"], result["results"])]
     return result

@@ -37,33 +37,41 @@
   "tools": [
     {
       "name": "policy.match",
-      "desc": "为企业逐条核对兑现事项",
-      "params": {
+      "description": "为企业逐条核对兑现事项",
+      "write": false,
+      "input": {
         "entId": "string"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/tools/match"
     },
     {
       "name": "policy.calc",
-      "desc": "按原文规则试算额度",
-      "params": {
+      "description": "按原文规则试算额度",
+      "write": false,
+      "input": {
         "itemId": "string",
         "amount": "number"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/calc"
     },
     {
       "name": "policy.notice",
-      "desc": "生成一次性告知单",
-      "params": {
+      "description": "生成一次性告知单",
+      "write": false,
+      "input": {
         "entId": "string",
         "itemIds": "string[]"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/notice"
     },
     {
       "name": "policy.search",
-      "desc": "按口语搜索兑现事项",
-      "params": {
+      "description": "按口语搜索兑现事项",
+      "write": false,
+      "input": {
         "q": "string"
-      }
+      },
+      "endpoint": "GET /api/apps/policy/tools/search"
     }
   ],
   "intents": [
@@ -71,9 +79,8 @@
       "id": "policy.match",
       "action": "match",
       "examples": [
-        "帮我查一下星河智驾能申报哪些政策",
-        "书香里文化能申请哪些支持？",
-        "书香里能拿哪些补贴"
+        "帮我查一下示例企业能申报哪些政策",
+        "示例企业能申请哪些支持？"
       ],
       "keywords": [
         "政策",
@@ -145,7 +152,7 @@
       "id": "policy.notice",
       "action": "notice",
       "examples": [
-        "给书香里生成政策告知单",
+        "给示例企业生成政策告知单",
         "生成一次性告知单"
       ],
       "keywords": [
@@ -240,5 +247,20 @@
     "items",
     "detail",
     "docs"
-  ]
+  ],
+  "starters": [
+    "看看书香里文化能申请什么"
+  ],
+  "chatCards": [
+    "policy-match",
+    "policy-items"
+  ],
+  "deepLink": {
+    "params": [
+      "entId",
+      "tab",
+      "itemId"
+    ]
+  },
+  "dataClass": "internal"
 }

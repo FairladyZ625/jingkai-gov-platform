@@ -1,34 +1,33 @@
-"""在政策脚手架和事项库就绪后验证 HTTP、角色与工具桥。"""
+"""通过实例入口验证告知单、授权和对话编排。"""
 
 import json
-from pathlib import Path
+from shutil import copyfile
 
 import pytest
+from fastapi.testclient import TestClient
+
+from jkq.app import create_app
+from jkq.settings import REPO_ROOT
 
 from apps.policy.api.policy_cards import match_card
 
 
-APP_DIR = Path(__file__).resolve().parents[1]
 PREFIX = "/api/apps/policy"
 NOTICE = {"entId": "E001", "itemIds": ["RP-001", "RP-006"]}
 
-pytestmark = pytest.mark.skipif(
-    not all((APP_DIR / file).is_file() for file in ("app.json", "api/router.py", "api/policy_routes.py")),
-    reason="等待 #29 应用脚手架与 #30 政策目录进入主线",
-)
-
-
 @pytest.fixture
-def policy_client(make_client, isolated_platform):
+def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch):
     config, _ = isolated_platform
+    copyfile(REPO_ROOT / "config/projects.yaml", config / "projects.yaml")
     path = config / "users.yaml"
     users = json.loads(path.read_text())
     users["users"].append({"id": "partner", "name": "测试协作者", "roles": ["partner"], "projects": []})
     path.write_text(json.dumps(users), encoding="utf-8")
-    def make(user="sampleadmin", *, configure=None):
-        client = make_client(APP_DIR.parent)
-        if configure:
-            configure(client.app)
+    monkeypatch.setenv("HAIKNOW_APPS_DIR", str(REPO_ROOT / "apps"))
+    monkeypatch.setenv("HAIKNOW_SECRET", "test-policy-session")
+
+    def make(user="sampleadmin"):
+        client = TestClient(create_app())
         assert client.post("/api/auth/login", json={"user_id": user}).status_code == 200
         return client
 
@@ -72,6 +71,7 @@ def test_invalid_notice_requests(policy_client, overrides, status, code):
 def test_view_only_role_can_read_items_and_cannot_generate_notice(policy_client):
     client = policy_client("partner")
     assert client.get(f"{PREFIX}/items").status_code == 200
+    assert client.post(f"{PREFIX}/tools/match", json={"entId": "E001"}).status_code == 403
     for item_ids in (NOTICE["itemIds"], []):
         response = client.post(f"{PREFIX}/notice", json={**NOTICE, "itemIds": item_ids})
         assert response.status_code == 403
@@ -109,28 +109,52 @@ def test_tools_emit_cards_from_actual_catalog_and_matcher(policy_client):
     } in card["deepLinks"]
 
 
-def test_platform_tool_bridge_registers_and_dispatches_policy_tools(policy_client):
-    apps_bridge = pytest.importorskip("jkq.apps_bridge")
-    from fastapi import Request
-    from haiknow_core.main import current_user
+def _send(client, text):
+    conversation = client.post("/api/v1/conversations", json={"title": "政策验收"})
+    assert conversation.status_code == 200, conversation.text
+    cid = conversation.json()["item"]["id"]
+    result = client.post(f"/api/v1/conversations/{cid}/messages", json={"text": text})
+    assert result.status_code == 200, result.text
+    return result.json()["reply"]
 
-    def configure(app):
-        bridge = apps_bridge.install(app, current_user)
 
-        # #22 届时在同一登录请求内调用此入口。这里验证工具桥的对话入口。
-        @app.post("/tests/policy-tool-from-chat")
-        async def call_from_chat(request: Request, body: dict):
-            return await bridge.call_from_chat(request, "policy", body["tool"], body["args"])
+@pytest.mark.parametrize(("utterance", "ent_id"), [
+    ("看看书香里文化能申请什么", "E001"),
+    ("看看纸鹿二号智驾能申请什么？", "E002"),
+    ("书香里文化能申请哪些支持？", "E001"),
+])
+def test_real_conversation_returns_policy_match_card(policy_client, utterance, ent_id):
+    client = policy_client()
+    reply = _send(client, utterance)
+    assert reply["toolCalls"] == [{"tool": "policy.match", "args": {"entId": ent_id}, "status": "ok"}]
+    card, = reply["cards"]
+    assert card["type"] == "policy-match"
+    assert card["entId"] == ent_id
+    assert card["deepLink"] == {"app": "policy", "params": {"entId": ent_id}}
+    assert len(card["results"]) == 5
 
-    client = policy_client(configure=configure)
-    tool_list = client.get("/api/v1/tools").json()["items"]
-    assert {tool["name"] for tool in tool_list if tool["app"] == "policy"} >= {
-        "policy.match", "policy.notice", "policy.search",
-    }
-    assert client.get("/api/v1/apps/policy").json()["chatCards"] == ["policy-match", "policy-items"]
-    match = client.post("/tests/policy-tool-from-chat", json={"tool": "match", "args": {"entId": "E001"}})
-    assert match.status_code == 200, match.text
-    assert match.json()["result"]["cards"][0]["type"] == "policy-match"
-    notice = client.post("/tests/policy-tool-from-chat", json={"tool": "notice", "args": NOTICE})
-    assert notice.status_code == 200, notice.text
-    assert notice.json()["result"]["deepLink"]["params"]["templateId"] == "T10"
+
+def test_real_conversation_search_returns_items_card_link(policy_client):
+    reply = _send(policy_client(), "搜索政策事项 RP-006")
+    card, = reply["cards"]
+    assert card["type"] == "policy-items"
+    assert card["ids"] == ["RP-006"]
+    assert card["deepLink"] == {"app": "policy", "params": {"tab": "library", "itemId": "RP-006"}}
+
+
+def test_real_conversation_generates_notice_for_explicit_selection(policy_client):
+    reply = _send(policy_client(), "给书香里生成告知单 RP-001、RP-006")
+    assert reply["toolCalls"] == [{"tool": "policy.notice", "args": NOTICE, "status": "ok"}]
+    assert reply["content"].count("咨询电话：请填写") == 2
+    assert "政策兑现一次性告知单" in reply["content"]
+
+
+def test_real_conversation_needs_selection_before_generating_notice(policy_client):
+    reply = _send(policy_client(), "给书香里生成告知单")
+    assert reply["content"] == "请提供要写入告知单的政策事项编号。"
+
+
+def test_view_only_role_does_not_receive_company_match_card(policy_client):
+    reply = _send(policy_client("partner"), "书香里文化能申请哪些支持")
+    assert reply["cards"] == []
+    assert reply["toolCalls"][0]["status"] == "error"
