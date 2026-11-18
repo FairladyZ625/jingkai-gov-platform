@@ -137,7 +137,7 @@
   function state() { const S = X.state(); S.kb = S.kb || { added: [], removed: [], edits: {}, log: [] }; return S.kb; }
   function load() {
     const K = state();
-    DOCS = seed().filter((d) => !K.removed.includes(d.id)).concat(K.added.map((d) => Object.assign({}, d)));
+    DOCS = seed().concat(K.added.map((d) => Object.assign({}, d))).filter((d) => !K.removed.includes(d.id));
     DOCS.forEach((d) => { const e = K.edits[d.id]; if (e) Object.assign(d, e); });
     rebuild();
   }
@@ -380,7 +380,7 @@
     return { item: pub(d, { text: d.text, chunkList: d.chunks.map((c) => ({ i: c.i, start: c.start, end: c.end, head: c.head })), uploadedBy: d.uploadedBy, addedAt: d.addedAt, parse: d.parse || 'real', versions, newer: newer ? { id: newer.id, version: newer.version, date: newer.date } : null }) };
   });
   on('PATCH', '/api/v1/kb/docs/:id', (b, p) => { const d = DOCS.find((x) => x.id === p.id); if (!d) X.err(404, 'NOT_FOUND', '资料不存在'); if (!X.can('kb', 'operate')) X.err(403, 'FORBIDDEN', '没有修改权限'); const K = state(); const e = {}; ['tags', 'title', 'space', 'expire', 'status'].forEach((k) => { if (b[k] !== undefined) e[k] = b[k]; }); K.edits[d.id] = Object.assign(K.edits[d.id] || {}, e); X.audit('知识库', `修改资料信息 · ${d.title.slice(0, 14)}`); load(); return { item: pub(DOCS.find((x) => x.id === p.id)) }; });
-  on('DELETE', '/api/v1/kb/docs/:id', (b, p) => { if (!X.can('kb', 'admin') && !X.can('kb', 'approve')) X.err(403, 'FORBIDDEN', '只有管理员或审签领导可以删除资料'); const K = state(); const d = DOCS.find((x) => x.id === p.id); if (!d) X.err(404, 'NOT_FOUND', '资料不存在'); if (K.added.some((x) => x.id === p.id)) K.added = K.added.filter((x) => x.id !== p.id); else K.removed.push(p.id); X.audit('知识库', `删除资料 · ${d.title.slice(0, 14)}`); load(); return { ok: true, item: { id: d.id, title: d.title } }; });
+  on('DELETE', '/api/v1/kb/docs/:id', (b, p) => { if (!X.can('kb', 'admin') && !X.can('kb', 'approve')) X.err(403, 'FORBIDDEN', '只有管理员或审签领导可以删除资料'); const K = state(); const d = DOCS.find((x) => x.id === p.id); if (!d) X.err(404, 'NOT_FOUND', '资料不存在'); if (!K.removed.includes(p.id)) K.removed.push(p.id); X.audit('知识库', `删除资料 · ${d.title.slice(0, 14)}`); load(); return { ok: true, item: { id: d.id, title: d.title } }; });
   on('POST', '/api/v1/kb/docs/:id/restore', (b, p) => { const K = state(); K.removed = K.removed.filter((x) => x !== p.id); load(); return { ok: true }; });
   on('POST', '/api/v1/kb/import/preview', (b) => { if (!X.can('kb', 'operate')) X.err(403, 'FORBIDDEN', '你只有查看权限，不能导入资料'); return { items: (b.items || []).map(previewItem) }; });
   on('POST', '/api/v1/kb/import/url', (b) => { if (!X.can('kb', 'operate')) X.err(403, 'FORBIDDEN', '你只有查看权限，不能导入资料'); return fetchUrl(b.url); });
