@@ -5,8 +5,24 @@
   const KEY = window.JK_STATE_KEY || 'jkq-workstation-state-v3';
   const clone = (o) => JSON.parse(JSON.stringify(o));
   let S;
+  function refreshExtensionNoticeSeeds() {
+    // 已存状态也包含种子副本。只更新延期通知的模板示例和往期标注。
+    const template = S.docTemplates?.find((t) => t.id === 'T06');
+    if (template) template.inputs = clone(SEED.docTemplates.find((t) => t.id === 'T06').inputs);
+    const notice = S.files?.find((f) => f.id === 'F008');
+    if (notice) {
+      const { name, snippet } = SEED.files.find((f) => f.id === 'F008');
+      Object.assign(notice, { name, snippet });
+    }
+  }
   function load() {
-    try { const raw = localStorage.getItem(KEY); if (raw) { S = JSON.parse(raw); return; } } catch (e) {}
+    let cached;
+    try { cached = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+    if (cached) {
+      S = cached;
+      refreshExtensionNoticeSeeds();
+      return;
+    }
     S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
     seedDrafts();
   }
@@ -176,13 +192,14 @@
     }
     return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '京技产促〔2026〕【待补】号' };
   }
-  const DOC_DATE = String.raw`\d{4}(?:年\d{1,2}月\d{1,2}日|-\d{2}-\d{2})`;
-  const DOC_DATE_ONLY = new RegExp(`^${DOC_DATE}$`);
-  const EXTENSION_DATES = new RegExp(String.raw`申报截止时间\s*由\s*([^。]*?)\s*延长至\s*(${DOC_DATE})(?![\d-])`);
+  const DOC_DATE = String.raw`\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-]))`;
+  const DOC_TIME = String.raw`(?:\s*T?\d{1,2}(?:[:：]\d{2}(?:[:：]\d{2})?|时(?:\s*\d{1,2}\s*分)?))?`;
+  const DOC_DATE_INPUT = new RegExp(`^(${DOC_DATE})${DOC_TIME}$`);
+  const EXTENSION_DATES = new RegExp(String.raw`申报截止时间\s*由\s*([^。]*?)\s*延长至\s*(${DOC_DATE}${DOC_TIME})`);
   function docDateValue(text) {
-    const value = (text || '').trim();
-    if (!DOC_DATE_ONLY.test(value)) return NaN;
-    const [year, month, day] = value.match(/\d+/g);
+    const match = DOC_DATE_INPUT.exec((text || '').trim());
+    if (!match) return NaN;
+    const [year, month, day] = match[1].match(/\d+/g);
     const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
     const time = Date.parse(iso);
     return Number.isFinite(time) && new Date(time).toISOString().startsWith(iso) ? time : NaN;
