@@ -111,7 +111,7 @@ globalThis.fetch = async (path, init) => {
   calls.push({ path, init });
   return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ ok: true }) };
 };
-const ctx = sdk.createContext({ id: 'app-b', actions: ['view'] }, { id: 'sampleoperator' }, () => {});
+const ctx = sdk.createContext({ id: 'app-b', sdk: '2', actions: ['view'] }, { id: 'sampleoperator' }, () => {});
 await ctx.records.save({ project: 'sample-project', data: {} });
 assert.equal(calls.at(-1).path, '/api/v1/apps/app-b/records');
 await ctx.records.save({ baseVersion: 1 }, 'record/a');
@@ -168,6 +168,15 @@ await ctx.api('/records');
 assert.equal(calls.at(-1).path, '/api/apps/app-b/records');
 globalThis.fetch = async () => ({ ok: false, status: 409, headers: { get: () => 'application/json' }, json: async () => ({ error: { code: 'VERSION_CONFLICT', message: '记录已有新版本', retryable: false, currentVersion: 2 } }) });
 await assert.rejects(() => ctx.records.save({}), e => e.status === 409 && e.code === 'VERSION_CONFLICT' && e.currentVersion === 2 && e.message === '记录已有新版本' && e.retryable === false);
+const legacy = sdk.createContext({ id: 'app-b', sdk: '1', actions: ['view'] }, {}, () => {});
+await assert.rejects(legacy.upload('/upload', new Blob(['演示'])), { code: 'version_conflict' });
+await assert.rejects(legacy.preview.messages.get('m/1'), { code: 'version_conflict' });
+await assert.rejects(sdk.v1.reviews(), { code: 'VERSION_CONFLICT' });
+for (const code of ['loan_period_invalid', 'LOAN_PERIOD_INVALID']) {
+  globalThis.fetch = async () => Response.json({ error: { code, message: '借期无效' } }, { status: 400 });
+  await assert.rejects(legacy.api('/loan'), { code, status: 400 });
+  await assert.rejects(ctx.api('/loan'), { code, status: 400 });
+}
 console.log('浏览器 SDK 路由、应用绑定、兼容调用与错误字段通过');
 '''
     with tempfile.TemporaryDirectory(prefix='haiknow-sdk-') as temporary:
