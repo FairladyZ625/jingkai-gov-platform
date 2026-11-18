@@ -32,9 +32,12 @@ async function restartDemo(page) {
 
 async function say(page, text) {
   const input = page.locator('#chatcol textarea');
+  const states = page.locator('#chatcol .pstate');
+  const before = await states.count();
   await input.fill(text);
   await input.press('Enter');
-  await expect(page.locator('#chatcol .pstate').last()).toHaveText('已完成', { timeout: 12000 });
+  await expect(states).toHaveCount(before + 1);
+  await expect(states.last()).toHaveText('已完成', { timeout: 12000 });
 }
 
 test('历史对话恢复自己的应用和企业，新对话清空旧面板', async ({ page }) => {
@@ -213,4 +216,163 @@ test('四条跨应用链接在目标首次挂载时进入正确页面并带参�
     expect(await page.evaluate(() => JKShell.S.mounted.document.ctx.params)).toEqual({});
     expect(warnings).toHaveLength(1);
   });
+});
+
+test('切换对话时取消等待中的政策任务，企业对话保持原样', async ({ page }) => {
+  await login(page);
+  await say(page, '查一下书香里文化');
+  const chatB = page.locator('[data-conv].on');
+  const idB = await chatB.getAttribute('data-conv');
+  const snapshot = () => page.evaluate((id) => {
+    const { convs, me } = JKShell.S;
+    const persisted = JSON.parse(localStorage.getItem('jk4-convs:' + me.id));
+    return {
+      live: convs.find((conv) => conv.id === id),
+      saved: persisted.find((conv) => conv.id === id),
+      messages: document.querySelector('#chatcol .msgs-in').textContent,
+    };
+  }, idB);
+  const before = await snapshot();
+  await op(page, 'nav.chat').click();
+
+  await page.evaluate((id) => {
+    window.firstPolicyRun = JKShell.send('帮我查一下星河智驾能申报哪些政策');
+    window.switchWhenQueued = () => {
+      const run = JKOp.running;
+      const stop = run.stop;
+      run.stop = (silent) => {
+        run.stop = stop;
+        stop(silent);
+        // 第二条请求已进入 Op.start，等待结束前切换会话。
+        document.querySelector(`[data-conv="${id}"]`).click();
+      };
+    };
+  }, idB);
+  await expect.poll(() => page.evaluate(() => !!JKOp.running)).toBe(true);
+  await page.evaluate(async () => {
+    window.switchWhenQueued();
+    await JKShell.send('帮我查一下书香里文化能申报哪些政策');
+    await window.firstPolicyRun;
+  });
+
+  await expect(op(activePanel(page, 'enterprise'), 'enterprise.profile')).toContainText('书香里文化');
+  await expectRoute(page, 'enterprise', 'profile', { entId: 'E001' });
+  expect(await snapshot()).toEqual(before);
+  await page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' }).click();
+  await expect(page.locator('#chatcol .pstate')).toHaveText(['已停下']);
+});
+
+test('手动选标签、关闭活动标签和关闭面板后恢复对应状态', async ({ page }) => {
+  test.setTimeout(50000);
+  await login(page);
+  await say(page, '查一下书香里文化');
+  const chatB = page.locator('[data-conv]').filter({ hasText: '查一下书香里文化' });
+  await op(page, 'nav.chat').click();
+  await say(page, '帮我查一下星河智驾能申报哪些政策');
+  const chatA = page.locator('[data-conv]').filter({ hasText: '帮我查一下星河智驾' });
+  const policyTab = page.locator('#ptabs [data-id="policy"]');
+  const enterpriseTab = page.locator('#ptabs [data-id="enterprise"]');
+  const policy = activePanel(page, 'policy');
+
+  await say(page, '查一下星河智驾');
+  await expect(enterpriseTab).toHaveClass(/\bon\b/);
+  await policyTab.click();
+  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await chatB.click();
+  await chatA.click();
+  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await expectRoute(page, 'policy', 'match', { entId: 'E002' });
+
+  await say(page, '查一下星河智驾');
+  await expect(enterpriseTab).toHaveClass(/\bon\b/);
+  await enterpriseTab.locator('.x').click();
+  await expect(policy.locator('#ps .q')).toContainText('星河智驾');
+  await chatB.click();
+  await chatA.click();
+  await expectRoute(page, 'policy', 'match', { entId: 'E002' });
+
+  await page.locator('#btn-pclose').click();
+  await chatB.click();
+  await chatA.click();
+  await expect(page.locator('#pbody .pview')).toHaveCount(0);
+  expect(await page.evaluate(() => JKShell.S.convs.find((chat) => chat.id === JKShell.S.cur).panel)).toBeUndefined();
+});
+
+test('通过对话打开的会议纪要和公文详情按记录 ID 恢复', async ({ page }) => {
+  test.setTimeout(45000);
+  await login(page);
+  await say(page, '整理一下文化企业座谈会的纪要');
+  const chatMeeting = page.locator('[data-conv]').filter({ hasText: '整理一下文化企业座谈会' });
+  const minutes = op(activePanel(page, 'meeting'), 'meeting.minutes');
+  await expect(minutes).toContainText('文化企业座谈会');
+
+  await op(page, 'nav.chat').click();
+  await say(page, '打开书香里的答复意见');
+  const chatDocument = page.locator('[data-conv]').filter({ hasText: '打开书香里的答复意见' });
+  const paper = op(activePanel(page, 'document'), 'document.paper');
+  await expect(paper).toContainText('关于对北京书香里文化发展有限公司诉求的答复意见');
+
+  for (const reload of [false, true]) {
+    if (reload) await login(page);
+    await chatMeeting.click();
+    await expect(minutes).toContainText('文化企业座谈会');
+    await expectRoute(page, 'meeting', 'detail', { id: 'MT-1112' });
+    await chatDocument.click();
+    await expect(paper).toContainText('关于对北京书香里文化发展有限公司诉求的答复意见');
+    await expectRoute(page, 'document', 'detail', { id: 'DOC-1112' });
+  }
+});
+
+test('告知单转公文后手填要素按对话保留', async ({ page }) => {
+  test.setTimeout(65000);
+  await login(page);
+  const issue = op(activePanel(page, 'document'), 'document.in-issue');
+  const openDraft = async (helpText, draftText) => {
+    await say(page, helpText);
+    await say(page, '把告知单转成公文答复');
+    await expect(issue).toHaveValue(/咨询.+申报/);
+    await issue.fill(draftText);
+  };
+
+  await openDraft('给书香里生成政策告知单', '书香里补充的诉求说明');
+  const chatA = page.locator('[data-conv]').filter({ hasText: '给书香里生成政策告知单' });
+  await op(page, 'nav.chat').click();
+  await openDraft('给星河智驾生成政策告知单', '星河智驾补充的诉求说明');
+  const chatB = page.locator('[data-conv]').filter({ hasText: '给星河智驾生成政策告知单' });
+
+  await chatA.click();
+  await expect(issue).toHaveValue('书香里补充的诉求说明');
+  await chatB.click();
+  await expect(issue).toHaveValue('星河智驾补充的诉求说明');
+  await expect(op(activePanel(page, 'document'), 'document.in-ent')).toHaveValue('E002');
+  await login(page);
+  await chatA.click();
+  await expect(issue).toHaveValue('书香里补充的诉求说明');
+});
+
+test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
+  test.setTimeout(180000);
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (['warning', 'error'].includes(message.type())) errors.push(message.text());
+  });
+  await login(page);
+  await page.evaluate(() => {
+    window.demoResults = [];
+    JK.bus.on('op:done', (result) => window.demoResults.push(result));
+  });
+  await op(page, 'shell.demo').click();
+  await expect(page.locator('.demobar')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JKDemo.state.i), { timeout: 165000 }).toBe(12);
+  await expect(page.locator('.demobar')).toHaveCount(0);
+  expect(await page.evaluate(() => {
+    const { demoResults } = window;
+    return {
+      user: JKShell.S.me.username,
+      completed: demoResults.length,
+      failures: demoResults.filter(({ fail, stopped }) => fail || stopped),
+    };
+  })).toEqual({ user: 'wangmin', completed: 20, failures: [] });
+  expect(errors).toEqual([]);
 });
