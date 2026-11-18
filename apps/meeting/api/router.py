@@ -6,13 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
-from .meetings import router as transcription_router
-from .transcription import __haiknow_jobs__
-from .workflow import router as workflow_router
-
 router = APIRouter()
-router.include_router(transcription_router)
-router.include_router(workflow_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
@@ -35,3 +29,12 @@ def health(request: Request):
         details = {"app": exc.app_id, "need": exc.action}
         return JSONResponse({"error": {"code": "forbidden", "message": "无权查看此应用", "details": details}}, status_code=403)
     return {"id": ctx.app_id, "status": "ok"}
+
+
+# §4.3 会议上传与转写（#36）：路由并入本应用，转写长任务定义由平台从本模块发现。
+from .meetings import __haiknow_jobs__, router as meetings_router  # noqa: E402
+from .workflow import router as workflow_router  # noqa: E402
+
+router.include_router(meetings_router)
+# §4.3 会议纪要、待办派发、企业诉求关联（#37）
+router.include_router(workflow_router)

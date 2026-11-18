@@ -1,7 +1,8 @@
-"""用隔离数据、测试身份和正式会议路由运行实例。"""
+"""测试专用组装，使用临时清单和真实的经开区轮询适配器。"""
 import argparse
 import json
 import os
+import secrets
 import shutil
 import sys
 import time
@@ -11,51 +12,58 @@ ROOT = Path(__file__).resolve().parents[3]
 MEETING = ROOT / 'apps/meeting'
 MEETINGS = '/api/apps/meeting/meetings'
 JOBS = '/api/v1/jobs'
-TEST_PASSWORD = 'test-meet'
-TEST_PASSWORD_ENV = 'JKQ_TEST_MEETING_PASSWORD'
+
+
+PASSWORD_ENV = 'JKQ_MEETING_TEST_PASSWORD'
+OUTSIDER = 'meeting-outsider'
 
 
 def fixture_environment(base):
+    """使用经开区真实口令登录（#78）：临时角色表 + 演示账号，口令每次随机生成。"""
     apps = base / 'apps'
     config = base / 'config'
     config.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'config/projects.yaml', config / 'projects.yaml')
     roles = {'operator': ['view', 'operate'], 'reader': ['view']}
-    accounts = [
-        ('meeting-writer', '会议办理员', 'operator'),
-        ('meeting-reader', '会议观察员', 'reader'),
-        ('meeting-outsider', '项目外人员', 'reader'),
+    role_specs = {
+        role: {'name': role, 'desc': '会议测试', 'mask': False, 'grants': {'meeting': actions}}
+        for role, actions in roles.items()
+    }
+    (config / 'roles.yaml').write_text(json.dumps({'apps': ['meeting'], 'roles': role_specs},
+                                                  ensure_ascii=False), encoding='utf-8')
+    users = [
+        dict(id='meeting-writer', name='会议办理员', role='operator'),
+        dict(id='meeting-reader', name='会议观察员', role='reader'),
+        dict(id=OUTSIDER, name='项目外人员', role='reader'),
     ]
-    users = [dict(id=uid, username=uid, name=name, role=role, passwordEnv=TEST_PASSWORD_ENV)
-             for uid, name, role in accounts]
-    (config / 'users.yaml').write_text(json.dumps({'demoUsers': users}, ensure_ascii=False), encoding='utf-8')
-    matrix = {role: {'name': role, 'grants': {'meeting': actions}} for role, actions in roles.items()}
-    (config / 'roles.yaml').write_text(json.dumps({'apps': ['meeting'], 'roles': matrix}), encoding='utf-8')
+    demo_users = [dict(user, username=user['id'], passwordEnv=PASSWORD_ENV) for user in users]
+    (config / 'users.yaml').write_text(json.dumps({'demoUsers': demo_users}, ensure_ascii=False),
+                                       encoding='utf-8')
     app = apps / 'meeting'
     for directory in ('api', 'samples', 'web'):
         shutil.copytree(MEETING / directory, app / directory, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
-    (app / 'app.json').write_text(json.dumps({
-        'contract': 1, 'sdk': '1', 'id': 'meeting', 'name': '会议记录', 'summary': '会议记录测试',
-        'sector': 'other', 'kind': 'module', 'owner': 'tester',
-        'actions': ['view', 'operate'], 'defaultRoles': roles, 'status': 'usable',
-    }, ensure_ascii=False), encoding='utf-8')
+    shutil.copyfile(MEETING / 'app.json', app / 'app.json')  # 用正式清单与 router.py，覆盖实际挂载
     return {
         'HAIKNOW_ROOT': str(ROOT), 'HAIKNOW_APPS_DIR': str(apps), 'HAIKNOW_CONFIG_DIR': str(config),
-        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '0', 'HAIKNOW_KB_SEED': '0',
-        'JKQ_DEMO_MODE': '1', TEST_PASSWORD_ENV: TEST_PASSWORD,
-        'HAIKNOW_NO_AUTOAPP': '1', 'HAIKNOW_SECRET': 'local-meeting-test-only',
+        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '0', 'JKQ_DEMO_MODE': '1',
+        'HAIKNOW_KB_SEED': '0', 'HAIKNOW_NO_AUTOAPP': '1', 'HAIKNOW_SECRET': 'local-meeting-test-only',
+        PASSWORD_ENV: os.environ.get(PASSWORD_ENV) or secrets.token_urlsafe(12),
     }
 
 
 def create_instance():
+    from haiknow_core.main import current_user
     from jkq.app import create_app
+    from jkq.jobs_api import install
 
     app = create_app()
+    install(app, current_user)
     store = app.state.platform.store
-    # 平台演示账号默认跨项目。收窄这一个测试身份，保留项目隔离回归。
-    with store._lock, store._db as db:
-        db.execute("update users set all_projects=0 where id='meeting-outsider'")
+    with store._lock, store._db as db:  # 演示账号默认可见全部项目，这里收回项目外人员的范围
+        store.begin_write()
+        db.execute('update users set all_projects=0 where id=?', (OUTSIDER,))
+        db.execute('delete from project_members where user_id=?', (OUTSIDER,))
     return app
 
 
@@ -64,7 +72,8 @@ def transcription_module():
 
 
 def login(client, user='meeting-writer'):
-    result = client.post('/api/v1/auth/login', json={'username': user, 'password': TEST_PASSWORD})
+    result = client.post('/api/v1/auth/login',
+                         json={'username': user, 'password': os.environ[PASSWORD_ENV]})
     assert result.status_code == 200, result.text
 
 

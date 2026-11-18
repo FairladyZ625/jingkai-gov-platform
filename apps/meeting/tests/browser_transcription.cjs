@@ -9,9 +9,7 @@ async function verify(base, output) {
   try {
     const context = await browser.newContext({ colorScheme: 'light', locale: 'zh-CN',
       viewport: { width: 1440, height: 900 } });
-    const login = await context.request.post(base + '/api/v1/auth/login', {
-      data: { username: 'meeting-writer', password: 'test-meet' },
-    });
+    const login = await context.request.post(base + '/api/v1/auth/login', { data: { username: 'meeting-writer', password: process.env.JKQ_MEETING_TEST_PASSWORD } });
     assert.equal(login.status(), 200);
     const page = await context.newPage();
     const errors = [];
