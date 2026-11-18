@@ -284,7 +284,7 @@ def test_tools_use_pending_path_and_egress_guard(enterprise):
     assert "白名单" in response.json()["visit"]["warning"]
     for name in ("enterprise.search", "enterprise.get", "enterprise.propose_update"):
         denied = enterprise.post(f"{PREFIX}/conversation-stub/external/{name}", json=args)
-        assert (denied.status_code, denied.json()["error"]["code"]) == (403, "outbound_denied")
+        assert (denied.status_code, denied.json()["error"]["code"]) == (403, "OUTBOUND_DENIED")
     assert calls == []
 
     for route in ("local", "approved"):
