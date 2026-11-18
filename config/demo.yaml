@@ -1,4 +1,5 @@
-# 仅 JKQ_DEMO_MODE=1 生效。模块名是调用 SDK 的应用 id。
+# 仅 JKQ_DEMO_MODE=1 生效。mock_modules 使用应用 id，例如 [meeting]。
+# HTTP 前端由 #108 提供按模块的 mock 传输，SDK 文本调用按同一名单路由。
 rule_intent_first: true
 preset_on_failure: true
 mock_modules: []

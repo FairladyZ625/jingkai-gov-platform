@@ -105,3 +105,21 @@ def test_switches_are_independent_and_preserve_access_errors():
     demo.bind_demo_models(service, None, demo.Options(preset_on_failure=False))
     with pytest.raises(AIError):
         service.call(None, {**payload, "error": "timeout"})
+
+
+def test_module_config_changes_only_one_http_module(tmp_path):
+    import json
+    import subprocess
+
+    config = tmp_path / "config"
+    config.mkdir()
+    source = "window.JK_CONFIG = {api: {mode: globalMode, modules: {kb: 'http'}}};"
+    (config / "app.config.js").write_text(source)
+    app = FastAPI()
+    demo.install_module_config(app, tmp_path, {"meeting"})
+    script = TestClient(app).get("/config/app.config.js").text
+    for mode, expected in [("http", {"kb": "http", "meeting": "mock"}), ("mock", {"kb": "http"})]:
+        code = f"const window = {{}}, globalMode = '{mode}';\n" + script
+        code += "\nconsole.log(JSON.stringify(window.JK_CONFIG.api));"
+        result = subprocess.run(["node", "-"], input=code, text=True, capture_output=True, check=True)
+        assert json.loads(result.stdout) == {"mode": mode, "modules": expected}

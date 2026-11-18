@@ -1,23 +1,27 @@
 """经开区演示模式接线，宿主快照恢复独立于 app 生命周期。"""
 
+import json
 import os
 from copy import copy
 from pathlib import Path
 
 import httpx
 import yaml
+from typing import Literal
 from fastapi import Depends
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from haiknow_core.aihub.errors import AIError
 from jkq.auth import AuthError, require_action
+from jkq.settings import web_directory
 
 
 class Options(BaseModel):
     model_config = ConfigDict(extra="forbid")
     rule_intent_first: StrictBool = True
     preset_on_failure: StrictBool = True
-    mock_modules: frozenset[str] = frozenset()
+    mock_modules: frozenset[Literal["kb", "policy", "enterprise", "meeting", "document", "skills", "computer"]] = frozenset()
 
 
 def request_reset(socket_path):
@@ -81,6 +85,22 @@ def bind_demo_models(service, platform, options):
     service.call = call
 
 
+def install_module_config(app, directory, modules):
+    """通过 #108 的模块配置切换浏览器传输，只覆盖已启用 HTTP 的演示站。"""
+    config_file = directory / "config/app.config.js"
+    overrides = json.dumps(dict.fromkeys(sorted(modules), "mock"))
+    overlay = (
+        "\nif (window.JK_CONFIG.api.mode === 'http') {"
+        f"window.JK_CONFIG.api.modules = Object.assign({{}}, window.JK_CONFIG.api.modules, {overrides});"
+        "}\n"
+    )
+
+    @app.get("/config/app.config.js", include_in_schema=False)
+    def module_config():
+        return Response(config_file.read_text(encoding="utf-8") + overlay,
+                        media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+
 def install(app):
     if os.environ.get("JKQ_DEMO_MODE") != "1":
         return
@@ -88,6 +108,8 @@ def install(app):
     path = Path(platform.config_dir) / "demo.yaml"
     options = Options.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {})
     bind_demo_models(app.state.jkq_models, platform, options)
+    if options.mock_modules:
+        install_module_config(app, web_directory(platform.root), options.mock_modules)
     socket_path = os.environ.get("JKQ_DEMO_RESET_SOCKET")
 
     @app.post("/api/v1/demo/reset", status_code=202)
