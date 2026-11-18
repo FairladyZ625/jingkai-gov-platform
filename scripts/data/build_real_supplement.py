@@ -44,7 +44,7 @@ def build(root=ROOT):
         (dest / filename).write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         collections[group] = records
     script = "/* 由 scripts/data/build_real_supplement.py 生成。 */\nwindow.JK_REAL_SUPPLEMENT = "
-    (root / "prototype/v4/data/real-supplement.js").write_text(
+    (root / "web/data/real-supplement.js").write_text(
         script + json.dumps(collections, ensure_ascii=False, separators=(",", ":")) + ";\n", encoding="utf-8")
 
 

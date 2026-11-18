@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>经开区共享智能体工作站 · 综合版</title>
+<link rel="icon" href="assets/favicon.png">
+<!-- 1. 配置（【可改】都在 config/ 里） -->
+<script src="config/app.config.js"></script>
+<script>
+  try { document.documentElement.dataset.theme = localStorage.getItem('jk4-theme2') || (window.JK_CONFIG || {}).defaultTheme || 'light'; } catch (e) {}
+  try { if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) document.documentElement.dataset.mac = '1'; } catch (e) {}
+  window.JK_STATE_KEY = (window.JK_CONFIG || {}).stateKey || 'jk4-state';
+</script>
+<link rel="stylesheet" href="assets/theme.css">
+<link rel="stylesheet" href="assets/ui.css">
+<link rel="stylesheet" href="assets/shell.css">
+<script src="config/tags.js"></script>
+<script src="config/apps.js"></script>
+<script src="config/mock-data.js"></script>
+<script src="config/accounts.js"></script>
+<!-- 2. 真实公开数据（知识库 / 政策，见 data/REAL_DATA.md） -->
+<script src="data/index.js"></script>
+<!-- 3. 模拟后端（路径与《接口规范》一致；换真后端只改这里） -->
+<script src="mock/mock-api.js"></script>
+<script src="mock/auth.js"></script>
+<script src="mock/platform-ext.js"></script>
+<!-- 3b. 接口适配层（界面只调这里；config/app.config.js 的 api.mode 切换 mock / http） -->
+<script src="api/http.js"></script>
+<!-- 平台接口适配；各应用的 mock/<id>.js 与 api/<id>.js 由 config/apps.js 决定是否加载 -->
+<script src="api/platform.js"></script>
+<script>
+  (function () {
+    var L = window.JK_APP_LIST || [], mock = ((window.JK_CONFIG || {}).api || {}).mode !== 'http';
+    L.forEach(function (a) { if (a.enabled !== false && a.mock && mock) document.write('<script src="mock/' + a.id + '.js"><\/script>'); });
+    L.forEach(function (a) { if (a.enabled !== false && a.api) document.write('<script src="api/' + a.id + '.js"><\/script>'); });
+  })();
+</script>
+<!-- 4. 外壳核心 + 各应用（按 config/apps.js 顺序加载） -->
+<script src="assets/shell.core.js"></script>
+<script>
+  (window.JK_APP_LIST || []).forEach(function (a) { if (a.enabled === false) return;
+    (a.css || []).forEach(function (c) { document.write('<link rel="stylesheet" href="apps/' + a.id + '/' + c + '">'); });
+    (a.files || []).forEach(function (f) { document.write('<script src="apps/' + a.id + '/' + f + '"><\/script>'); });
+  });
+</script>
+<!-- 5. 外壳：对话、AI 操作员、管理后台、一键演示 -->
+<script src="config/operator-intents.js"></script>
+<script src="config/sample-files.js"></script>
+<script src="config/demo-script.js"></script>
+<script src="assets/operator.js"></script>
+<script src="assets/admin.js"></script>
+<script src="assets/shell.js"></script>
+<script src="assets/demo.js"></script>
+</head>
+<body>
+<div id="root"></div>
+</body>
+</html>

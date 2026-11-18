@@ -30,7 +30,7 @@ def validate(body, allowed):
         return "诉求字段须为文本"
     if "status" in body and body["status"] not in STATUSES:
         return "诉求状态无效"
-    if "from" in body and body["from"] not in ("走访", "电话", "会议", "座谈"):
+    if "from" in body and body["from"] not in ("走访", "电话", "会议", "座谈", "政策咨询"):
         return "诉求来源无效"
     if body.get("due"):
         try:
