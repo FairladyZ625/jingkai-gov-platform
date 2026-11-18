@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter, FastAPI, HTTPException
 
+from .inbox import router as inbox_router
 from .kb import install as install_kb
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
-ROUTERS: tuple[APIRouter, ...] = ()
+ROUTERS: tuple[APIRouter, ...] = (inbox_router,)
 
 health = APIRouter()
 stubs = APIRouter(prefix="/api/v1", include_in_schema=False)

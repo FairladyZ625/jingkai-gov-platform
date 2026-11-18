@@ -52,7 +52,8 @@ def client(request, monkeypatch):
     users.write_text(users.read_text().replace('sample-project', 'jkq'))
     request.getfixturevalue('cheap_password_hash')
     monkeypatch.setenv('HAIKNOW_SECRET', 'test-session-signing')
-    monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, router))
+    if router not in routers.ROUTERS:
+        monkeypatch.setattr(routers, 'ROUTERS', (*routers.ROUTERS, router))
     with TestClient(create_app()) as client:
         yield client
 
