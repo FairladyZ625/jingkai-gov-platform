@@ -654,3 +654,47 @@ def test_instance_match_and_deferred_routes(instance):
     assert api.post(path, json={"text": "无触发词"}).json() == {"items": [], "skill": None, "score": 0}
     error(api.get(f"{ROOT}/{sid}/manifest"), 501, "NOT_IMPLEMENTED")
     error(api.post(f"{ROOT}/{sid}/promote", json={}), 501, "NOT_IMPLEMENTED")
+
+
+def test_instance_confidential_kb_outside_enterprise_space_stays_confidential(instance):
+    """非企业空间但入库为 confidential 的资料，run/trial 与一句话起草都按文档密级出站。"""
+    api, sign_in = instance
+    sign_in()
+    marker = "合成机密纪要 甲乙丙项目 推进节点"
+    imported = api.post("/api/v1/kb/import", json={
+        "text": f"第一条 {marker}定于下月完成。", "title": "合成机密会议纪要",
+        "space": "minutes", "classification": "confidential",
+    })
+    assert imported.status_code == 200, imported.text
+    [doc] = imported.json()["docs"]
+    service = api.app.state.jkq_models
+    original, levels = service.call, []
+
+    def recording(user, payload, **kwargs):
+        levels.append(payload["classification"])
+        return original(user, payload, **kwargs)
+
+    service.call = recording
+
+    def reply(payload):
+        if "passages" in payload:
+            sentence = payload["passages"][0]["sentences"][0]
+            return json.dumps([{"passage": 1, "quote": sentence}])
+        if "knowledge" in payload:
+            return json.dumps({"name": "纪要核对", "summary": "核对节点",
+                               "spec": {"steps": [{"type": "kb", "space": "minutes", "query": marker}]},
+                               "questions": []})
+        return "按纪要推进 [1]。"
+
+    model_transport(api, reply)
+    skill = {"name": "纪要汇总", "spec": {"steps": [
+        {"type": "kb", "space": "minutes", "query": marker}, {"type": "model"},
+    ]}}
+    for path, body in ((f"{ROOT}/{create(api, skill)}/run", {}), (f"{ROOT}/trial", {"skill": skill})):
+        accepted = api.post(path, json=body)
+        assert accepted.status_code == 202, accepted.text
+        job = poll(api, accepted.json()["job"]["id"])
+        assert job["result"]["citations"][0]["id"] == doc["id"]
+    drafted = api.post(f"{ROOT}/draft", json={"text": marker})
+    assert drafted.status_code == 200, drafted.text
+    assert len(levels) == 4 and set(levels) == {"confidential"}
