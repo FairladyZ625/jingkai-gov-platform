@@ -13,9 +13,9 @@ const checks = [
   ['公文协作', '#chatcol .msgs', '第 1 版 → 第 2 版：新增'],
   ['知识库', '.pview.on', '未找到依据'],
   ['技能中心', '#chatcol .msgs', '已运行'],
-  ['电脑操作', '#chatcol .msgs', '存进知识库'],
+  ['电脑操作', '#chatcol .msgs', '已把《', '存进知识库'],
   ['审签', '.toast', '已通过'],
-  ['外部协作者', '.pview.on', '外部协作者视图：联系人电话、营收已打码'],
+  ['外部协作者', '.pview.on', '外部协作者视图：联系人电话、营收已打码', '北京星河智驾科技有限公司', '30 秒速览'],
   ['管理后台', '.pview.on [data-csv]', '导出'],
   ['浅色主题', 'html[data-theme="light"] .demo-caption', '深色、浅色'],
 ];
@@ -51,7 +51,7 @@ async function walkthrough(browser, width, theme) {
   try {
     assert.deepEqual(await page.evaluate(() => JK_DEMO_SCRIPT.map(s => s.title)), checks.map(c => c[0]));
     await page.click('#btn-demo');
-    for (const [i, [, selector, key]] of checks.entries()) {
+    for (const [i, [, selector, ...keys]] of checks.entries()) {
       current = i;
       const row = rows[i];
       const name = [width, theme, String(i + 1).padStart(2, '0')].join('-');
@@ -60,13 +60,13 @@ async function walkthrough(browser, width, theme) {
         row.file = await shot(page, name);
       }
       // 同时等待业务结果和段落结束。跳段、异常退出都不能替代业务结果。
-      const match = await page.waitForFunction(({ i, selector, key }) => {
+      const match = await page.waitForFunction(({ i, selector, keys }) => {
         const { on, i: active } = JKDemo.state;
         if (!on || active > i) return '已离开本段';
         if (active === i && [...document.querySelectorAll(selector)].some(el =>
-          el.getClientRects().length && el.innerText.includes(key))) return '匹配';
-      }, { i, selector, key }, { timeout: 90000 });
-      if (await match.jsonValue() !== '匹配') row.errors.push('本段未出现「' + key + '」');
+          el.getClientRects().length && keys.every(key => el.innerText.includes(key)))) return '匹配';
+      }, { i, selector, keys }, { timeout: 90000 });
+      if (await match.jsonValue() !== '匹配') row.errors.push('本段未同时出现「' + keys.join('」「') + '」');
       else row.file = await shot(page, name);
       await page.waitForFunction(i => !JKDemo.state.on || JKDemo.state.i > i, i, { timeout: 90000 });
     }
