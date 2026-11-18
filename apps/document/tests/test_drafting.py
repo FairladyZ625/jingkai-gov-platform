@@ -152,17 +152,22 @@ def test_concurrent_saves_append_unique_versions(document_client):
     assert {v["content"]["title"] for v in item(client.get(url))["versions"]} == set(titles)
 
 
+def core_submit(client, body):
+    # 通用 POST /api/v1/reviews 已拒绝公文（须经 #41 核查）；这里直接走数据底座验证锁定。
+    platform = client.app.state.platform
+    return platform.data.submit_review(platform.directory.user("sampleoperator"), body)
+
+
 def test_core_review_locks_document_without_new_version(document_client):
     client = document_client
     draft = item(create(client))
     url = f"{APP}/drafts/{draft['id']}"
     saved = item(client.put(url, json={"content": content(draft)}))
     body = {"appId": "document", "recordId": draft["id"], "version": 2, "assignee": "samplereviewer"}
-    submitted = client.post("/api/v1/reviews", json=body)
-    assert submitted.status_code == 201, submitted.text
+    submitted = core_submit(client, body)
     assert item(client.get(url))["status"] == "审签中"
     login(client, "samplereviewer")
-    response = client.post(f"/api/v1/reviews/{submitted.json()['id']}/decisions", json={"version": 2, "decision": "confirm"})
+    response = client.post(f"/api/v1/reviews/{submitted['id']}/decisions", json={"version": 2, "decision": "confirm"})
     assert response.status_code == 200, response.text
     login(client, "sampleoperator")
     frozen = item(client.get(url))
@@ -180,15 +185,14 @@ def test_approval_between_read_and_save_rolls_back(document_client, monkeypatch)
     identity = draft["id"]
     url = f"{APP}/drafts/{identity}"
     platform = client.app.state.platform
-    review = client.post("/api/v1/reviews", json={
+    review = core_submit(client, {
         "appId": "document", "recordId": identity, "version": 1, "assignee": "samplereviewer",
     })
-    assert review.status_code == 201, review.text
     reviewer = platform.directory.user("samplereviewer")
     original_save = Records.save
 
     def approve_before_save(records, **body):
-        platform.data.decide_review(reviewer, review.json()["id"], {"version": 1, "decision": "confirm"})
+        platform.data.decide_review(reviewer, review["id"], {"version": 1, "decision": "confirm"})
         return original_save(records, **body)
 
     monkeypatch.setattr(Records, "save", approve_before_save)
