@@ -1,0 +1,10 @@
+[Unit]
+Description=每日北京时间 03:00 恢复演示数据
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
