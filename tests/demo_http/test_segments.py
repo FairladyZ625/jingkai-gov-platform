@@ -147,9 +147,11 @@ def test_segment(server, title):
         elif title == "外部协作者":
             path = "/api/apps/enterprise/companies"
             item = data(c.post(path, json={"name": "纸鹿二号智驾示例", "phone": "13900001111"}))["item"]
+            assert item["phone"] == "139****1111"
             me = login(c, "hejun", password)
             assert me["grants"]["enterprise"] == ["view"]
-            assert data(c.get(path + "/" + item["id"]))["item"]["phone"] == "139****1111"
+            summary = data(c.get(path + "/" + item["id"]))["item"]
+            assert summary["id"] == item["id"] and "phone" not in summary and "revenue" not in summary
         elif title == "管理后台":
             admin = login(c, "admin", password)
             assert "admin" in admin["grants"]["*"]
