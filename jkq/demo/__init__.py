@@ -4,10 +4,10 @@ import json
 import os
 from copy import copy
 from pathlib import Path
+from typing import Literal
 
 import httpx
 import yaml
-from typing import Literal
 from fastapi import Depends
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, StrictBool
@@ -19,6 +19,7 @@ from jkq.settings import web_directory
 
 class Options(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    kb_quotes: dict[str, str] = {}
     rule_intent_first: StrictBool = True
     preset_on_failure: StrictBool = True
     mock_modules: frozenset[Literal["kb", "policy", "enterprise", "meeting", "document", "skills", "computer"]] = frozenset()
@@ -53,6 +54,19 @@ def match_intent(platform, user, messages):
     return None
 
 
+def kb_preset(messages, quotes):
+    """只返回当前账号检索结果中与演示预置原句完全相符的摘录。"""
+    try:
+        query = json.loads(messages[-1]["content"])
+        quote = quotes.get(query["question"])
+        for passage in query["passages"]:
+            if quote and quote in passage["sentences"]:
+                return json.dumps([{"passage": passage["passage"], "quote": quote}], ensure_ascii=False)
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    return "[]"
+
+
 def bind_demo_models(service, platform, options):
     normal_call = service.call
     # 沿用配置里的模拟 provider、启用状态、密级校验、配额与审计。
@@ -78,7 +92,10 @@ def bind_demo_models(service, platform, options):
                 result, note = mock_service.call(user, payload, **args)
         if result["result"]["mock"] and (options.preset_on_failure or plan or app_id in options.mock_modules):
             content = plan or "模型当前使用演示数据，请按应用内的示例步骤继续办理。"
-            result["result"]["content"] = f"【预置结果】{content}"
+            if app_id == "kb":
+                result["result"]["content"] = kb_preset(payload["messages"], options.kb_quotes)
+            else:
+                result["result"]["content"] = f"【预置结果】{content}"
             note = "规则意图优先，预置结果" if plan else "预置结果"
         return result, note
 
@@ -112,8 +129,13 @@ def install(app):
         install_module_config(app, web_directory(platform.root), options.mock_modules)
     socket_path = os.environ.get("JKQ_DEMO_RESET_SOCKET")
 
+    profiles = yaml.safe_load((platform.config_dir / "users.yaml").read_text(encoding="utf-8"))
+    non_admin_demo_ids = {row["id"] for row in profiles["demoUsers"] if row["role"] != "admin"}
+
     @app.post("/api/v1/demo/reset", status_code=202)
     def reset(admin=Depends(require_action("*", "admin"))):
+        if admin.id in non_admin_demo_ids:
+            raise AuthError(403, "FORBIDDEN", "重置须使用管理员账号登录")
         result = request_reset(socket_path)
         platform.store.audit("platform", admin.id, "demo.reset.accepted", {})
         return result

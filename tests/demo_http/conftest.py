@@ -35,6 +35,13 @@ def server(tmp_path_factory):
             env.setenv(key, value)
         for role in ("ADMIN", "MEMBER", "PARTNER", "LEADER"):
             env.setenv(f"JKQ_DEMO_{role}_PASSWORD", password)
+        from jkq.kb.importer.public_url import PublicPage, PublicURLReader
+
+        async def read_fixture(reader, url):
+            assert url == "https://example.invalid/demo-notice"
+            return PublicPage(url, "演示导入通知", "第一条 演示材料已受理。")
+
+        env.setattr(PublicURLReader, "read", read_fixture)
         app = create_app()
         site_thread = threading.Thread(target=site.serve_forever, daemon=True)
         site_thread.start()

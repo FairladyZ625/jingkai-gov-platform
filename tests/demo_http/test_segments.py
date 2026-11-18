@@ -16,7 +16,6 @@ assert len(TITLES) == 12
 # 已知缺口只按具体段落登记，新增段落或改名均须更新对应动作。
 WAITING = {
     "企业走访": "PR #116 走访建议与写入确认，Issue #42 四应用 HTTP",
-    "会议纪要": "PR #125 纪要和待办，Issue #42 四应用 HTTP",
     "公文协作": "PR #111 版本比对、#112 送审、#126 操作员计划",
     "技能中心": "PR #109 起草与 #118 分享",
 }
@@ -50,13 +49,36 @@ def test_segment(server, title):
             if response.status_code == 404 and "/api/apps/policy/match" not in data(c.get("/openapi.json"))["paths"]:
                 pytest.skip("PR #127 挂载政策匹配路由")
             assert data(response)["results"]
+        elif title == "会议纪要":
+            base = "/api/apps/meeting/meetings"
+            audio = SCRIPT.parents[3] / "apps/meeting/samples/demo.webm"
+            with audio.open("rb") as stream:
+                item = data(c.post(base, data={"title": "演示例会"},
+                                   files={"file": ("演示录音.webm", stream, "audio/webm")}))["item"]
+            path = base + "/" + item["id"]
+            job = data(c.post(path + "/transcribe", json={}))["job"]
+            deadline = time.monotonic() + 30
+            while job["status"] != "done":
+                assert job["status"] not in {"failed", "cancelled"} and time.monotonic() < deadline
+                time.sleep(0.1)
+                job = data(c.get("/api/v1/jobs/" + job["id"]))["job"]
+            minutes = data(c.get(path))["minutes"]
+            assert minutes["body"][0]["sources"]
+            todo = minutes["todos"][0]["id"]
+            data(c.patch(path, json={"todo": {"id": todo, "owner": "u-liyang", "due": "周五"}}))
+            assert data(c.post(path + "/todos/commit", json={"ids": [todo]}))["committed"] == [todo]
         elif title == "知识库":
             hits = data(c.post("/api/v1/kb/search", json={"q": "算力券 封顶", "space": "policy"}))["hits"]
             assert hits
             assert data(c.get("/api/v1/kb/docs/" + hits[0]["id"]))["item"]["id"] == hits[0]["id"]
             missing = data(c.post("/api/v1/kb/ask", json={"q": "火星基地XYZ999"}))
             assert missing["notFound"] and not missing["citations"]
-            pytest.skip("PR #132 网址导入尚待接入，#42 后补全完整知识库演示")
+            answer = data(c.post("/api/v1/kb/ask", json={"q": "数据券补贴最高能拿多少？", "space": "policy"}))
+            assert answer["citations"] and "最高100万元" in answer["answer"]
+            imported = data(c.post("/api/v1/kb/import", json={
+                "url": "https://example.invalid/demo-notice", "space": "policy",
+            }))
+            assert imported["chunks"] and imported["docs"][0]["source"]["url"].endswith("/demo-notice")
         elif title == "电脑操作":
             pytest.importorskip("playwright.async_api", reason="专用 HTTP job 安装 Chromium")
             runs = "/api/apps/computer/runs"
