@@ -5,6 +5,10 @@ import json
 
 from .company import Enterprise, InvalidRow
 
+
+class UnrecoverableCsv(InvalidRow):
+    """引号未闭合等无法判定后续记录边界的文件级错误。"""
+
 COMPLEX = {"formerNames", "tags", "license", "contacts", "amounts", "revenue",
            "qualifications", "fieldStatus"}
 
@@ -21,9 +25,10 @@ def rows(text):
             cells = next(source)
         except StopIteration:
             return
-        except csv.Error:
-            yield start, None, "CSV 引号格式错误"
-            continue
+        except csv.Error as exc:
+            raise UnrecoverableCsv(
+                f"第 {start} 行起 CSV 格式错误，无法判断后续记录边界，已拒绝整份文件"
+            ) from exc
         if len(cells) != len(header):
             yield start, None, "字段数量与表头不符"
             continue
