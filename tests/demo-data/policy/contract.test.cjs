@@ -29,6 +29,7 @@ function boot({ stored = null, prepare } = {}) {
     }
     vm.runInContext(source, ctx, { filename: file });
   };
+  run('config/app.config.js');
   run('config/mock-data.js');
   run('config/accounts.js');
   if (prepare) prepare(ctx.window.JK_DATA);

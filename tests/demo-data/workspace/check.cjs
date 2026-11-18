@@ -18,14 +18,17 @@ function run(file) {
 }
 
 async function check() {
+  run('config/app.config.js');
   run('config/mock-data.js');
   const demo = seed('demo');
   const plain = x => JSON.parse(JSON.stringify(x));
   const generated = plain(ctx.JK_DATA);
   const real = seed('real-policies');
   const examples = seed('policy-examples');
-  assert.deepEqual(generated, {
-    ...demo,
+  const { models, capabilities, audit, usage: { byModel, ...usage }, ...generatedSeeds } = generated;
+  const { audit: seedAudit, usage: seedUsage, ...demoSeeds } = demo;
+  assert.deepEqual(generatedSeeds, {
+    ...demoSeeds,
     policyDocs: [...examples.policyDocs, ...real.policyDocs],
     policies: [...examples.policies, ...real.policies],
     realNotices: real.notices,
@@ -33,6 +36,11 @@ async function check() {
     departmentsReal: real.departments,
     districtFacts: real.facts,
   });
+  assert.deepEqual(usage, seedUsage);
+  assert.deepEqual(audit.map(row => row.slice(0, 4)), seedAudit.map(row => row.slice(0, 4)));
+  assert.deepEqual(models, plain(ctx.JK_CONFIG.modelRouting.models));
+  assert.deepEqual(capabilities, plain(ctx.JK_CONFIG.modelRouting.capabilities));
+  assert.equal(byModel.reduce((total, [, share]) => total + share, 0), 100);
   assert.deepEqual(plain(ctx.JK_REAL), real);
   assert.deepEqual(plain(ctx.JK_REAL_KB), seed('real-kb'));
   assert.deepEqual(plain(ctx.JK_KB_EXAMPLES), seed('kb-examples'));
@@ -57,7 +65,7 @@ async function check() {
     if (oldName !== newName) assert.ok(!copy.includes(oldName), '旧全称残留：' + oldName);
   }
   console.log('生成文件与五份种子往返一致，对话样例、演示脚本与 starters 无旧企业名。');
-  for (const f of ['config/apps.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/kb.js', 'assets/operator.js', 'config/demo-script.js', 'config/sample-files.js', 'config/app.config.js']) run(f);
+  for (const f of ['config/apps.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/kb.js', 'assets/operator.js', 'config/demo-script.js', 'config/sample-files.js']) run(f);
   for (const f of ['config/tags.js', 'apps/enterprise/config.js', 'apps/meeting/config.js']) run(f);
   assert.ok(ctx.JK_CONFIG.homeSuggestions.some(s => s.text.includes(rows[1].short)));
   const participants = ctx.JK_APPCFG.meeting.sampleUpload.participants;
