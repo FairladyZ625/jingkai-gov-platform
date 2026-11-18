@@ -52,6 +52,7 @@ def test_upload_creates_record_and_polls_monotonic_progress(client, monkeypatch)
     assert create.status_code == 201, create.text
     item = create.json()['item']
     assert item['status'] == 'new' and item['participants'] == ['张三']
+    assert client.get(f"{MEETINGS}/{item['id']}").json()['minutes'] is None
     assert item['size'] == len(sample_audio())
     assert client.get(f"/api/v1/files/{item['fileId']}/content").content == sample_audio()
     url = f"{MEETINGS}/{item['id']}/transcribe"
@@ -71,7 +72,6 @@ def test_upload_creates_record_and_polls_monotonic_progress(client, monkeypatch)
     assert progress == sorted(progress) and progress[-1] == 100
     assert samples[-1]['steps'] == ['分片', '转写第 1 片', '转写第 2 片', '合并逐字稿']
     detail = client.get(f"{MEETINGS}/{item['id']}").json()
-    assert detail['minutes'] is None
     finished = detail['item']
     assert finished['title'] == '已上传会议' and finished['type'] == '局务会'
     assert finished['jobId'] == job['id'] and finished['status'] == 'done'
@@ -79,6 +79,9 @@ def test_upload_creates_record_and_polls_monotonic_progress(client, monkeypatch)
     first, second = finished['transcript']
     assert first == ['00:00', '发言人 1', '我们先核对园区服务清单。请把本周收集的问题按主题归类。']
     assert second[:2] == ['00:05.716', '发言人 2']
+    sections = detail['minutes']['body']
+    assert [section['refs'] for section in sections] == [[first[0]], [second[0]]]
+    assert sections[1]['sources'][0]['quote'] == second[2]
     assert client.get(finished['transcriptAudio']).content == sample_audio()
     result = client.get(MEETINGS, params={'limit': 1}).json()
     assert result['total'] == 1 and result['items'][0]['status'] == 'done'

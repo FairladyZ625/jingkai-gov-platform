@@ -6,9 +6,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
+from .meetings import router as transcription_router
+from .transcription import __haiknow_jobs__
 from .workflow import router as workflow_router
 
 router = APIRouter()
+router.include_router(transcription_router)
 router.include_router(workflow_router)
 
 

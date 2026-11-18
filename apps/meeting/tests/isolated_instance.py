@@ -1,4 +1,4 @@
-"""测试专用组装，使用临时清单和真实的经开区轮询适配器。"""
+"""用隔离数据、测试身份和正式会议路由运行实例。"""
 import argparse
 import json
 import os
@@ -14,7 +14,6 @@ JOBS = '/api/v1/jobs'
 
 
 def fixture_environment(base):
-    """#29 入主干后用正式清单，当前夹具只涵盖会议上传与转写。"""
     apps = base / 'apps'
     config = base / 'config'
     config.mkdir(parents=True, exist_ok=True)
@@ -35,7 +34,6 @@ def fixture_environment(base):
         'sector': 'other', 'kind': 'module', 'owner': 'tester',
         'actions': ['view', 'operate'], 'defaultRoles': roles, 'status': 'usable',
     }, ensure_ascii=False), encoding='utf-8')
-    (app / 'api/router.py').write_text('from .meetings import router, __haiknow_jobs__\n', encoding='utf-8')
     return {
         'HAIKNOW_ROOT': str(ROOT), 'HAIKNOW_APPS_DIR': str(apps), 'HAIKNOW_CONFIG_DIR': str(config),
         'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '1', 'HAIKNOW_KB_SEED': '0',
@@ -44,13 +42,9 @@ def fixture_environment(base):
 
 
 def create_instance():
-    from haiknow_core.main import current_user
     from jkq.app import create_app
-    from jkq.jobs_api import install
 
-    app = create_app()
-    install(app, current_user)
-    return app
+    return create_app()
 
 
 def transcription_module():

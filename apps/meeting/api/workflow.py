@@ -1,25 +1,19 @@
 """§4.3 会议纪要、待办派发、企业诉求关联。"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import re
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
-from haiknow_sdk import DataError, PermissionDenied, app_context, require
+from haiknow_sdk import DataError, app_context, require
 from pydantic import Field
 from starlette.concurrency import run_in_threadpool
-from starlette.exceptions import HTTPException
 
 from .enterprise_link import create_issue
-from .minutes import (
-    Input, MeetingPatch, ShortText, edit_minutes, minutes_for,
-    public_todos, require_transcript, todos_for,
-)
+from .meetings import BEIJING, MeetingRoute, meeting_detail
+from .minutes import Input, MeetingPatch, ShortText, edit_minutes, require_transcript, todos_for
 from .todos import commit_todos, my_todos
+from .transcription import meeting_record
 
-BEIJING = timezone(timedelta(hours=8))
 DOCUMENT_TEMPLATES = (
     (re.compile('征集'), 'T04', 'title'),
     (re.compile('口径|答复|告知'), 'T10', 'issue'),
@@ -36,66 +30,7 @@ class LinkRequest(Input):
     title: ShortText | None = None
 
 
-def error_response(code, message, status, details=None):
-    return JSONResponse({'error': {'code': code, 'message': message, 'details': details or {}}}, status)
-
-
-class MeetingRoute(APIRoute):
-    def get_route_handler(self):
-        handler = super().get_route_handler()
-
-        async def handle(request):
-            try:
-                return await handler(request)
-            except DataError as exc:
-                details = {k: v for k, v in exc.error.items() if k not in ('code', 'message', 'retryable')}
-                code, message, status = exc.code.upper(), str(exc), exc.status
-            except PermissionDenied as exc:
-                code, message, status, details = 'FORBIDDEN', '没有执行此操作的权限', 403, {'need': exc.action}
-            except RequestValidationError as exc:
-                code, message, status = 'INVALID_REQUEST', '请求字段缺失或类型不正确', 422
-                details = {'fields': [list(error['loc']) for error in exc.errors()]}
-            except HTTPException as exc:
-                status, message, details = exc.status_code, str(exc.detail), {}
-                code = {401: 'UNAUTHENTICATED', 403: 'FORBIDDEN', 404: 'NOT_FOUND',
-                        409: 'INVALID_STATE', 503: 'APP_UNAVAILABLE'}.get(status, 'INVALID_REQUEST')
-            return error_response(code, message, status, details)
-
-        return handle
-
-
 router = APIRouter(route_class=MeetingRoute)
-
-
-def meeting_record(ctx, meeting_id):
-    record = ctx.records.get(meeting_id)
-    if record['type'] != 'meeting' or not isinstance(record['data'], dict):
-        raise DataError('not_found', '会议不存在')
-    return record
-
-
-def meeting_view(ctx, record):
-    data = record['data']
-    status = 'done' if data.get('transcript') else 'new'
-    if data.get('jobId'):
-        try:
-            job = ctx.preview.jobs.get(data['jobId'])
-        except DataError as exc:
-            if exc.code != 'not_found':
-                raise
-        else:
-            if job['status'] in ('queued', 'running', 'cancelling'):
-                status = 'running'
-    item = {key: value for key, value in data.items() if key != 'minutesEdit'}
-    item.update(id=record['id'], status=status, todos=public_todos(data))
-    if data.get('transcriptMode') == 'demo':
-        item['transcriptAudio'] = '/api/apps/meeting/transcription/demo'
-    return {'item': item, 'minutes': minutes_for(data)}
-
-
-@router.get('/meetings/{meeting_id}')
-def get_meeting(meeting_id: str, ctx=Depends(app_context)):
-    return meeting_view(ctx, meeting_record(ctx, meeting_id))
 
 
 @router.patch('/meetings/{meeting_id}')
@@ -103,7 +38,7 @@ def patch_meeting(meeting_id: str, patch: MeetingPatch, ctx=Depends(require('ope
     record = meeting_record(ctx, meeting_id)
     edit_minutes(record['data'], patch)
     saved = ctx.records.save(id=meeting_id, baseVersion=record['version'], data=record['data'])
-    return meeting_view(ctx, saved)
+    return meeting_detail(ctx, saved)
 
 
 @router.post('/meetings/{meeting_id}/todos/commit')
