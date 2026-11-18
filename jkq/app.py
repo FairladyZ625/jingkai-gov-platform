@@ -35,6 +35,11 @@ def install_platform(app: FastAPI) -> None:
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    if "document" in app.state.platform.data.apps:
+        # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。
+        from apps.document.instance import install as install_document
+
+        install_document(app)
 
 
 def create_app() -> FastAPI:

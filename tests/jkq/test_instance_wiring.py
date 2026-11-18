@@ -22,7 +22,7 @@ PANEL = {"app": "policy", "route": "detail", "params": {"id": "PI-03"}}
 
 
 @pytest.fixture
-def client(monkeypatch, tmp_path, cheap_password_hash):
+def client(request, monkeypatch, tmp_path, cheap_password_hash):
     for name in tuple(os.environ):
         if name.startswith(("HAIKNOW_MODEL_", "HAIKNOW_PROVIDER_")):
             monkeypatch.delenv(name)
@@ -39,6 +39,8 @@ def client(monkeypatch, tmp_path, cheap_password_hash):
     ]}), encoding="utf-8")
     apps = tmp_path / "apps"
     shutil.copytree(ROOT / "tests/fixtures/platform-app", apps / "sample-app")
+    for name in getattr(request, "param", ()):
+        shutil.copytree(ROOT / "apps" / name, apps / name)
     monkeypatch.delenv("HAIKNOW_ROOT", raising=False)
     monkeypatch.delenv("JKQ_WEB_DIR", raising=False)
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
@@ -158,3 +160,16 @@ def test_review_sdk_requests_fall_back_to_core(client):
     confirmed = client.post(path, json={"decision": "confirm", "version": 1})
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["status"] == "confirmed" and "item" not in confirmed.json()
+
+
+@pytest.mark.parametrize("client", [("document",)], indirect=True)
+def test_document_instance_guards_generic_review_entry(client):
+    """#41：实例启动即挂载公文送审、导出，通用送审入口拒绝公文，其他应用不受影响。"""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/apps/document/drafts/{identity}/submit" in paths
+    assert "/api/apps/document/drafts/{identity}/export" in paths
+    login(client, "sampleoperator")
+    blocked = client.post(REVIEWS, json={"appId": "document", "recordId": "any", "version": 1})
+    assert_error(blocked, 405, "METHOD_NOT_ALLOWED")
+    review = submit_review(client)
+    assert review["status"] == "pending"

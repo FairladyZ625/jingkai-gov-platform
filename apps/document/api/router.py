@@ -6,9 +6,11 @@ from fastapi import APIRouter
 from haiknow_sdk import KV
 
 from .drafting_router import DocumentRoute, Viewer, router as drafting_router
+from .review_export import router as review_export_router
 
 router = APIRouter(route_class=DocumentRoute)
 router.include_router(drafting_router)
+router.include_router(review_export_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:

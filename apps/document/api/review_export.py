@@ -1,9 +1,10 @@
 """§4.4 公文送审和 Word 下载。"""
+import re
 from io import BytesIO
 from urllib.parse import quote
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from fastapi import APIRouter, Request, Response
 from haiknow_sdk import DataError
 from pydantic import BaseModel
@@ -11,8 +12,29 @@ from pydantic import BaseModel
 from .drafting_router import DocumentRoute, Operator, Text, Viewer, error
 from .drafts import _present as present, _record as get_record
 
-router = APIRouter(prefix="/api/apps/document", route_class=DocumentRoute)
+# 由 api/router.py 收录，平台统一加 /api/apps/document 前缀。
+router = APIRouter(route_class=DocumentRoute)
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# Word XML 不能表示的控制字符（保留 \t、\n；\f 单独转为分页符）。
+ILLEGAL = re.compile("[\x00-\x08\x0b\x0e-\x1f\x7f]")
+
+
+def clean(text):
+    """统一换行：CRLF、CR 视为一个换行；去掉 Word XML 无法表示的控制字符。"""
+    return ILLEGAL.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+
+
+def add_text(document, text, alignment=None):
+    """正文中的换行保留为段内换行，分页符 \f 转为 Word 分页符。"""
+    paragraph = document.add_paragraph()
+    for index, part in enumerate(clean(text).split("\f")):
+        if index:
+            paragraph.add_run().add_break(WD_BREAK.PAGE)
+        if part:
+            paragraph.add_run(part)
+    if alignment is not None:
+        paragraph.alignment = alignment
+    return paragraph
 
 
 class Submission(BaseModel):
@@ -53,17 +75,17 @@ def export(identity: str, ctx: Viewer):
     content = record["data"]["content"]
     document = Document()
     draft_mark = "（草稿）" if record["status"] != "confirmed" else ""
-    title = content["title"] + draft_mark
+    title = clean(content["title"]).replace("\f", "").replace("\n", " ") + draft_mark
     document.add_heading(title, level=0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     if content["docNo"]:
-        document.add_paragraph(content["docNo"]).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        add_text(document, content["docNo"], WD_ALIGN_PARAGRAPH.CENTER)
     if content["to"]:
-        document.add_paragraph(content["to"])
+        add_text(document, content["to"])
     for paragraph in content["paragraphs"]:
-        document.add_paragraph(paragraph)
+        add_text(document, paragraph)
     for key in ("sign", "date"):
         if content[key]:
-            document.add_paragraph(content[key]).alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            add_text(document, content[key], WD_ALIGN_PARAGRAPH.RIGHT)
     stream = BytesIO()
     document.save(stream)
     filename = quote(title.replace("/", "／").replace("\\", "＼") + ".docx", safe="")
