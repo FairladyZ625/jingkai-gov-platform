@@ -1,0 +1,7 @@
+rules:
+  - entity: enterprise
+    fields: [ 'contacts[].phone', phone ]
+    show: '139****3456'
+  - entity: enterprise
+    fields: [ amounts.revenue, amounts.tax, revenue.value ]
+    show: '****'

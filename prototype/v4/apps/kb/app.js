@@ -108,10 +108,11 @@
           <div class="kb-q">
             <div class="kb-box"><span class="kb-ico">${icon('search')}</span><input class="kb-input" data-op="kb.q" placeholder="${esc(C.placeholder)}" value="${esc(S.q)}" autocomplete="off"><button class="btn primary" data-op="kb.ask">${icon('sparkles')}问 AI</button></div>
             <div class="row wrap kb-chips" id="kb-sp">
-              <button class="chip-btn ${S.space === 'all' ? 'on' : ''}" data-sp="all">全部 <span class="n">${st.docs || ''}</span></button>
+              <button class="chip-btn ${S.space === 'all' ? 'on' : ''}" data-sp="all">全部 <span class="n">${st.docs ?? ''}</span></button>
               ${S.spaces.map((s) => `<button class="chip-btn ${S.space === s.id ? 'on' : ''}" data-sp="${s.id}" data-op="kb.space-${s.id}">${esc(s.name)} <span class="n">${s.count}</span></button>`).join('')}
               <span class="sp"></span><button class="btn ghost sm ${S.showFilters || Object.values(S.filters).some(Boolean) ? 'on' : ''}" data-op="kb.filters">${icon('filter')}筛选${Object.values(S.filters).filter(Boolean).length ? ` · ${Object.values(S.filters).filter(Boolean).length}` : ''}</button>
             </div>
+            <div class="meta kb-summary">${st.docs ?? 0} 份资料 · ${S.spaces.length} 个可见空间 · 真实公开资料 ${st.real || 0} 份 + 示例资料 ${st.example || 0} 份${Object.entries(st.otherSources || {}).map(([from, n]) => ` + ${esc(from)} ${n} 份`).join('')}</div>
             <div id="kb-filt" class="${S.showFilters ? '' : 'hide'}"></div>
           </div>
           <div id="kb-ans"></div><div id="kb-res"></div>`;
@@ -164,7 +165,7 @@
           const st = S.stats || {}; const recent = (st.recent || []).slice(0, 5);
           box.innerHTML = `<div class="sect">试试这样问</div><div class="kb-sugg">${C.suggestions.map((s, i) => `<button class="kb-sg" data-sg="${esc(s)}" data-op="kb.sugg-${i}">${icon('sparkles')}<span>${esc(s)}</span></button>`).join('')}</div>
             <div class="sect">最近入库</div><div class="list lined card flat kb-list">${recent.map(resultRow).join('') || '<div class="meta" style="padding:12px">暂无</div>'}</div>
-            <div class="kb-foot">${icon('globe')}官网同步 ${esc(st.fetched || '')} · ${st.docs || 0} 份资料 · ${st.chunks || 0} 个片段 · 其中真实公开资料 ${st.real || 0} 份</div>`;
+            <div class="kb-foot">${icon('globe')}官网同步 ${esc(st.fetched || '')} · ${st.chunks || 0} 个片段</div>`;
           box.querySelectorAll('[data-sg]').forEach((b) => (b.onclick = () => { S.q = b.dataset.sg; body.querySelector('[data-op="kb.q"]').value = S.q; runSearch(); runAsk(); }));
           bindHits(box); return;
         }
@@ -226,8 +227,9 @@
       }
       function renderLib() {
         const st = (S.stats && S.stats.status) || {}; const all = (S.stats && S.stats.docs) || 0;
-        const k = [['', '全部', all, 'gray'], ['现行有效', '现行有效', st['现行有效'] || 0, 'green'], ['即将到期', '即将到期', st['即将到期'] || 0, 'amber'], ['已失效', '已失效 / 已更新', (st['已失效'] || 0) + (st['已更新'] || 0), 'red']];
-        body.innerHTML = `<div class="kpis" style="--n:4">${k.map(([v, l, n, h]) => `<button class="kpi-c ${S.lib.status === v ? 'on h-' + h : ''}" data-st="${v}" data-op="kb.st-${v || 'all'}"><div class="v">${n}</div><div class="l">${l}</div></button>`).join('')}</div>
+        const k = [['', '全部', all, 'gray'], ['现行有效', '现行有效', st['现行有效'] || 0, 'green'], ['即将到期', '即将到期', st['即将到期'] || 0, 'amber'], ['已失效', '已失效', st['已失效'] || 0, 'red']];
+        if (st['已更新']) k.push(['已更新', '已更新', st['已更新'], 'gray']);
+        body.innerHTML = `<div class="kpis" style="--n:${k.length}">${k.map(([v, l, n, h]) => `<button class="kpi-c ${S.lib.status === v ? 'on h-' + h : ''}" data-st="${v}" data-op="kb.st-${v || 'all'}"><div class="v">${n}</div><div class="l">${l}</div></button>`).join('')}</div>
           <div class="row wrap kb-chips" style="margin-top:16px"><button class="chip-btn ${S.lib.space === 'all' ? 'on' : ''}" data-ls="all">全部空间</button>${S.spaces.map((s) => `<button class="chip-btn ${S.lib.space === s.id ? 'on' : ''}" data-ls="${s.id}">${esc(s.name)} <span class="n">${s.count}</span></button>`).join('')}<span class="sp"></span>${can('admin') ? `<button class="btn ghost sm" data-op="kb.vis">${icon('lock')}可见范围</button>` : ''}</div>
           <div id="kb-lib" style="margin-top:12px"></div>`;
         body.querySelectorAll('[data-st]').forEach((b) => (b.onclick = () => { S.lib.status = b.dataset.st; S.lib.list = null; renderLib(); loadLib(); }));
@@ -438,7 +440,7 @@
         if (S.tab === 'home') renderHome(); else if (S.tab === 'library') renderLib(); else if (S.tab === 'import') renderImport(); else renderDoc();
       }
       const offs = [];
-      if (ctx.bus) { ctx.bus.on('kb:changed', async () => { await loadMeta(); if (S.tab === 'home' && S.hits == null) renderResults(); }); ctx.bus.on('data:reset', async () => { await loadMeta(); render(); }); }
+      if (ctx.bus) { ctx.bus.on('kb:changed', async () => { await loadMeta(); if (S.tab === 'home') renderHome(); else if (S.tab === 'library') await loadLib(); }); ctx.bus.on('data:reset', async () => { await loadMeta(); render(); }); }
 
       /* ===================== 操作员动作（AI 替你操作） ===================== */
       const textOf = (s) => (typeof s === 'string' ? s : (s && (s.text || s.q)) || '');

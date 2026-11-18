@@ -146,7 +146,7 @@ async function company(page, id) {
 
 function matchReply(e) {
   const short = e.short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(short + '：\\d+ 项可进一步核对');
+  return new RegExp(short + '：(?:核对 \\d+ 项事项，)?\\d+ 项可进一步核对');
 }
 
 async function matchCompany(page, e) {
