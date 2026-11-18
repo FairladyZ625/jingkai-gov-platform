@@ -48,6 +48,7 @@ esac
         "curl": """
 echo "$*" >> "$DEMO_STATE_DIR/probes"
 cat deploy/Caddyfile >> "$DEMO_STATE_DIR/loaded"
+if test -f "$DEMO_STATE_DIR/recovery-probe-failure" && test "$DEMO_TAG" = restored; then echo 503; exit 22; fi
 if test -f "$DEMO_STATE_DIR/proxy-failure"; then rm "$DEMO_STATE_DIR/proxy-failure"; echo 302; else echo 200; fi
 """,
         "mv": """
@@ -107,6 +108,39 @@ def test_reset(site):
     assert "up -d --no-build --force-recreate" in calls.read_text().splitlines()[-1]
 
 
+def publish_release(repo, run):
+    run("git", "init", "-b", "main")
+    run("git", "config", "user.email", "test@example.invalid")
+    run("git", "config", "user.name", "test")
+    run("git", "add", "deploy")
+    run("git", "commit", "-m", "基线")
+    old = run("git", "rev-parse", "HEAD").stdout.strip()
+    run("git", "clone", "--bare", ".", str(repo.parent / "release.git"))
+    run("git", "remote", "add", "origin", str(repo.parent / "release.git"))
+    with (repo / "deploy/Caddyfile").open("a") as config:
+        config.write("# 仅反代配置变更\n")
+    run("git", "commit", "-am", "更新反代")
+    new = run("git", "rev-parse", "HEAD").stdout.strip()
+    run("git", "push", "origin", "main")
+    run("git", "switch", "--detach", old)
+    return old, new
+
+
+def test_failed_recovery_probe_still_restores_default_image(site):
+    repo, state, run = site
+    old, new = publish_release(repo, run)
+    (state / "record-failure").touch()
+    (state / "recovery-probe-failure").touch()
+    result = run("deploy/demo", "update", check=False)
+    assert result.returncode == 73
+    assert "回退后的健康检查失败" in result.stderr
+    assert run("git", "rev-parse", "HEAD").stdout.strip() == old
+    local_tags = [line for line in (state / "calls").read_text().splitlines()
+                  if line.startswith("tag ") and line.endswith(" jkq-demo-app:local")]
+    assert local_tags == [f"tag jkq-demo-app:{new} jkq-demo-app:local", "tag sha256:old jkq-demo-app:local"]
+    assert not (state / "previous").exists()
+
+
 @pytest.mark.parametrize("failure", [None, "build-failure", "unhealthy", "proxy-failure", "record-failure"])
 def test_release(site, failure):
     repo, state, run = site
@@ -162,10 +196,23 @@ def test_compose(site):
     services = json.loads(result)["services"]
     app, proxy = services["app"], services["proxy"]
     assert app["command"][-2:] == ["--workers", "1"]
+    assert app["command"][3:5] == ["jkq.app:create_app", "--factory"]
     assert app["volumes"][0]["target"] == app["environment"]["HAIKNOW_DATA_DIR"]
     assert "ports" not in app
     assert {port["target"] for port in proxy["ports"]} == {80, 443}
     assert proxy["environment"]["DEMO_DOMAIN"] == "demo.example.invalid"
+
+
+def test_image_context_keeps_runtime_directories():
+    allowed = set((DEPLOY / "Dockerfile.dockerignore").read_text().split())
+    dockerfile = (DEPLOY / "Dockerfile").read_text()
+    pythonpath = next(line for line in dockerfile.splitlines() if "PYTHONPATH=" in line)
+    for entry in pythonpath.split("PYTHONPATH=")[1].split()[0].split(":"):
+        relative = entry.removeprefix("/srv/app").strip("/")
+        if relative:
+            assert f"!{relative}/**" in allowed
+    web = "web" if (DEPLOY.parent / "web/index.html").is_file() else "prototype/v4"
+    assert f"!{web}/**" in allowed
 
 
 def test_scheduled_reset_uses_configured_mount_after_lock(site, monkeypatch):

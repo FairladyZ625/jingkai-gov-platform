@@ -103,8 +103,9 @@ update)
         git switch --detach "$old"
         export DEMO_TAG=restored
         docker tag "$image" jkq-demo-app:restored
-        healthy
+        # 回退探测也可能失败，默认标签须先指回旧镜像，常规启动不得再拉起候选版本。
         docker tag "$image" jkq-demo-app:local
+        healthy || echo '已切回旧版本，但回退后的健康检查失败，请人工排查' >&2
         exit "$rc"
     fi
     ;;
@@ -114,8 +115,8 @@ rollback)
     docker tag "$image" jkq-demo-app:restored
     git switch --detach "$rev"
     export DEMO_TAG=restored
-    healthy
     docker tag "$image" jkq-demo-app:local
+    healthy
     ;;
 *) echo '用法：deploy/demo snapshot|reset|update|rollback' >&2; exit 2 ;;
 esac
