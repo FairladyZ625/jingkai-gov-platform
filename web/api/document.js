@@ -1,7 +1,12 @@
 /* 接口适配 · 公文协作（接口规范 §4.4）。审签走平台 reviews；定稿后 PUT 返回 409 LOCKED。 */
 (function () {
   const H = window.JKHttp; window.JKApi = window.JKApi || {};
+  const isHttp = () => {
+    const { mode, modules } = window.JK_CONFIG?.api || {};
+    return (modules?.document === 'http' || modules?.document === 'mock' ? modules.document : mode) === 'http';
+  };
   window.JKApi.document = {
+    isHttp,
     /** → {items:DocTemplate[], groups:[[id,name]]} 10 类“要办什么事” */
     templates: () => H.get('/api/apps/document/templates'),
     /** → {items:DocSummary[]} 我的文稿 */
@@ -26,7 +31,14 @@
     patchComment: (id, cid, b) => H.patch(`/api/apps/document/drafts/${id}/comments/${cid}`, b),
     /** (id, {assignee?}) → {item, review}  有“必须改”问题时 422 CHECK_FAILED */
     submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, b || {}),
-    /** id → {filename, html, final} 公文版式 .doc；未定稿带水印 */
-    exportWord: (id) => H.get(`/api/apps/document/drafts/${id}/export`),
+    /** HTTP 由浏览器下载 .docx，mock 返回 Word 兼容 HTML。 */
+    exportWord: (id) => {
+      const path = `/api/apps/document/drafts/${encodeURIComponent(id)}/export`;
+      if (!isHttp()) return H.get(path);
+      // JKHttp 解析 JSON。二进制附件交浏览器处理会话、文件名和下载状态。
+      const configured = window.JK_CONFIG.api.baseUrl || '';
+      const base = configured === 'http://127.0.0.1:8080' ? '' : configured.replace(/\/$/, '');
+      return { url: base + path };
+    },
   };
 })();
