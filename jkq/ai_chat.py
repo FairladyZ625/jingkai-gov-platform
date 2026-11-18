@@ -47,7 +47,37 @@ def _parameter_schema(kind):
         return {"type": kind}
     if kind.endswith("[]"):
         return {"type": "array", "items": _parameter_schema(kind[:-2])}
+    if "|" in kind:
+        return {"type": "string", "enum": kind.split("|")}
     return {}
+
+
+def _matches_parameter(value, schema):
+    types = {"string": (str,), "number": (int, float), "integer": (int,),
+             "boolean": (bool,), "object": (dict,), "array": (list,)}
+    kind = schema.get("type")
+    if kind and type(value) not in types[kind]:
+        return False
+    if "items" in schema:
+        return all(_matches_parameter(item, schema["items"]) for item in value)
+    return "enum" not in schema or value in schema["enum"]
+
+
+def _tool_validator(tools):
+    schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in tools}
+
+    def validate(call):
+        schema = schemas.get(call["name"])
+        if schema is None:
+            raise AIError("provider_error", "模型返回了未请求的工具。")
+        arguments = call["arguments"]
+        properties = schema["properties"]
+        missing = set(schema["required"]) - arguments.keys()
+        unexpected = arguments.keys() - properties.keys()
+        if missing or unexpected or any(not _matches_parameter(v, properties[k]) for k, v in arguments.items()):
+            raise AIError("provider_error", "模型返回的工具参数与登记清单不符。")
+
+    return validate
 
 
 def _registered_tools(platform, user, names):
@@ -63,11 +93,11 @@ def _registered_tools(platform, user, names):
                 definitions[tool["name"]] = (app_id, tool)
 
     tools, aliases = [], {}
-    for name in dict.fromkeys(names):
-        definition = definitions.get(name)
-        if definition is None:
-            raise AIError("tool_not_found", "请求包含未注册的工具。")
-        app_id, tool = definition
+    requested = dict.fromkeys(names)
+    if requested.keys() - definitions.keys():
+        raise AIError("tool_not_found", "请求包含未注册的工具。")
+    for name in requested:
+        app_id, tool = definitions[name]
         if "operate" not in platform.rbac.actions(user, app_id):
             platform.store.audit(app_id, user.id, "ai.tool_forbidden", {"need": "operate"})
             raise PermissionDenied(app_id, "operate")
@@ -87,7 +117,8 @@ def _registered_tools(platform, user, names):
         tools.append({"type": "function", "function": {
             "name": alias,
             "description": tool.get("description", tool.get("desc", "")),
-            "parameters": {"type": "object", "properties": properties, "required": required},
+            "parameters": {"type": "object", "properties": properties, "required": required,
+                           "additionalProperties": False},
         }})
     return tools, aliases
 
@@ -99,13 +130,17 @@ def chat_message(service, user, payload, *, model=None, app_id=models.PLATFORM_A
     return {key: result["result"][key] for key in ("content", "tool_calls")}
 
 
-def _chat(service, user, body, payload):
+def _chat(service, user, body, payload, aliases):
     if "tools" in payload:
-        payload = ChatRequest(payload)
+        payload = ChatRequest(payload, validate_tool_call=_tool_validator(payload["tools"]))
     result, note = service.call(user, payload, model=body.model)
     reply = result["result"]
-    return {"model": result["model"], "routeNote": note,
-            **{key: reply[key] for key in ("content", "usage", "mock")}}
+    response = {"model": result["model"], "routeNote": note,
+                **{key: reply[key] for key in ("content", "usage", "mock")}}
+    if aliases:
+        response["tool_calls"] = [{"name": aliases[call["name"]], "arguments": call["arguments"]}
+                                  for call in reply["tool_calls"]]
+    return response
 
 
 def _sse(event, data):
@@ -133,16 +168,14 @@ async def _stream(service, user, body, payload, aliases):
     def emit(chunk):
         event, data = chunk
         if event == "tool":
-            name = aliases.get(data["name"])
-            if name is None:
-                raise AIError("provider_error", "模型返回了未请求的工具。")
-            data = {"tool": name, "args": data["arguments"]}
+            data = {"tool": aliases[data["name"]], "args": data["arguments"]}
         publish((event, data))
 
     def run():
         channel = Channel(emit, cancelled)
         try:
-            result, _ = service.call(user, ChatRequest(payload, channel), model=body.model, timeout=25)
+            request = ChatRequest(payload, channel, validate_tool_call=_tool_validator(payload.get("tools", [])))
+            result, _ = service.call(user, request, model=body.model, timeout=25)
             reply = result["result"]
             message_id = uuid4()
             if reply["mock"]:
@@ -200,7 +233,7 @@ async def chat(body: ChatBody, request: Request, service=Depends(models._service
             payload["tools"] = tools
         if body.stream:
             return await _stream(service, user, body, payload, aliases)
-        return await run_in_threadpool(_chat, service, user, body, payload)
+        return await run_in_threadpool(_chat, service, user, body, payload, aliases)
     except PermissionDenied as error:
         return JSONResponse({"error": {"code": "FORBIDDEN", "message": "没有使用所请求工具的权限。",
                                       "details": {"app": error.app_id, "need": error.action}}}, status_code=403)
