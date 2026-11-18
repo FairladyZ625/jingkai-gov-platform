@@ -40,7 +40,7 @@ auth、admin、kb 的前缀分别映射到 core 的 `/api/auth`、`/api/admin`�
 业务路由使用 `request.app.state.platform` 获取实例，并可复用 core 的
 `current_user` 鉴权依赖。
 
-`auth/session`、`admin/departments` 及其子项、`kb/libraries`、`kb/files/{id}`
+`auth/session`、`admin/departments` 及其子项
 的占位路由返回 404 `NOT_FOUND`。业务模块在 `ROUTERS` 接管对应路径后可删除占位。
 
 `/api/v1/` 错误使用 `{error: {code, message, details}}`。登录凭据错误使用
