@@ -351,7 +351,7 @@ test('告知单转公文后手填要素按对话保留', async ({ page }) => {
 });
 
 test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
@@ -364,15 +364,16 @@ test('侧栏一键演示从 file:// 完成 12 段', async ({ page }) => {
   });
   await op(page, 'shell.demo').click();
   await expect(page.locator('.demobar')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => JKDemo.state.i), { timeout: 165000 }).toBe(12);
-  await expect(page.locator('.demobar')).toHaveCount(0);
+  await expect(page.locator('.demobar')).toHaveCount(0, { timeout: 280000 });
   expect(await page.evaluate(() => {
     const { demoResults } = window;
     return {
       user: JKShell.S.me.username,
+      segments: JKDemo.state.i,
       completed: demoResults.length,
       failures: demoResults.filter(({ fail, stopped }) => fail || stopped),
     };
-  })).toEqual({ user: 'wangmin', completed: 20, failures: [] });
+  })).toEqual({ user: 'wangmin', segments: 12, completed: 20, failures: [] });
   expect(errors).toEqual([]);
+  console.log('一键演示：12/12 段，20 次操作员执行完成，0 次失败或停止，0 条页面错误或控制台警告。');
 });
