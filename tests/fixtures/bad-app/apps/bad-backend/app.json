@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-backend",
+  "name": "越界 import 的后端",
+  "sector": "other",
+  "kind": "embed",
+  "url": "https://example.test/app",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

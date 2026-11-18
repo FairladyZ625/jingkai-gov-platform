@@ -1,0 +1,19 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "__APP_ID__",
+  "name": "__APP_NAME__",
+  "summary": "保存一条记录 → 提交确认 → 导出，一条能跑通的审批链路",
+  "sector": "other",
+  "kind": "module",
+  "scenes": [],
+  "owner": "__OWNER__",
+  "actions": ["view", "operate", "approve"],
+  "defaultRoles": {
+    "sampleoperator": ["view", "operate"],
+    "samplereviewer": ["view", "operate", "approve"],
+    "sampleobserver": ["view"]
+  },
+  "needsExternalData": false,
+  "status": "prototype"
+}

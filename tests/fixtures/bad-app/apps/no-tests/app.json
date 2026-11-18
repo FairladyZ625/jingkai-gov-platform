@@ -1,0 +1,11 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "no-tests",
+  "name": "有后端但没有测试",
+  "sector": "other",
+  "kind": "embed",
+  "url": "https://example.test/app",
+  "owner": "fixture-owner",
+  "status": "idea"
+}
