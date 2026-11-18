@@ -1,0 +1,9 @@
+[Unit]
+Description=恢复经开区演示数据快照
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jkq-demo
+ExecStart=/opt/jkq-demo/deploy/demo reset
