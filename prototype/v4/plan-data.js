@@ -1229,7 +1229,7 @@ window.JK_PLAN = {
      "change": "不改逻辑"
     },
     {
-     "module": "core/server/haiknow_core/aihub/adapters.py、settings.py（Fernet 加密存 key）",
+     "module": "core/server/haiknow_core/aihub/adapters.py、settings.py（key 只从环境变量注入，不落库）",
      "mode": "直接用",
      "change": "新增启动时从环境变量写入 provider 的小脚本"
     },

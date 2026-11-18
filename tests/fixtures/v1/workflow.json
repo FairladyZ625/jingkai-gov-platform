@@ -1,0 +1,605 @@
+[
+  {
+    "name": "确认待办、历史成果与错误",
+    "steps": [
+      {
+        "user": "sampleoperator",
+        "method": "GET",
+        "path": "/api/v1/me",
+        "status": 200,
+        "keys": [
+          "id",
+          "name",
+          "roles",
+          "projects",
+          "isAdmin"
+        ],
+        "expect": {
+          "id": "sampleoperator",
+          "projects": [
+            "sample-project"
+          ],
+          "isAdmin": false
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/projects",
+        "status": 200,
+        "expect": {
+          "companies": [
+            {
+              "id": "sample-company",
+              "name": "虚构测试机构",
+              "projects": [
+                {
+                  "id": "sample-project",
+                  "name": "示例项目",
+                  "products": [
+                    {
+                      "id": "sample-item",
+                      "name": "示例条目"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/files",
+        "form": {
+          "app": "sample-app",
+          "project": "sample-project",
+          "purpose": "演示凭证"
+        },
+        "file": {
+          "name": "演示.txt",
+          "content": "demo"
+        },
+        "status": 201,
+        "capture": "file",
+        "keys": [
+          "fileId",
+          "appId",
+          "project",
+          "purpose",
+          "name",
+          "sha256",
+          "size",
+          "submitter",
+          "createdAt"
+        ],
+        "expect": {
+          "size": 4,
+          "sha256": "2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/apps/sample-app/records",
+        "json": {
+          "project": "sample-project",
+          "type": "inspection",
+          "data": {
+            "result": "演示"
+          },
+          "files": [
+            "{{file.fileId}}"
+          ]
+        },
+        "status": 201,
+        "capture": "record",
+        "expect": {
+          "version": 1,
+          "status": "draft"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records?project=sample-project&status=draft&type=inspection",
+        "status": 200,
+        "expect": {
+          "items": [
+            "{{record}}"
+          ]
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}",
+        "status": 200,
+        "expect": "{{record}}"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}/versions/1",
+        "status": 200,
+        "expect": "{{record}}"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/files/{{file.fileId}}",
+        "status": 200,
+        "expect": {
+          "references": [
+            {
+              "appId": "sample-app",
+              "recordId": "{{record.id}}",
+              "version": 1
+            }
+          ]
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/files/{{file.fileId}}/content",
+        "status": 200,
+        "text": "demo"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews",
+        "json": {
+          "appId": "sample-app",
+          "recordId": "{{record.id}}",
+          "version": 1,
+          "assignee": "samplereviewer"
+        },
+        "status": 201,
+        "capture": "review",
+        "keys": [
+          "id",
+          "appId",
+          "recordId",
+          "version",
+          "assignee",
+          "submitter",
+          "status",
+          "createdAt"
+        ],
+        "expect": {
+          "status": "pending"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}",
+        "status": 200,
+        "expect": {
+          "status": "pending"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews/{{review.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "confirm"
+        },
+        "status": 403,
+        "expect": {
+          "error": {
+            "code": "forbidden",
+            "message": "没有执行此操作的权限",
+            "retryable": false,
+            "action": "approve"
+          }
+        }
+      },
+      {
+        "user": "samplereviewer",
+        "method": "GET",
+        "path": "/api/v1/reviews?assignee=me",
+        "status": 200,
+        "expect": {
+          "items": [
+            {
+              "id": "{{review.id}}",
+              "status": "pending",
+              "decisions": []
+            }
+          ]
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews/{{review.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "return",
+          "comment": "请补充演示数据"
+        },
+        "status": 200,
+        "expect": {
+          "status": "needs_info",
+          "decision": {
+            "decision": "return",
+            "actor": "samplereviewer",
+            "comment": "请补充演示数据"
+          }
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}",
+        "status": 200,
+        "expect": {
+          "status": "needs_info"
+        }
+      },
+      {
+        "user": "sampleoperator",
+        "method": "POST",
+        "path": "/api/v1/reviews",
+        "json": {
+          "appId": "sample-app",
+          "recordId": "{{record.id}}",
+          "version": 1,
+          "assignee": "samplereviewer"
+        },
+        "status": 201,
+        "capture": "resubmitted",
+        "expect": {
+          "status": "pending"
+        }
+      },
+      {
+        "user": "samplereviewer",
+        "method": "POST",
+        "path": "/api/v1/reviews/{{resubmitted.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "confirm",
+          "comment": "演示确认"
+        },
+        "status": 200,
+        "expect": {
+          "status": "confirmed",
+          "decision": {
+            "decision": "confirm",
+            "actor": "samplereviewer"
+          }
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/artifacts?project=sample-project&app=sample-app",
+        "status": 200,
+        "expect": {
+          "items": [
+            {
+              "recordId": "{{record.id}}",
+              "version": 1,
+              "status": "confirmed",
+              "confirmedBy": "samplereviewer",
+              "files": [
+                {
+                  "fileId": "{{file.fileId}}",
+                  "sha256": "{{file.sha256}}"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "user": "sampleoperator",
+        "method": "PUT",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}",
+        "json": {
+          "baseVersion": 1,
+          "data": {
+            "result": "新版"
+          }
+        },
+        "status": 200,
+        "expect": {
+          "version": 2,
+          "status": "draft"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/apps/sample-app/records/{{record.id}}",
+        "json": {
+          "baseVersion": 1,
+          "data": {}
+        },
+        "status": 409,
+        "expect": {
+          "error": {
+            "code": "version_conflict",
+            "message": "记录已有新版本，请重新读取后保存",
+            "retryable": false,
+            "currentVersion": 2
+          }
+        }
+      },
+      {
+        "user": "samplereviewer",
+        "method": "POST",
+        "path": "/api/v1/reviews/{{resubmitted.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "confirm"
+        },
+        "status": 409,
+        "expect": {
+          "error": {
+            "code": "stale_version",
+            "message": "记录已有新版本，不能确认旧版本",
+            "retryable": false,
+            "currentVersion": 2
+          }
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/reviews?assignee=me",
+        "status": 200,
+        "expect": {
+          "items": []
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/notifications",
+        "status": 200,
+        "expect": {
+          "items": []
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/apps/sample-app/records",
+        "json": {
+          "project": "sample-project",
+          "type": "inspection",
+          "data": {}
+        },
+        "status": 201,
+        "capture": "own",
+        "expect": {
+          "status": "draft"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews",
+        "json": {
+          "appId": "sample-app",
+          "recordId": "{{own.id}}",
+          "version": 1
+        },
+        "status": 201,
+        "capture": "ownReview",
+        "expect": {
+          "status": "pending"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews/{{ownReview.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "confirm"
+        },
+        "status": 403,
+        "expect": {
+          "error": {
+            "code": "self_review",
+            "message": "提交人不能确认自己的记录",
+            "retryable": false
+          }
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/artifacts?project=limited-project",
+        "status": 404,
+        "expect": {
+          "error": {
+            "code": "not_found",
+            "message": "项目或资源不存在",
+            "retryable": false
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "引用失效通知与换确认人",
+    "steps": [
+      {
+        "user": "sampleoperator",
+        "method": "POST",
+        "path": "/api/v1/apps/sample-app/records",
+        "json": {
+          "project": "sample-project",
+          "type": "source",
+          "data": {}
+        },
+        "status": 201,
+        "capture": "a",
+        "expect": {
+          "version": 1,
+          "status": "draft"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/reviews",
+        "json": {
+          "appId": "sample-app",
+          "recordId": "{{a.id}}",
+          "version": 1,
+          "assignee": "samplereviewer"
+        },
+        "status": 201,
+        "capture": "review",
+        "expect": {
+          "status": "pending"
+        }
+      },
+      {
+        "user": "samplereviewer",
+        "method": "POST",
+        "path": "/api/v1/reviews/{{review.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "reassign",
+          "assignee": "sampleadmin",
+          "comment": "演示换人"
+        },
+        "status": 200,
+        "expect": {
+          "status": "pending",
+          "assignee": "sampleadmin",
+          "decision": {
+            "decision": "reassign",
+            "actor": "samplereviewer"
+          }
+        }
+      },
+      {
+        "user": "sampleadmin",
+        "method": "POST",
+        "path": "/api/v1/reviews/{{review.id}}/decisions",
+        "json": {
+          "version": 1,
+          "decision": "confirm"
+        },
+        "status": 200,
+        "expect": {
+          "status": "confirmed"
+        }
+      },
+      {
+        "user": "sampleoperator",
+        "method": "POST",
+        "path": "/api/v1/apps/sample-app/records",
+        "json": {
+          "project": "sample-project",
+          "type": "report",
+          "data": {},
+          "refs": [
+            {
+              "appId": "sample-app",
+              "recordId": "{{a.id}}",
+              "version": 1
+            }
+          ]
+        },
+        "status": 201,
+        "capture": "b",
+        "expect": {
+          "status": "draft",
+          "refs": [
+            {
+              "appId": "sample-app",
+              "recordId": "{{a.id}}",
+              "version": 1,
+              "fileId": null
+            }
+          ]
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/apps/sample-app/records/{{a.id}}",
+        "json": {
+          "baseVersion": 1,
+          "data": {
+            "changed": true
+          }
+        },
+        "status": 200,
+        "expect": {
+          "version": 2,
+          "status": "draft"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/apps/sample-app/records/{{b.id}}",
+        "status": 200,
+        "expect": {
+          "status": "recheck"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/notifications",
+        "status": 200,
+        "capture": "notifications",
+        "expect": {
+          "items": [
+            {
+              "appId": "sample-app",
+              "recordId": "{{b.id}}",
+              "version": 1,
+              "recipient": "sampleoperator",
+              "read": false,
+              "source": {
+                "appId": "sample-app",
+                "recordId": "{{a.id}}",
+                "version": 1,
+                "currentVersion": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/notifications/{{notifications.items.0.id}}/read",
+        "status": 200,
+        "expect": {
+          "id": "{{notifications.items.0.id}}",
+          "read": true
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/reviews?mine=submitted",
+        "status": 200,
+        "expect": {
+          "items": [
+            {
+              "id": "{{review.id}}",
+              "status": "confirmed",
+              "submitter": "sampleoperator",
+              "decisions": [
+                {
+                  "decision": "reassign",
+                  "actor": "samplereviewer"
+                },
+                {
+                  "decision": "confirm",
+                  "actor": "sampleadmin"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/artifacts?history=true&version=1",
+        "status": 200,
+        "expect": {
+          "items": [
+            {
+              "recordId": "{{a.id}}",
+              "version": 1,
+              "confirmedBy": "sampleadmin"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

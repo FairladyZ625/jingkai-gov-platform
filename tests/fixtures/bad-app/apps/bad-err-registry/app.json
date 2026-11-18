@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-err-registry",
+  "name": "错误码门反例",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}

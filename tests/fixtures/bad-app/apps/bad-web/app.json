@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "bad-web",
+  "name": "前端 import 与 fetch 越界",
+  "sector": "other",
+  "kind": "module",
+  "owner": "fixture-owner",
+  "status": "idea"
+}
