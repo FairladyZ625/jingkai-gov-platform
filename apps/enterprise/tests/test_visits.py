@@ -25,14 +25,7 @@ def enterprise(isolated_platform, make_client, tmp_path_factory, monkeypatch):
     manifest = json.loads((apps / "sample-app/app.json").read_text())
     manifest.update(id="enterprise", defaultRoles={"partner": ["view", "operate"]})
     (app_dir / "app.json").write_text(json.dumps(manifest))
-    (app_dir / "api/router.py").write_text(
-        "from fastapi import APIRouter\n"
-        "from . import ledger, visit_tools, visits\n"
-        "router = APIRouter()\n"
-        "router.include_router(visits.router)\n"
-        "router.include_router(ledger.router)\n"
-        "router.include_router(visit_tools.router)\n"
-    )
+    # 使用仓库里的真实注册点，确保走访、决定和工具路由已挂载。
     (config / "projects.yaml").write_text(json.dumps({"companies": [
         {"id": "sample-company", "name": "样例", "projects": [{"id": "jkq", "name": "经开区"}]}
     ]}))
