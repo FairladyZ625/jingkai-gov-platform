@@ -57,7 +57,7 @@ async function check() {
     if (oldName !== newName) assert.ok(!copy.includes(oldName), '旧全称残留：' + oldName);
   }
   console.log('生成文件与五份种子往返一致，对话样例、演示脚本与 starters 无旧企业名。');
-  for (const f of ['config/apps.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/kb.js', 'assets/operator.js', 'config/demo-script.js', 'config/sample-files.js', 'config/app.config.js']) run(f);
+  for (const f of ['config/app.config.js', 'config/apps.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/kb.js', 'assets/operator.js', 'config/demo-script.js', 'config/sample-files.js']) run(f);
   for (const f of ['config/tags.js', 'apps/enterprise/config.js', 'apps/meeting/config.js']) run(f);
   assert.ok(ctx.JK_CONFIG.homeSuggestions.some(s => s.text.includes(rows[1].short)));
   const participants = ctx.JK_APPCFG.meeting.sampleUpload.participants;

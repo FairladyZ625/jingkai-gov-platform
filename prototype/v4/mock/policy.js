@@ -48,7 +48,7 @@
     return out.filter((r) => !applicableIds.has(r.sameBenefitAs))
       .map(({ okN, sameBenefitAs, ...result }) => result);
   }
-  X.on('POST', '/api/apps/policy/match', (b) => {
+  X.first('POST', '/api/apps/policy/match', (b) => {
     let pf;
     if (b.entId) { const e = ent(b.entId); if (!e) X.err(404, 'NOT_FOUND', '企业不存在'); pf = profileOf(e); Object.assign(pf, b.overrides || {}); if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])]; }
     else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
@@ -64,7 +64,7 @@
     }
     const ok = eligible.filter((r) => r.level === 'ok');
     const defaultItemIds = (ok.length ? ok : eligible.slice(0, 2)).map((r) => r.id);
-    X.audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, 'DeepSeek-V4.1-Flash');
+    X.audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, X.pickModel(S().modelId, !!b.entId).used.name);
     return { profile: pf, results, total: policies.length, summary: counts, defaultItemIds };
   });
   X.on('POST', '/api/apps/policy/calc', (b) => {

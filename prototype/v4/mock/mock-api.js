@@ -129,6 +129,18 @@
         S.policies = clone(SEED.policies);
         S.policyDocs = clone(SEED.policyDocs);
         S.realNotices = clone(SEED.realNotices);
+        // 刷新后使用当前模型配置，同时保留管理员在原型内设置的启停状态。
+        const enabled = new Map((S.models || []).map((m) => [m.id, m.enabled]));
+        S.models = SEED.models.map((m) => ({ ...m, enabled: enabled.get(m.id) ?? m.enabled }));
+        S.capabilities = clone(SEED.capabilities);
+        if (!S.legacyAudit) {
+          // 旧版运行记录缺少可信路由信息，原样封存。当前视图仅迁移仍在缓存中的已知种子。
+          S.legacyAudit = S.audit;
+          const seedKey = (row) => JSON.stringify(row.slice(0, 4));
+          const seeds = new Map(SEED.audit.map(row => [seedKey(row), row]));
+          S.audit = S.legacyAudit.map(row => seeds.get(seedKey(row))).filter(Boolean).map(clone);
+        }
+        S.usage.byModel = clone(SEED.usage.byModel);
         refreshExtensionNoticeSeeds();
         const version = S.demoSeedVersion || 0;
         if (version < DEMO_SEED_VERSION) {
@@ -142,7 +154,7 @@
         return;
       }
     } catch (e) {}
-    S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
+    S = clone(SEED); S.legacyAudit = []; S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
     S.demoSeedVersion = DEMO_SEED_VERSION;
     seedDrafts();
   }
@@ -174,6 +186,52 @@
   const documentBasis = (p) => [`《${p.docTitle}》`, p.docNo && p.docNo !== '（无文号）' ? `（${p.docNo}）` : '', p.clause].filter(Boolean).join('');
   const fmtMoney = (n) => n >= 10000 ? (n / 10000).toFixed(n % 10000 ? 1 : 0).replace(/\.0$/, '') + ' 万元' : n + ' 元';
   const cnDate = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${+m[1]}年${+m[2]}月${+m[3]}日` : iso; };
+
+  /* ================= 政策匹配引擎（基础；完整口径由 mock/policy.js 覆盖） ================= */
+  function profileOf(e) {
+    return { subjectType: e.subjectType, tags: e.tags, license: e.license, yearsInZone: e.yearsInZone, regInZone: e.regInZone, employees: e.employees, ...(e.amounts || {}), _known: Object.keys(e.amounts || {}) };
+  }
+  function evalCond(c, pf) {
+    const val = pf[c.f];
+    if (c.op === 'has' || c.op === 'hasAny') {
+      const arr = val || []; const want = [].concat(c.v);
+      const ok = want.some((w) => arr.includes(w));
+      if (ok) return 'ok';
+      if (c.f === 'license') return 'unknown';
+      return 'no';
+    }
+    if (val === undefined || val === null || val === '') return 'unknown';
+    if (c.op === '==') return val === c.v ? 'ok' : 'no';
+    if (c.op === '>=') return val >= c.v ? 'ok' : 'no';
+    if (c.op === '<=') return val <= c.v ? 'ok' : 'no';
+    if (c.op === '>') return val > c.v ? 'ok' : 'no';
+    return 'unknown';
+  }
+  function calcOf(p, pf) {
+    const r = p.rule;
+    if (r.fixed !== undefined) return r.fixed ? { amount: r.fixed, text: `定额，最高 ${fmtMoney(r.fixed)}`, capped: false } : null;
+    const base = pf[r.base];
+    if (!base) return null;
+    const raw = Math.round(base * r.ratio), amount = Math.min(raw, r.cap);
+    return { amount, base, text: `${fmtMoney(base)} × ${Math.round(r.ratio * 100)}% = ${fmtMoney(raw)}${raw > r.cap ? `，超过封顶，按 ${fmtMoney(r.cap)}` : ''}`, capped: raw > r.cap };
+  }
+  function matchAll(pf) {
+    const out = [];
+    S.policies.forEach((p) => {
+      const objOk = p.object === pf.subjectType || (p.object === '其他组织' && pf.tags.includes('服务机构'));
+      const checks = p.conditions.map((c) => ({ label: c.label, state: evalCond(c, pf) }));
+      if (!objOk || checks[0].state !== 'ok') return;
+      if (p.conditions.some((c, i) => c.trigger && checks[i].state === 'unknown')) return;
+      let level = 'ok';
+      if (checks.some((c) => c.state === 'no')) level = 'no';
+      else if (checks.some((c) => c.state === 'unknown')) level = 'check';
+      const ended = p.times.open === false;
+      out.push({ id: p.id, title: p.title, level, checks, pending: p.pending, window: p.times.window, open: p.times.open, ended, calc: level === 'no' ? null : calcOf(p, pf), rule: p.rule.text, doc: pdoc(p.doc).no, clause: p.clause });
+    });
+    const rank = { ok: 0, check: 1, no: 2 };
+    out.sort((a, b) => rank[a.level] - rank[b.level] || (a.ended - b.ended));
+    return out;
+  }
 
   function findEntInText(t) {
     if (!t) return null;
@@ -215,7 +273,7 @@
   }
 
   /* ================= 会议长任务 ================= */
-  const JOB_STEPS = ['上传与校验', '语音转写（本地 SenseVoice）', '区分发言人', '热词纠错', '生成纪要与待办'];
+  const JOB_STEPS = ['上传与校验', `语音转写（${window.JK_CONFIG?.modelRouting?.transcriptionModel || 'SenseVoice（本地）'}）`, '区分发言人', '热词纠错', '生成纪要与待办'];
   function jobState(j) {
     const speed = S.demoFast ? 0.45 : 1;
     const elapsed = (Date.now() - j.started) / 1000, total = 6 * speed;
@@ -426,8 +484,14 @@
   /* ================= 对话编排（意图识别 → 调用小应用工具 → 卡片） ================= */
   function pickModel(requested, sensitive) {
     const m = S.models.find((x) => x.id === requested) || S.models[0];
-    if (sensitive && (m.kind === 'cloud' || m.id === 'auto')) return { used: S.models.find((x) => x.id === 'local-qwen-32b'), note: m.id === 'auto' ? '涉及企业台账，已自动路由到本地模型' : `涉及企业台账（内部数据），已从 ${m.name} 切换到本地模型，数据不出局` };
-    if (m.id === 'auto') return { used: S.models.find((x) => x.id === 'deepseek-v4.1-flash'), note: '自动选择：高频问答 → DeepSeek-V4.1-Flash' };
+    const routing = window.JK_CONFIG.modelRouting;
+    if (m.id === 'auto' || (sensitive && m.kind !== 'local')) {
+      const channel = sensitive ? 'local' : routing.defaultChannel;
+      const used = S.models.find((x) => x.id === routing.channels[channel] && x.kind === channel && x.enabled);
+      if (!used) err(503, 'MODEL_UNAVAILABLE', '配置的模型通道不可用');
+      return { used, note: sensitive ? '涉及企业台账，已自动路由到本地模型' : `自动选择：高频问答 → ${used.name}` };
+    }
+    if (!m.enabled) err(503, 'MODEL_UNAVAILABLE', '所选模型已停用');
     return { used: m, note: '' };
   }
   function detectIntent(text, forced) {
@@ -560,6 +624,27 @@
     if (!item) err(404, 'NOT_FOUND', '事项不存在');
     return { item: policyItem(item) };
   });
+  // 基础匹配；加载 mock/policy.js 后会用 first 覆盖为完整口径。
+  on('POST', '/api/apps/policy/match', (b) => {
+    let pf;
+    if (b.entId) {
+      const e = ent(b.entId); if (!e) err(404, 'NOT_FOUND', '企业不存在');
+      pf = profileOf(e); Object.assign(pf, b.overrides || {});
+      if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])];
+    } else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
+    const results = matchAll(pf);
+    const summary = {
+      ok: results.filter((r) => r.level === 'ok').length,
+      check: results.filter((r) => r.level === 'check').length,
+      no: results.filter((r) => r.level === 'no').length,
+      ended: results.filter((r) => r.ended && r.level !== 'no').length,
+    };
+    const eligible = results.filter((r) => r.level !== 'no' && !r.ended);
+    const ok = eligible.filter((r) => r.level === 'ok');
+    const defaultItemIds = (ok.length ? ok : eligible.slice(0, 2)).map((r) => r.id);
+    audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, pickModel(S.modelId, !!b.entId).used.name);
+    return { profile: pf, results, total: visiblePolicies().length, summary, defaultItemIds };
+  });
   on('POST', '/api/apps/policy/notice', (b) => {
     const e = b.entId ? ent(b.entId) : null;
     if (b.entId && !e) err(404, 'NOT_FOUND', '企业不存在');
@@ -585,7 +670,7 @@
     if (missingDepartment || !departments.size) departments.add('请填写（责任部门）');
     lines.push('以上内容仅供参考，以正式申报通知和审核结果为准。', '咨询电话（请填写）：',
       `落款：${[...departments].join('、')}　${cnDate((S.today || now()).slice(0, 10))}`);
-    audit('政策兑现咨询', `生成一次性告知单 · ${e ? e.short : '手动画像'}`, 'Qwen4-Max');
+    audit('政策兑现咨询', `生成一次性告知单 · ${e ? e.short : '手动画像'}`, pickModel(S.modelId, true).used.name);
     return { text: lines.join('\n') };
   });
   // 企业管理维护
@@ -605,11 +690,12 @@
   on('PATCH', '/api/apps/enterprise/companies/:id', (b, p) => { const e = ent(p.id); if (!can('enterprise', 'operate') || roleOf().mask) err(403, 'FORBIDDEN', '当前角色只能查看台账，不能修改'); Object.entries(b).forEach(([k, v]) => { const old = e[k]; e[k] = v; e.history = e.history || []; e.history.unshift({ at: now(), by: me().name, field: k, old: String(old), new: String(v), source: '手动修改' }); }); audit('企业管理维护', `修改台账 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies', (b) => { const id = 'E' + String(S.enterprises.length + 1).padStart(3, '0'); const e = { id, name: b.name, short: b.short || b.name.replace(/^北京|有限公司$/g, '').slice(0, 6), creditCode: b.creditCode || '待补', industry: b.industry || '待分类', scale: b.scale || '小型', tags: b.tags || [], license: [], subjectType: '企业', established: '待补', yearsInZone: +b.yearsInZone || 0, regInZone: true, employees: +b.employees || 0, revenue: { value: 0, unit: '万元', period: '—', source: '—', verify: '待核' }, amounts: {}, regAddr: b.addr || '待补', opAddr: b.addr || '待补', formerNames: [], contacts: b.contact ? [{ name: b.contact, title: '联系人', phone: b.phone || '待补', main: true }] : [], servicer: me().name, lastVisit: '—', lastVisitDays: 0, qualifications: [], products: b.industry || '待补', fieldStatus: {} }; S.enterprises.unshift(e); audit('企业管理维护', `新建企业档案 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies/:id/visits', (b, p) => {
+    const model = pickModel(S.modelId, true).used;
     const e = ent(p.id); const v = { id: nid('V'), entId: e.id, date: '2026-11-17', staff: me().name, type: b.type || '上门走访', notes: b.notes, followups: [] };
     S.visits.unshift(v); e.lastVisit = '2026-11-17'; e.lastVisitDays = 0;
     const { proposals, issues } = extractVisit(e, b.notes);
     S.proposals.push(...proposals);
-    audit('企业管理维护', `记录走访 · ${e.short}`, 'Qwen3-32B（本地）');
+    audit('企业管理维护', `记录走访 · ${e.short}`, model.name);
     return { visit: v, proposals, issues };
   });
   on('POST', '/api/apps/enterprise/proposals/:id/decision', (b, p) => { const x = S.proposals.find((y) => y.id === p.id); if (!x) err(404, 'NOT_FOUND', '建议不存在'); if (b.value) x.new = b.value; x.status = b.decision === 'accept' ? 'accepted' : 'rejected'; if (x.status === 'accepted') applyProposal(x); audit('企业管理维护', `${x.status === 'accepted' ? '确认写入' : '忽略'} · ${x.label}`); const left = S.proposals.filter((y) => y.entId === x.entId && y.status === 'pending').length; if (!left) S.inbox.forEach((i) => { if (i.type === 'proposal' && i.ref === x.entId) i.status = 'done'; }); return { item: x, pending: left }; });
@@ -622,7 +708,7 @@
   // 会议记录
   on('GET', '/api/apps/meeting/meetings', () => ({ items: S.meetings.map((m) => ({ id: m.id, title: m.title, type: m.type, date: m.date, duration: m.duration, status: m.status, file: m.file, size: m.size, source: m.source, scope: m.scope, participants: m.participants, todoCount: (m.todos || []).length })), templates: S.meetingTemplates, hotwords: S.hotwords }));
   on('POST', '/api/apps/meeting/meetings', (b) => { const m = { id: nid('MT'), title: b.title || '未命名会议', type: b.type || '企业座谈会', date: b.date || now(), duration: b.duration || '18:32', place: b.place || '—', host: me().name, participants: b.participants && b.participants.length ? b.participants : [me().name], file: b.file || '现场录音.m4a', size: b.size || '12.4 MB', status: 'new', source: b.source || '网页上传' }; S.meetings.unshift(m); return { item: m }; });
-  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, 'SenseVoice（本地）'); return { job: jobState(j) }; });
+  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, window.JK_CONFIG.modelRouting.transcriptionModel); return { job: jobState(j) }; });
   on('GET', '/api/v1/jobs/:id', (b, p) => { const j = S.jobs[p.id]; if (!j) err(404, 'NOT_FOUND', '任务不存在'); return { job: jobState(j) }; });
   on('GET', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (!m) err(404, 'NOT_FOUND', '会议不存在'); return { item: m, minutes: m.status === 'done' ? (m.minutesEdited || minutesOf(m)) : null }; });
   on('PATCH', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id);
@@ -639,7 +725,7 @@
   // 公文协作
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
-  on('POST', '/api/apps/document/drafts', (b) => { const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: policyDocumentId(t.id, b.inputs?.policy), status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, 'Qwen4-Max'); return { item: S.drafts[id] }; });
+  on('POST', '/api/apps/document/drafts', (b) => { const model = pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used; const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: policyDocumentId(t.id, b.inputs?.policy), status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, model.name); return { item: S.drafts[id] }; });
   on('GET', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404, 'NOT_FOUND', '文稿不存在'); return { item: d }; });
   on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
   on('POST', '/api/apps/document/drafts/:id/check', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; return { issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
@@ -686,7 +772,7 @@
   // 资料库（NAS 归集 + 检索）
   on('GET', '/api/v1/kb/libraries', () => ({ items: S.libraries.map((l) => ({ ...l, files: S.files.filter((f) => f.lib === l.id).length })) }));
   on('GET', '/api/v1/kb/files', (b, p, q) => { let items = S.files; if (q.lib) items = items.filter((f) => f.lib === q.lib); if (q.q) items = items.filter((f) => (f.name + f.tags.join('')).includes(q.q)); if (q.sort === 'cited') items = items.slice().sort((a, c) => c.cited - a.cited); return { items, total: items.length }; });
-  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, 'MinerU（本地）'); return { item: f, job: jobState(j) }; });
+  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, SEED.capabilities.find((c) => c.id === 'parse').route); return { item: f, job: jobState(j) }; });
   on('POST', '/api/v1/kb/search', (b) => ({ hits: kbSearch(b.q) }));
   on('GET', '/api/v1/kb/files/:id', (b, p) => { if (p.id.startsWith('POL:')) { const x = callSync('GET', '/api/apps/policy/items/' + encodeURIComponent(p.id.slice(4))).item; return { item: { id: p.id, name: x.docTitle, no: x.docNo, clause: x.clause, text: x.original, state: x.docState, url: x.source?.url || '', verifiedAt: x.verifiedAt, versionNote: x.versionNote } }; } const f = S.files.find((x) => x.id === p.id); return { item: { ...f, text: f.snippet || '（演示：文件全文在 NAS 中，正式环境可在线预览并定位页码）' } }; });
   // 技能中心 / 造应用（复用卫华 builder：对话 → 需求包 → 试跑 → 发布）
@@ -759,7 +845,7 @@
     onChange: (f) => listeners.push(f),
     reset() { localStorage.removeItem(KEY); load(); loadHooks.forEach((f) => f(S)); save(); listeners.forEach((f) => f('RESET', '')); },
     /* 扩展点：账号权限模块（assets/auth.js）通过它注册路由、读写状态，不改本文件 */
-    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, save, clone, nid, now },
+    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now },
     onLoad(f) { loadHooks.push(f); f(S); save(); },
     guard: null,
     setFast(v) { S.demoFast = v; window.JKAPI.latency = v ? 90 : 260; },

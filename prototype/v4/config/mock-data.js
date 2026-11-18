@@ -16781,6 +16781,26 @@ window.JK_DATA = {
   departmentsReal: real.departments,
   districtFacts: real.facts,
 };
+/* #81：若已加载 app.config，则模型/能力/审计模型名跟随 JK_CONFIG.modelRouting。 */
+const routing = window.JK_CONFIG && window.JK_CONFIG.modelRouting;
+if (routing) {
+  const modelName = (id) => routing.models.find((m) => m.id === id).name;
+  window.JK_DATA.models = routing.models;
+  window.JK_DATA.capabilities = routing.capabilities;
+  window.JK_DATA.audit = window.JK_DATA.audit.map((row) => {
+    const action = row[3];
+    let model = row[4];
+    if (/^(匹配|查看档案) ·/.test(action)) model = modelName(routing.channels.local);
+    else if (action.startsWith('生成初稿 ·')) model = modelName(routing.taskModels.writing);
+    else if (action.startsWith('创建草稿 ·')) model = modelName(routing.taskModels.rules);
+    else if (action.startsWith('转写 ·')) model = routing.transcriptionModel;
+    return [row[0], row[1], row[2], row[3], model];
+  });
+  window.JK_DATA.usage = {
+    ...window.JK_DATA.usage,
+    byModel: [...routing.usageBuckets.map(([id, share]) => [modelName(id), share]), ['其他', 5]],
+  };
+}
 window.JK_REAL = real;
 window.JK_REAL_KB = {
   "fetched": "2026-11-18",
