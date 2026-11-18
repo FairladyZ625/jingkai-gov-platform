@@ -1,0 +1,34 @@
+# 仅由 jkq.auth 在演示模式下读取；卫华的通用演示入口不读取 demoUsers。
+demoUsers:
+  - id: u-zhanglei
+    username: admin
+    name: 张磊
+    deptId: d-ai
+    dept: AI 工作组
+    title: 平台管理员
+    role: admin
+    passwordEnv: JKQ_DEMO_ADMIN_PASSWORD
+  - id: u-liyang
+    username: liyang
+    name: 李阳
+    deptId: d-cyc
+    dept: 产业促进局
+    title: 处长
+    role: leader
+    passwordEnv: JKQ_DEMO_LEADER_PASSWORD
+  - id: u-wangmin
+    username: wangmin
+    name: 王敏
+    deptId: d-qyfw
+    dept: 产业促进局 · 企业服务处
+    title: 经办
+    role: member
+    passwordEnv: JKQ_DEMO_MEMBER_PASSWORD
+  - id: u-hejun
+    username: hejun
+    name: 何军
+    deptId: d-yzsk
+    dept: 亦智数科（合作企业）
+    title: AI 工程师
+    role: partner
+    passwordEnv: JKQ_DEMO_PARTNER_PASSWORD
