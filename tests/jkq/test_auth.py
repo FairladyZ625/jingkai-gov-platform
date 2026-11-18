@@ -19,11 +19,11 @@ LOGIN = '/api/v1/auth/login'
 LOGOUT = '/api/v1/auth/logout'
 SESSION = '/api/v1/auth/session'
 ME = '/api/v1/me'
-PASSWORD = '/api/v1/me/password'
+PASSWORD_URL = '/api/v1/me/password'
 PREFS = '/api/v1/me/prefs'
 ROLE = '/api/v1/me/role'
 ADMIN = '/api/v1/admin/users'
-TEST_PASSWORD = 'test-demo-2026'
+TEST_PASSWORD = 'test-member'
 ACCOUNTS = {
     'admin': ('admin', '张磊'),
     'leader': ('liyang', '李阳'),
@@ -44,7 +44,7 @@ def instance(tmp_path, monkeypatch, cheap_password_hash):
     monkeypatch.delenv('HAIKNOW_DEMO_LOGIN', raising=False)
     monkeypatch.delenv('JKQ_DEMO_MODE', raising=False)
     for role in ACCOUNTS:
-        monkeypatch.setenv(f'JKQ_DEMO_{role.upper()}_PASSWORD', TEST_PASSWORD)
+        monkeypatch.setenv(f'JKQ_DEMO_{role.upper()}_PASSWORD', f'test-{role}')
 
     def build(demo=True):
         app = create_app(ROOT)
@@ -65,7 +65,7 @@ def assert_public(value):
         for item in value:
             assert_public(item)
     elif isinstance(value, str):
-        assert TEST_PASSWORD not in value
+        assert all(f'test-{role}' not in value for role in ACCOUNTS)
         assert 'scrypt$' not in value
 
 
@@ -86,8 +86,10 @@ def error(result, status, code, details=None):
     return data['details']
 
 
-def login(client, role='member', password=TEST_PASSWORD, path=LOGIN):
-    return client.post(path, json={'username': ACCOUNTS[role][0], 'password': password})
+def login(client, role='member', password=None, path=LOGIN):
+    return client.post(path, json={
+        'username': ACCOUNTS[role][0], 'password': f'test-{role}' if password is None else password,
+    })
 
 
 @pytest.mark.parametrize(('role', 'wildcard', 'grants'), [
@@ -122,6 +124,7 @@ def test_wrong_unknown_and_disabled(instance):
     build, _ = instance
     client, store = build()
     error(login(client, password='test-wrong'), 401, 'BAD_CREDENTIALS')
+    error(login(client, 'leader', password=TEST_PASSWORD), 401, 'BAD_CREDENTIALS')
     error(client.post(LOGIN, json={'username': 'unknown', 'password': TEST_PASSWORD}), 401, 'BAD_CREDENTIALS')
     with store._lock, store._db as db:
         db.execute("update users set status='disabled' where username='wangmin'")
@@ -159,7 +162,7 @@ def test_anonymous_session_and_private_endpoints(instance):
     assert response(client.get(SESSION), 200) == {'user': None}
     error(client.get(ME), 401, 'UNAUTHENTICATED')
     error(client.get(ADMIN), 401, 'UNAUTHENTICATED')
-    error(client.put(PASSWORD, json={'old': TEST_PASSWORD, 'new': 'sample'}), 401, 'UNAUTHENTICATED')
+    error(client.put(PASSWORD_URL, json={'old': TEST_PASSWORD, 'new': 'sample'}), 401, 'UNAUTHENTICATED')
     error(client.patch(PREFS, json={'theme': 'dark'}), 401, 'UNAUTHENTICATED')
     error(client.put(ROLE, json={'role': 'leader'}), 401, 'UNAUTHENTICATED')
     assert response(client.post(LOGOUT), 200) == {'ok': True}
@@ -172,9 +175,9 @@ def test_change_password_revokes_other_sessions_and_old_password(instance):
     other = TestClient(client.app)
     response(login(client), 200)
     response(login(other), 200)
-    error(client.put(PASSWORD, json={'old': 'wrong', 'new': '123456'}), 400, 'BAD_PASSWORD')
-    error(client.put(PASSWORD, json={'old': TEST_PASSWORD, 'new': '12345'}), 400, 'WEAK_PASSWORD')
-    assert response(client.put(PASSWORD, json={'old': TEST_PASSWORD, 'new': '123456'}), 200) == {'ok': True}
+    error(client.put(PASSWORD_URL, json={'old': 'wrong', 'new': '123456'}), 400, 'BAD_PASSWORD')
+    error(client.put(PASSWORD_URL, json={'old': TEST_PASSWORD, 'new': '12345'}), 400, 'WEAK_PASSWORD')
+    assert response(client.put(PASSWORD_URL, json={'old': TEST_PASSWORD, 'new': '123456'}), 200) == {'ok': True}
     response(client.get(ME), 200)
     error(other.get(ME), 401, 'UNAUTHENTICATED')
     error(login(other), 401, 'BAD_CREDENTIALS')
@@ -198,7 +201,7 @@ def test_prefs_patch_merge_per_user_and_persistence(instance):
 @pytest.mark.parametrize(('method', 'path', 'body'), [
     ('post', LOGIN, {'username': 'wangmin', 'password': [TEST_PASSWORD]}),
     ('post', LOGIN, {'user_id': 'u-wangmin'}),
-    ('put', PASSWORD, {'old': TEST_PASSWORD, 'new': [TEST_PASSWORD]}),
+    ('put', PASSWORD_URL, {'old': TEST_PASSWORD, 'new': [TEST_PASSWORD]}),
     ('patch', PREFS, {'operatorEnabled': TEST_PASSWORD}),
     ('patch', PREFS, {'theme': None}),
     ('put', ROLE, {'role': [TEST_PASSWORD]}),
@@ -240,6 +243,27 @@ def test_production_role_always_404_and_demo_sessions_are_rejected(instance):
     response(prod.post(LOGOUT), 200)
     response(prod.post(LOGIN, json={'username': 'operator', 'password': TEST_PASSWORD}), 200)
     response(prod.get(ADMIN), 200)
+
+
+def test_demo_role_switch_requires_a_demo_identity(instance):
+    build, _ = instance
+    prod, _ = build(demo=False)
+    response(prod.post('/api/auth/bootstrap', json={
+        'username': 'operator', 'name': '测试管理员', 'password': TEST_PASSWORD,
+    }), 200)
+    demo, _ = build()
+    demo.cookies.update(prod.cookies)
+    error(demo.put(ROLE, json={'role': 'partner'}), 403, 'FORBIDDEN')
+    assert response(demo.get(ME), 200)['role']['id'] == 'admin'
+
+
+def test_grant_changes_apply_to_existing_sessions(instance):
+    build, _ = instance
+    client, store = build()
+    assert response(login(client, 'partner'), 200)['grants']['meeting'] == []
+    with store._lock, store._db as db:
+        db.execute("insert into role_grants values ('partner','meeting','view')")
+    assert response(client.get(ME), 200)['grants']['meeting'] == ['view']
 
 
 @pytest.mark.parametrize('path', [ADMIN, '/api/admin/users'])
