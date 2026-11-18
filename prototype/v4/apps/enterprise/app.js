@@ -19,16 +19,16 @@
       ],
       accepts: [{ kind: '企业资料', ext: ['xlsx', 'xls', 'csv', 'pdf', 'doc', 'docx', 'txt', 'jpg', 'png'], match: /企业|台账|走访|名单|营业执照|公司|有限/ }],
       intents: [
-        { id: 'enterprise.find', action: 'find', examples: ['查一下星河智驾', '打开书香里文化的一企一档', '星河智驾走访前摘要'], keywords: ['查一下', '一企一档', '档案', '摘要', '企业情况'], slots: { ent: 'enterprise' }, plan: ['打开企业管理', '找到企业', '打开一企一档', '生成 30 秒速览'] },
+        { id: 'enterprise.find', action: 'find', examples: ['查一下纸鹿二号智驾', '打开书香里文化的一企一档', '纸鹿二号智驾走访前摘要'], keywords: ['查一下', '一企一档', '档案', '摘要', '企业情况'], slots: { ent: 'enterprise' }, plan: ['打开企业管理', '找到企业', '打开一企一档', '生成 30 秒速览'] },
         { id: 'enterprise.visit', action: 'visit', examples: ['给书香里加一条走访记录', '记一次走访', '整理书香里的走访'], keywords: ['走访', '记录走访', '拜访'], slots: { ent: 'enterprise' }, plan: ['打开一企一档', '填写走访记录', 'AI 提取更新建议', '等你确认写入'] },
         { id: 'enterprise.filter', action: 'filter', examples: ['打开企业台账筛选高新企业', '台账里只看人工智能企业', '列出所有人工智能企业'], keywords: ['台账', '筛选', '列出', '只看'], plan: ['打开台账', '按条件筛选', '报出数量'] },
         { id: 'enterprise.alerts', action: 'alerts', examples: ['资质快到期的企业有哪些', '哪些企业很久没走访了', '超过 90 天没走访的重点企业', '哪些企业好久没去了', '有哪些企业很久没去看了'], keywords: ['到期', '没走访', '久未', '提醒', '预警', '好久没去', '很久没去', '没去过', '多久没去', '没去看', '好久没走访'], plan: ['打开企业管理', '查看提醒', '列出企业'] },
         { id: 'enterprise.issues', action: 'issues', examples: ['看看企业诉求办理进度', '打开诉求看板'], keywords: ['诉求', '看板', '办理进度'], plan: ['打开诉求看板', '汇总各状态'] },
         { id: 'enterprise.export', action: 'export', examples: ['导出企业台账', '把有提醒的企业导出 Excel'], keywords: ['导出', 'Excel', 'CSV'], plan: ['打开台账', '筛选', '导出 CSV'] },
       ],
-      starters: ['查一下星河智驾', '资质快到期的企业有哪些？', '给书香里加一条走访记录'],
+      starters: ['查一下纸鹿二号智驾', '资质快到期的企业有哪些？', '给书香里加一条走访记录'],
       demo: [
-        { title: '一企一档', say: '查一下星河智驾' },
+        { title: '一企一档', say: '查一下纸鹿二号智驾' },
         { title: '记走访', say: '给书香里加一条走访记录' },
         { title: '台账筛选', say: '打开企业台账筛选高新企业' },
       ],
@@ -42,6 +42,7 @@
       const $ = (s) => el.querySelector(s);
       const entOf = (id) => ENTS.find((e) => e.id === id) || {};
       const iniHue = (e) => ui.hue((e.industry || '').split(' · ')[0]);
+      const exampleBadge = (e) => e.example ? tag('示例企业', 'entTag') : '';
       const ini = (e, lg) => `<span class="ini ${lg ? 'lg' : ''} h-${iniHue(e)}">${esc((e.short || '?')[0])}</span>`;
 
       async function load() {
@@ -88,9 +89,9 @@
         $('#es').innerHTML = `<div class="q">${esc(T.findQ)}</div><div class="q-sub">${esc(T.findSub)}</div>
           <div class="kpis x-stats" style="--n:3">${kinds.map((k) => `<button class="kpi-c h-${ui.hue(k, 'alertKind')} ${S.alert === k ? 'on' : ''}" data-alert="${k}" data-op="enterprise.alert-${k}"><div class="v num">${cnt(k)}</div><div class="l">${esc(k)}</div></button>`).join('')}</div>
           <div class="search" style="margin:var(--s5) 0 var(--s3)">${icon('search')}<input class="input" id="eq" data-op="enterprise.q" placeholder="名称 / 信用代码 / 曾用名 / 标签" value="${esc(S.q)}" autocomplete="off"></div>
-          ${shown.length ? `<div class="card flat"><div class="list lined">${shown.map((e) => { const al = ALERTS.filter((a) => a.entId === e.id); return `<div class="li" data-ent="${e.id}" data-op="enterprise.ent-${e.id}">${ini(e)}<div class="grow"><div class="ttl clip">${esc(e.short)}</div><div class="meta clip">${esc(e.industry)} · ${esc(e.servicer)}</div></div>${al[0] ? tag(al[0].kind, 'alertKind') : ''}<span class="meta num" style="width:84px;text-align:right">${e.lastVisitDays ? e.lastVisitDays + ' 天前走访' : '近期已走访'}</span></div>`; }).join('')}</div></div>
+          ${shown.length ? `<div class="card flat"><div class="list lined">${shown.map((e) => { const al = ALERTS.filter((a) => a.entId === e.id); return `<div class="li" data-ent="${e.id}" data-op="enterprise.ent-${e.id}">${ini(e)}<div class="grow"><div class="ttl clip">${esc(e.short)}</div><div class="meta clip">${esc(e.industry)} · ${esc(e.servicer)}</div></div>${exampleBadge(e)}${al[0] ? tag(al[0].kind, 'alertKind') : ''}<span class="meta num" style="width:84px;text-align:right">${e.lastVisitDays ? e.lastVisitDays + ' 天前走访' : '近期已走访'}</span></div>`; }).join('')}</div></div>
           ${list.length > shown.length ? `<button class="btn ghost" data-tab="list" style="margin-top:var(--s2)">在台账里看全部 ${list.length} 家</button>` : ''}` : ui.empty({ icon: 'search', title: '没找到这家企业', desc: canOp ? '可以新建一份企业档案' : '换个关键词试试', action: canOp ? '新建企业' : '' })}`;
-        const inp = $('#eq'); let tm; inp.oninput = () => { clearTimeout(tm); tm = setTimeout(() => { S.q = inp.value; step0(); const n = $('#eq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 180); };
+        const inp = $('#eq'); let tm; inp.oninput = () => { clearTimeout(tm); tm = setTimeout(() => { if (!inp.isConnected) return; S.q = inp.value; step0(); const n = $('#eq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 180); };
         foot(canOp ? `<button class="btn ghost" data-act="newEnt" data-op="enterprise.new">${icon('plus')}新建企业</button>` : '', '');
       }
 
@@ -99,7 +100,7 @@
         const r = S.prof; if (!r) { $('#es').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel" style="height:120px"></div></div>'; foot(back(), ''); return; }
         const e = r.item; const openIssues = r.issues.filter((i) => i.status !== '已办结'); const lastV = r.visits[0];
         const q0 = (e.qualifications || [])[0];
-        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)} · ${esc(e.creditCode)}</div></div><div class="row wrap ent-hd-tags">${e.tags.slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
+        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)} · ${esc(e.creditCode)}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${e.tags.slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
           <div class="card ent-brief" data-op="enterprise.brief"><div class="card-h"><span class="t-3">${icon('sparkles')}</span><span class="ttl">30 秒速览</span><span class="sp"></span><span class="meta">走访前看这里</span></div>
             <div class="ent-kv4">
               <div><div class="meta">做什么</div><div>${esc(e.products || e.industry)}</div></div>
@@ -135,7 +136,7 @@
         const v = S.visit;
         if (!v) {
           $('#es').innerHTML = `<div class="q">${esc(T.visitQ)}</div><div class="q-sub">${esc(T.visitSub)}</div>
-            <div class="row gap3" style="margin-bottom:var(--s3)"><span class="ini h-${iniHue(e)}">${esc(e.short[0])}</span><b>${esc(e.short)}</b><span class="sp"></span><select class="select" style="width:130px" id="evt" data-op="enterprise.vtype">${C.visitTypes.map((t) => `<option ${S.vtype === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
+            <div class="row gap3" style="margin-bottom:var(--s3)"><span class="ini h-${iniHue(e)}">${esc(e.short[0])}</span><b>${esc(e.short)}</b>${exampleBadge(e)}<span class="sp"></span><select class="select" style="width:130px" id="evt" data-op="enterprise.vtype">${C.visitTypes.map((t) => `<option ${S.vtype === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
             <textarea class="textarea ent-notes" id="en" data-op="enterprise.notes" placeholder="例如：房租涨到 48 万；计划扩租 400㎡；新任行政主管周娜（电话 139…）">${esc(S.notes)}</textarea>
             <div class="row" style="margin-top:var(--s2)"><button class="btn sm ghost" data-act="sample" data-op="enterprise.sample">${icon('file')}填入示例</button><button class="btn sm ghost" data-act="voice" data-op="enterprise.voice">${icon('mic')}语音输入（演示）</button><span class="sp"></span><span class="meta">${esc(T.noWrite)}</span></div>`;
           $('#en').oninput = (ev) => (S.notes = ev.target.value); $('#evt').onchange = (ev) => (S.vtype = ev.target.value);
@@ -191,7 +192,7 @@
             <select class="select sm" style="width:120px;height:28px" id="lsort"><option value="lastVisit" ${S.lsort === 'lastVisit' ? 'selected' : ''}>最久未走访</option><option value="revenue" ${S.lsort === 'revenue' ? 'selected' : ''}>营收</option><option value="name" ${S.lsort === 'name' ? 'selected' : ''}>名称</option></select>
             ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
           ${r.items.length ? `<div class="card flat ent-tbl scroll"><table class="tbl"><thead><tr><th style="width:32px"><input type="checkbox" class="pol-ck" data-selall></th><th>企业</th><th>行业</th><th class="r">人数</th><th class="r">营收(万元)</th><th>服务专员</th><th class="r">最近走访</th></tr></thead><tbody>
-            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a>${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked ? 'mask' : ''}">${esc(e.revenue.value)}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
+            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked ? 'mask' : ''}">${esc(e.revenue.value)}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
         $('#lsort') && ($('#lsort').onchange = (ev) => { S.lsort = ev.target.value; renderTable(); });
       }
 
@@ -291,7 +292,7 @@
         async find({ ent, text } = {}, run) {
           await ready(); const id = resolveEnt(ent, text); if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (run) await run.step(1); await opOpen(id, run);
-          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结'); run.done(`${e.short}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }, ...(canOp ? [{ label: '记一次走访', say: `给${e.short}加一条走访记录` }] : [])]); }
+          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结'); run.done(`${e.short}${e.example ? "（**示例企业**）" : ""}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }, ...(canOp ? [{ label: '记一次走访', say: `给${e.short}加一条走访记录` }] : [])]); }
           return S.prof;
         },
         async visit({ ent, text, notes } = {}, run) {

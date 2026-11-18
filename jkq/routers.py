@@ -1,8 +1,11 @@
 """实例路由注册。各业务模块导出带完整路径前缀的 APIRouter。"""
 
+import os
+
 from fastapi import APIRouter, FastAPI, HTTPException
 
 from .kb import install as install_kb
+from .models import install as install_models
 
 # 在这里显式登记业务模块的 router。经开区路由优先于同方法、同路径的 core 路由。
 ROUTERS: tuple[APIRouter, ...] = ()
@@ -16,7 +19,6 @@ def health_check():
     return {"ok": True}
 
 
-@stubs.get("/auth/session")
 @stubs.api_route("/admin/departments", methods=["GET", "POST"])
 @stubs.api_route("/admin/departments/{department_id}", methods=["PATCH", "DELETE"])
 def unavailable_contract_route():
@@ -32,7 +34,16 @@ def register_routes(app: FastAPI) -> None:
     core_route_count = len(routes)
     app.include_router(health)
     install_kb(app, app.state.platform, current_user)
+    install_models(app)
     for router in ROUTERS:
         app.include_router(router)
     routes[:] = routes[core_route_count:] + routes[:core_route_count]
+    # #48：配置了本地模拟站时挂载电脑操作运行器。见 Issue #48 评论。
+    mock_url = os.environ.get("JKQ_MOCK_GOV_URL", "").strip()
+    if mock_url:
+        from haiknow_core.main import current_user
+        from .computer.api import install as install_computer
+
+        install_computer(app, current_user, url=mock_url,
+                         channel=os.environ.get("JKQ_BROWSER_CHANNEL") or None)
     app.include_router(stubs)
