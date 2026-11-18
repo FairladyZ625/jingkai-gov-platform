@@ -3,8 +3,9 @@
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from . import checks, drafts, templates
+from . import checks, templates
 from .drafting_router import DocumentRoute, Operator, Viewer
+from .drafts import _locked as locked, _present as present, _record as get_record
 
 router = APIRouter(route_class=DocumentRoute)
 
@@ -35,14 +36,14 @@ def inspect(ctx, request, record):
 
 @router.post("/drafts/{identity}/check")
 def check_draft(identity: str, ctx: Viewer, request: Request):
-    return inspect(ctx, request, drafts._record(ctx, identity)).response()
+    return inspect(ctx, request, get_record(ctx, identity)).response()
 
 
 @router.post("/drafts/{identity}/fix")
 def fix_draft(identity: str, body: FixIn, ctx: Operator, request: Request):
-    current = drafts._record(ctx, identity)
+    current = get_record(ctx, identity)
     if current["status"] == "confirmed":
-        raise drafts._locked()
+        raise locked()
     findings = inspect(ctx, request, current)
     data = current["data"]
     content, citations, ignored, unfixable = checks.apply(data, findings, body.ids)
@@ -52,5 +53,5 @@ def fix_draft(identity: str, body: FixIn, ctx: Operator, request: Request):
             **data, "by": f"{ctx.user.name}（一键修正）", "content": content, "citations": citations,
         })
         findings = inspect(ctx, request, current)
-    return {"item": drafts._present(ctx, current), **findings.response(),
+    return {"item": present(ctx, current), **findings.response(),
             "ignoredIds": ignored, "unfixableIds": unfixable}
