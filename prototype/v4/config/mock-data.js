@@ -383,9 +383,9 @@
   D.audit = [
     ['2026-11-17 09:12', '王敏', '政策兑现咨询', '匹配 · 书香里文化', modelName(routing.channels.local)], ['2026-11-17 09:30', '王敏', '企业管理维护', '查看档案 · 星河智驾', modelName(routing.channels.local)],
     ['2026-11-16 16:02', '孙婷', '公文协作', '生成初稿 · 申报期限调整通知', modelName(routing.taskModels.writing)], ['2026-11-16 15:20', '李阳', '公文协作', '审签通过 · DOC-1108 v3', '—'],
-    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', modelName(routing.taskModels.rules)], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', D.capabilities.find((c) => c.id === 'transcribe').route],
+    ['2026-11-16 11:45', '何军（外部）', '技能中心', '创建草稿 · 数据券材料预审', modelName(routing.taskModels.rules)], ['2026-11-15 10:08', '刘翔', '会议记录', '转写 · 2026-10-28 调度会', routing.transcriptionModel],
   ];
-  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [[modelName(routing.channels.cloud), 34], [modelName(routing.channels.local), 27], [modelName(routing.taskModels.writing), 18], [modelName(routing.taskModels.rules), 9], [modelName(routing.taskModels.longText), 7], ['其他', 5]] };
+  D.usage = { today: 412, week: 2690, byApp: { policy: 38, enterprise: 24, meeting: 17, document: 21 }, byModel: [...routing.usageBuckets.map(([id, share]) => [modelName(id), share]), ['其他', 5]] };
 
   /* ---------- 对话历史 ---------- */
   D.conversations = [

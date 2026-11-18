@@ -28,6 +28,8 @@ window.JK_CONFIG = {
   modelRouting: {
     defaultChannel: 'cloud', // 公开请求的自动路由，可切换为 local
     channels: { cloud: 'deepseek-v4.1-flash', local: 'local-qwen-32b' },
+    usageBuckets: [['deepseek-v4.1-flash', 34], ['local-qwen-32b', 27], ['qwen4-max', 18], ['glm-5.3', 9], ['kimi-k3.1-pro', 7]],
+    transcriptionModel: 'SenseVoice（本地）',
     taskModels: { writing: 'qwen4-max', rules: 'glm-5.3', longText: 'kimi-k3.1-pro' },
     models: [
       { id: 'auto', name: '自动选择', provider: '模型网关', group: '推荐', kind: 'route', desc: '按任务自动路由：敏感数据走本地，写作走旗舰，问答走高速', tags: ['推荐'], enabled: true },

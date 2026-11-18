@@ -14,10 +14,18 @@
         const enabled = new Map(S.models.map((m) => [m.id, m.enabled]));
         S.models = SEED.models.map((m) => ({ ...m, enabled: enabled.get(m.id) ?? m.enabled }));
         S.capabilities = clone(SEED.capabilities);
+        if (!S.legacyAudit) {
+          // 旧版运行记录缺少可信路由信息，原样封存。当前视图仅迁移仍在缓存中的已知种子。
+          S.legacyAudit = S.audit;
+          const seedKey = (row) => JSON.stringify(row.slice(0, 4));
+          const seeds = new Map(SEED.audit.map(row => [seedKey(row), row]));
+          S.audit = S.legacyAudit.map(row => seeds.get(seedKey(row))).filter(Boolean).map(clone);
+        }
+        S.usage.byModel = clone(SEED.usage.byModel);
         return;
       }
     } catch (e) {}
-    S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
+    S = clone(SEED); S.legacyAudit = []; S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
     seedDrafts();
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
@@ -118,7 +126,7 @@
   }
 
   /* ================= 会议长任务 ================= */
-  const JOB_STEPS = ['上传与校验', `语音转写（${SEED.capabilities.find((c) => c.id === 'transcribe').route}）`, '区分发言人', '热词纠错', '生成纪要与待办'];
+  const JOB_STEPS = ['上传与校验', `语音转写（${window.JK_CONFIG.modelRouting.transcriptionModel}）`, '区分发言人', '热词纠错', '生成纪要与待办'];
   function jobState(j) {
     const speed = S.demoFast ? 0.45 : 1;
     const elapsed = (Date.now() - j.started) / 1000, total = 6 * speed;
@@ -250,6 +258,7 @@
       if (!used) err(503, 'MODEL_UNAVAILABLE', '配置的模型通道不可用');
       return { used, note: sensitive ? '涉及企业台账，已自动路由到本地模型' : `自动选择：高频问答 → ${used.name}` };
     }
+    if (!m.enabled) err(503, 'MODEL_UNAVAILABLE', '所选模型已停用');
     return { used: m, note: '' };
   }
   function detectIntent(text, forced) {
@@ -407,11 +416,12 @@
   on('PATCH', '/api/apps/enterprise/companies/:id', (b, p) => { const e = ent(p.id); if (!can('enterprise', 'operate') || roleOf().mask) err(403, 'FORBIDDEN', '当前角色只能查看台账，不能修改'); Object.entries(b).forEach(([k, v]) => { const old = e[k]; e[k] = v; e.history = e.history || []; e.history.unshift({ at: now(), by: me().name, field: k, old: String(old), new: String(v), source: '手动修改' }); }); audit('企业管理维护', `修改台账 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies', (b) => { const id = 'E' + String(S.enterprises.length + 1).padStart(3, '0'); const e = { id, name: b.name, short: b.short || b.name.replace(/^北京|有限公司$/g, '').slice(0, 6), creditCode: b.creditCode || '待补', industry: b.industry || '待分类', scale: b.scale || '小型', tags: b.tags || [], license: [], subjectType: '企业', established: '待补', yearsInZone: +b.yearsInZone || 0, regInZone: true, employees: +b.employees || 0, revenue: { value: 0, unit: '万元', period: '—', source: '—', verify: '待核' }, amounts: {}, regAddr: b.addr || '待补', opAddr: b.addr || '待补', formerNames: [], contacts: b.contact ? [{ name: b.contact, title: '联系人', phone: b.phone || '待补', main: true }] : [], servicer: me().name, lastVisit: '—', lastVisitDays: 0, qualifications: [], products: b.industry || '待补', fieldStatus: {} }; S.enterprises.unshift(e); audit('企业管理维护', `新建企业档案 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies/:id/visits', (b, p) => {
+    const model = pickModel(S.modelId, true).used;
     const e = ent(p.id); const v = { id: nid('V'), entId: e.id, date: '2026-11-17', staff: me().name, type: b.type || '上门走访', notes: b.notes, followups: [] };
     S.visits.unshift(v); e.lastVisit = '2026-11-17'; e.lastVisitDays = 0;
     const { proposals, issues } = extractVisit(e, b.notes);
     S.proposals.push(...proposals);
-    audit('企业管理维护', `记录走访 · ${e.short}`, pickModel(S.modelId, true).used.name);
+    audit('企业管理维护', `记录走访 · ${e.short}`, model.name);
     return { visit: v, proposals, issues };
   });
   on('POST', '/api/apps/enterprise/proposals/:id/decision', (b, p) => { const x = S.proposals.find((y) => y.id === p.id); if (!x) err(404, 'NOT_FOUND', '建议不存在'); if (b.value) x.new = b.value; x.status = b.decision === 'accept' ? 'accepted' : 'rejected'; if (x.status === 'accepted') applyProposal(x); audit('企业管理维护', `${x.status === 'accepted' ? '确认写入' : '忽略'} · ${x.label}`); const left = S.proposals.filter((y) => y.entId === x.entId && y.status === 'pending').length; if (!left) S.inbox.forEach((i) => { if (i.type === 'proposal' && i.ref === x.entId) i.status = 'done'; }); return { item: x, pending: left }; });
@@ -424,7 +434,7 @@
   // 会议记录
   on('GET', '/api/apps/meeting/meetings', () => ({ items: S.meetings.map((m) => ({ id: m.id, title: m.title, type: m.type, date: m.date, duration: m.duration, status: m.status, file: m.file, size: m.size, source: m.source, scope: m.scope, participants: m.participants, todoCount: (m.todos || []).length })), templates: S.meetingTemplates, hotwords: S.hotwords }));
   on('POST', '/api/apps/meeting/meetings', (b) => { const m = { id: nid('MT'), title: b.title || '未命名会议', type: b.type || '企业座谈会', date: b.date || now(), duration: b.duration || '18:32', place: b.place || '—', host: me().name, participants: b.participants && b.participants.length ? b.participants : [me().name], file: b.file || '现场录音.m4a', size: b.size || '12.4 MB', status: 'new', source: b.source || '网页上传' }; S.meetings.unshift(m); return { item: m }; });
-  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, SEED.capabilities.find((c) => c.id === 'transcribe').route); return { job: jobState(j) }; });
+  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, window.JK_CONFIG.modelRouting.transcriptionModel); return { job: jobState(j) }; });
   on('GET', '/api/v1/jobs/:id', (b, p) => { const j = S.jobs[p.id]; if (!j) err(404, 'NOT_FOUND', '任务不存在'); return { job: jobState(j) }; });
   on('GET', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (!m) err(404, 'NOT_FOUND', '会议不存在'); return { item: m, minutes: m.status === 'done' ? (m.minutesEdited || minutesOf(m)) : null }; });
   on('PATCH', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id);
@@ -441,7 +451,7 @@
   // 公文协作
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
-  on('POST', '/api/apps/document/drafts', (b) => { const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: (b.inputs || {}).policy, status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used.name); return { item: S.drafts[id] }; });
+  on('POST', '/api/apps/document/drafts', (b) => { const model = pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used; const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: (b.inputs || {}).policy, status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, model.name); return { item: S.drafts[id] }; });
   on('GET', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404, 'NOT_FOUND', '文稿不存在'); return { item: d }; });
   on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
   on('POST', '/api/apps/document/drafts/:id/check', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; return { issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
