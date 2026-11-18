@@ -8,17 +8,10 @@ from haiknow_sdk.resources import Records
 from .test_drafting import APP, ROOT, assert_error, content, create, document_client, item, login
 
 
-def mount_collaboration(client):
-    from haiknow_apps.document.collaboration_router import router
-
-    # 生产注册由应用入口负责，本任务在真实平台上单独挂载协作路由。
-    client.app.include_router(router, prefix=APP)
-    return client
-
-
 @pytest.fixture
 def collaboration_client(document_client):
-    return mount_collaboration(document_client)
+    # 协作路由已由 apps/document/api/router.py 统一注册，这里直接走生产入口。
+    return document_client
 
 
 def drafts_url(client):
@@ -130,7 +123,7 @@ def test_finalized_document_allows_comments_but_not_adoption(collaboration_clien
     resolved = item(client.patch(comment_url, json={"resolved": True}))
     assert resolved == {**replied, "resolved": True, "resolvedBy": "样例管理员", "resolvedAt": resolved["resolvedAt"]}
     assert_beijing_time(resolved["resolvedAt"])
-    client = mount_collaboration(make_client(ROOT / "apps"))
+    client = make_client(ROOT / "apps")
     login(client, "sampleoperator")
     assert item(client.patch(comment_url, json={"resolved": True})) == resolved
 
@@ -164,7 +157,17 @@ def test_concurrent_replies_preserve_each_other_and_resolution(collaboration_cli
     final = patch({"resolved": True})
     assert {reply["text"] for reply in final["replies"]} == {"回复甲", "回复乙"}
     assert final["resolved"] is True
-    assert patch({"resolved": False})["resolved"] is False
+    reopened = patch({"resolved": False})
+    assert reopened["resolved"] is False
+
+    # 草稿详情和文稿列表读取独立保存的批注。
+    assert item(client.get(url))["comments"] == [reopened]
+    draft_id = url.rsplit("/", 1)[1]
+    listed = {row["id"]: row for row in client.get(f"{APP}/documents").json()["items"]}
+    assert listed[draft_id]["comments"] == 1
+    patch({"resolved": True})
+    listed = {row["id"]: row for row in client.get(f"{APP}/documents").json()["items"]}
+    assert listed[draft_id]["comments"] == 0
 
 
 def test_collaboration_rejects_invalid_inputs_and_other_drafts(collaboration_client):

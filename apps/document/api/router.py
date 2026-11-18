@@ -5,10 +5,12 @@ from pathlib import Path
 from fastapi import APIRouter
 from haiknow_sdk import KV
 
+from .collaboration_router import router as collaboration_router
 from .drafting_router import DocumentRoute, Viewer, router as drafting_router
 
 router = APIRouter(route_class=DocumentRoute)
 router.include_router(drafting_router)
+router.include_router(collaboration_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
