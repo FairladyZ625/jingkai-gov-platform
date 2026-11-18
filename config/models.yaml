@@ -1,6 +1,8 @@
 # 顺序为自动选择的优先级。JKQ_MODEL_PROVIDER 可将其中一个可用模型移到队首。
 # 各前缀下的 _BASE_URL、_NAME、_API_KEY 由部署环境注入。
-# 内网地址须指向经开区批准的本地服务；只有该项可接收 confidential。
+# 无参数冒烟只选择默认启用、已部署的真实兼容服务。
+# confidential 要求 ID 在下列白名单中，且实际地址与独立的 <前缀>_CONFIDENTIAL_BASE_URL 一致。
+# 部署方负责审批地址及域名解析、控制出站网络，使批准的域名始终指向获准的内网服务。
 models:
   - id: cloud
     kind: openai

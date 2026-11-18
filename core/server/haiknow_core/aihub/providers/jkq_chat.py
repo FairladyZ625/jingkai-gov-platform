@@ -1,7 +1,9 @@
 """经开区文本对话 provider，供实例网关和本地冒烟共用。"""
 
+import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -57,6 +59,28 @@ def load_config(path=DEFAULT_CONFIG):
     return config
 
 
+def _approval_endpoint(value):
+    """仅接受无歧义的审批地址；使用与发送相同的 HTTPX 端口和主机规范化。"""
+    # 在 HTTPX 处理点段、转义和空查询等语法之前检查原文。
+    match = re.fullmatch(
+        r"(https?)://(\[[0-9a-f:.]+\]|[a-z0-9-]+(?:\.[a-z0-9-]+)*)"
+        r"(?::([0-9]+))?((?:/[a-z0-9._~-]+)*/?)", value, re.ASCII | re.IGNORECASE,
+    )
+    if not match or any(part in {".", ".."} for part in match[4].split("/")):
+        return None
+    try:
+        url = httpx.URL(value.rstrip("/"))
+        if match[3] and not 1 <= int(match[3]) <= 65535:
+            return None
+        # 系统解析器可能把简写、十六进制或前导零的数字主机解释为 IPv4。
+        if re.fullmatch(r"(?:0x[0-9a-f]+|[0-9]+)(?:\.(?:0x[0-9a-f]+|[0-9]+))*", match[2], re.I):
+            ipaddress.IPv4Address(match[2])
+        port = url.port or (443 if url.scheme == "https" else 80)
+        return url.scheme, url.raw_host, port, url.raw_path
+    except (httpx.InvalidURL, ValueError):
+        return None
+
+
 def provider_from_environment(definition, confidential=False):
     if definition.kind == "mock":
         return {
@@ -65,7 +89,8 @@ def provider_from_environment(definition, confidential=False):
         }
     if not definition.env:
         return None
-    base_url = os.getenv(f"{definition.env}_BASE_URL", "").strip().rstrip("/")
+    configured_url = os.getenv(f"{definition.env}_BASE_URL", "")
+    base_url = configured_url.strip().rstrip("/")
     model = os.getenv(f"{definition.env}_NAME", "").strip() or definition.name
     api_key = os.getenv(f"{definition.env}_API_KEY", "").strip()
     local = definition.group == "本地部署"
@@ -80,10 +105,14 @@ def provider_from_environment(definition, confidential=False):
         or not url.host or url.userinfo or url.query or url.fragment
     ):
         raise ValueError(f"模型 {definition.id} 的接入地址无效。")
+    approved = None
+    if confidential:
+        approved = _approval_endpoint(os.getenv(f"{definition.env}_CONFIDENTIAL_BASE_URL", ""))
+    allows_confidential = approved is not None and approved == _approval_endpoint(configured_url)
     return {
         "id": definition.id, "kind": definition.kind, "model": model,
         "base_url": base_url, "api_key": api_key,
-        "allow_outbound": "confidential" if confidential else "internal",
+        "allow_outbound": "confidential" if allows_confidential else "internal",
     }
 
 
