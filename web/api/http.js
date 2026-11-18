@@ -133,6 +133,7 @@
         clearMockSession();
       }
       const revision = sessionRevision;
+      const mayInvalidateSession = !authPending;
       const maySyncSession = isLogin || (!authPending && sessionPaths.test(operation));
       const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), c.timeoutMs || 20000);
       try {
@@ -140,7 +141,7 @@
         const r = await fetch(c.baseUrl.replace(/\/$/, '') + path, { method, credentials: 'include', signal: ctl.signal,
           headers: isForm ? {} : { 'Content-Type': 'application/json' }, body: body == null || method === 'GET' ? undefined : isForm ? body : JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
-        if (r.status === 401 && module === 'platform' && revision === sessionRevision) clearMockSession();
+        if (r.status === 401 && module === 'platform' && mayInvalidateSession && revision === sessionRevision) clearMockSession();
         if (!r.ok) {
           const error = j?.error || j || {};
           throw { status: r.status, code: error.code || 'HTTP_' + r.status,

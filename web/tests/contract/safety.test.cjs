@@ -219,6 +219,27 @@ test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用�
   await assert.rejects(api.kb.spaces(), error => error.status === 401);
 });
 
+test('混合模式登录期间发出的过期 401 不清除刚建立的演示会话', async () => {
+  let finishLogin;
+  let finishRead;
+  const context = createContext({
+    fetch: url => new Promise(resolve => {
+      if (url.endsWith('/auth/login')) finishLogin = resolve;
+      else finishRead = resolve;
+    }),
+    Response, AbortController,
+  }, ctx => {
+    ctx.JK_CONFIG.api = { mode: 'mock', baseUrl: 'https://demo.example.com', modules: { platform: 'http' } };
+  });
+  const login = context.JKHttp.post('/api/v1/auth/login', { username: 'remote.leader', password: 'synthetic-value' });
+  const stale = context.JKHttp.get('/api/v1/models');
+  finishLogin(Response.json({ user: { username: 'remote.leader', role: 'leader' } }));
+  await login;
+  finishRead(Response.json({}, { status: 401 }));
+  await assert.rejects(stale, error => error.status === 401);
+  assert.equal(context.JKAuth.user().role, 'leader');
+});
+
 function requiredPaths(schema, prefix = []) {
   // 列出 schema 中每个必需字段的路径（数组取第 0 项），供逐项删除。
   if (typeof schema === 'string') {
