@@ -2,7 +2,9 @@
 
 import asyncio
 import io
+import json
 import os
+import secrets
 import shutil
 import sys
 import wave
@@ -257,6 +259,25 @@ def test_mock_model_serves_native_funasr_http_contract(monkeypatch, local_config
     assert result['sentences'] == [{'text': '样例', 'startMs': 0, 'endMs': 550, 'speaker': 'S1'}]
 
 
+def seed_password_users(app, password, users):
+    from haiknow_core.passwords import hash_password
+
+    digest = hash_password(password)
+    store = app.state.platform.store
+    with store._lock, store._db as db:
+        store.begin_write()
+        for uid, role in users.items():
+            db.execute(
+                "insert or ignore into users (id,username,name,password_hash,status,last_login,failed_logins,"
+                "locked_until,demo,all_projects,session_gen) values (?,?,?,?,'active',null,0,0,0,0,0)",
+                (uid, uid, uid, digest),
+            )
+            db.execute("update users set username=?, password_hash=?, status='active' where id=?", (uid, digest, uid))
+            db.execute("insert or ignore into roles values (?,?,1)", (role, role))
+            db.execute("insert or ignore into user_roles values (?,?)", (uid, role))
+            db.execute("insert or ignore into project_members values (?,?)", ('jkq', uid))
+
+
 def test_instance_route_uses_core_file_permissions_and_v1_error_envelope(monkeypatch, isolated_platform):
     config, _ = isolated_platform
     (config / 'projects.yaml').write_text(
@@ -264,11 +285,26 @@ def test_instance_route_uses_core_file_permissions_and_v1_error_envelope(monkeyp
         encoding='utf-8',
     )
     monkeypatch.setenv('HAIKNOW_SECRET', 'jkq-test-session-signing')
+    monkeypatch.delenv('HAIKNOW_DEMO_LOGIN', raising=False)  # 经开区实例走真实口令登录（#78）
+    monkeypatch.delenv('JKQ_DEMO_MODE', raising=False)
+    (config / 'roles.yaml').write_text(json.dumps({'apps': ['sample-app'], 'roles': {
+        'admin': {'name': '管理员', 'desc': '测试', 'mask': False,
+                  'grants': {'*': ['view', 'operate', 'approve', 'admin']}},
+        'sampleextra': {'name': '样例协审员', 'desc': '测试', 'mask': False,
+                        'grants': {'sample-app': ['view', 'approve']}},
+    }}, ensure_ascii=False), encoding='utf-8')
     assert transcribe.router in routers.ROUTERS
-    with TestClient(create_app()) as client:
+    app = create_app()
+    password = secrets.token_urlsafe(12)
+    seed_password_users(app, password, {'sampleadmin': 'admin', 'sampleextra': 'sampleextra'})
+
+    def login(uid):
+        return client.post('/api/v1/auth/login', json={'username': uid, 'password': password})
+
+    with TestClient(app) as client:
         body = {'appId': 'sample-app', 'fileId': 'not-found'}
         assert client.post(PATH, json=body).status_code == 401
-        assert client.post('/api/auth/login', json={'user_id': 'sampleadmin'}).status_code == 200
+        assert login('sampleadmin').status_code == 200
         assert client.post(PATH, json=body).status_code == 404
 
         def upload(audio):
@@ -289,7 +325,7 @@ def test_instance_route_uses_core_file_permissions_and_v1_error_envelope(monkeyp
         preset = client.post(PATH, json=valid)
         assert preset.status_code == 200, preset.text
         assert preset.json()['mock'] and preset.json()['source'] == 'preset'
-        assert client.post('/api/auth/login', json={'user_id': 'sampleextra'}).status_code == 200
+        assert login('sampleextra').status_code == 200
         assert client.post(PATH, json=valid).status_code == 403
         items = client.app.state.platform.store.audit_list('sample-app')
         attempts = [item['detail'] for item in items if item['action'] == 'ai.transcribe']
