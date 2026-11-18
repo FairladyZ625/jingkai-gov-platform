@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[3]
 MEETING = ROOT / 'apps/meeting'
 MEETINGS = '/api/apps/meeting/meetings'
 JOBS = '/api/v1/jobs'
+TEST_PASSWORD = 'test-meet'
+TEST_PASSWORD_ENV = 'JKQ_TEST_MEETING_PASSWORD'
 
 
 def fixture_environment(base):
@@ -19,12 +21,16 @@ def fixture_environment(base):
     config.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'config/projects.yaml', config / 'projects.yaml')
     roles = {'operator': ['view', 'operate'], 'reader': ['view']}
-    users = [
-        dict(id='meeting-writer', name='会议办理员', roles=['operator'], projects=['jkq']),
-        dict(id='meeting-reader', name='会议观察员', roles=['reader'], projects=['jkq']),
-        dict(id='meeting-outsider', name='项目外人员', roles=['reader'], projects=[]),
+    accounts = [
+        ('meeting-writer', '会议办理员', 'operator'),
+        ('meeting-reader', '会议观察员', 'reader'),
+        ('meeting-outsider', '项目外人员', 'reader'),
     ]
-    (config / 'users.yaml').write_text(json.dumps({'users': users}, ensure_ascii=False), encoding='utf-8')
+    users = [dict(id=uid, username=uid, name=name, role=role, passwordEnv=TEST_PASSWORD_ENV)
+             for uid, name, role in accounts]
+    (config / 'users.yaml').write_text(json.dumps({'demoUsers': users}, ensure_ascii=False), encoding='utf-8')
+    matrix = {role: {'name': role, 'grants': {'meeting': actions}} for role, actions in roles.items()}
+    (config / 'roles.yaml').write_text(json.dumps({'apps': ['meeting'], 'roles': matrix}), encoding='utf-8')
     app = apps / 'meeting'
     for directory in ('api', 'samples', 'web'):
         shutil.copytree(MEETING / directory, app / directory, dirs_exist_ok=True,
@@ -36,7 +42,8 @@ def fixture_environment(base):
     }, ensure_ascii=False), encoding='utf-8')
     return {
         'HAIKNOW_ROOT': str(ROOT), 'HAIKNOW_APPS_DIR': str(apps), 'HAIKNOW_CONFIG_DIR': str(config),
-        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '1', 'HAIKNOW_KB_SEED': '0',
+        'HAIKNOW_DATA_DIR': str(base / 'data'), 'HAIKNOW_DEMO_LOGIN': '0', 'HAIKNOW_KB_SEED': '0',
+        'JKQ_DEMO_MODE': '1', TEST_PASSWORD_ENV: TEST_PASSWORD,
         'HAIKNOW_NO_AUTOAPP': '1', 'HAIKNOW_SECRET': 'local-meeting-test-only',
     }
 
@@ -44,7 +51,12 @@ def fixture_environment(base):
 def create_instance():
     from jkq.app import create_app
 
-    return create_app()
+    app = create_app()
+    store = app.state.platform.store
+    # 平台演示账号默认跨项目。收窄这一个测试身份，保留项目隔离回归。
+    with store._lock, store._db as db:
+        db.execute("update users set all_projects=0 where id='meeting-outsider'")
+    return app
 
 
 def transcription_module():
@@ -52,7 +64,7 @@ def transcription_module():
 
 
 def login(client, user='meeting-writer'):
-    result = client.post('/api/auth/login', json={'user_id': user})
+    result = client.post('/api/v1/auth/login', json={'username': user, 'password': TEST_PASSWORD})
     assert result.status_code == 200, result.text
 
 
