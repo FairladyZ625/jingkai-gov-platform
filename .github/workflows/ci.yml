@@ -55,3 +55,16 @@ jobs:
           else
             echo "::notice::tests/demo 尚未交付，本次跳过"
           fi
+
+  prototype-p0:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/p0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm test

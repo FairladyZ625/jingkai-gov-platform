@@ -158,6 +158,28 @@
 
   /* ---------------- 布局与面板 ---------------- */
   const shellRoutedApps = ['policy', 'enterprise', 'meeting', 'document'];
+  async function waitForApp(ctl) {
+    if (typeof ctl.ready !== 'function') return true;
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve(ctl.ready()).then(() => true),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(false), 3000); }),
+      ]);
+    } catch (e) {
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function mountApp(id, params) {
+    const view = h(`<div class="pview" data-view="${id}"><div class="app-root app-${id}"></div></div>`);
+    $('#pbody').appendChild(view);
+    const el = view.firstElementChild; const ctx = makeCtx(id, el, params);
+    const slot = S.mounted[id] = { view, el, ctx, ctl: null };
+    try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
+    return slot;
+  }
   function setLayout(l) { S.layout = l; const m = $('#main'); if (!m) return; m.classList.toggle('split', l === 'split'); m.classList.toggle('max', l === 'max'); $('#btn-max').innerHTML = icon(l === 'max' ? 'minimize' : 'maximize'); renderChatBody(); }
   async function openApp(id, route, params) {
     if (!JK.registry[id]) { toast('该应用还没有启用', { type: 'warn' }); return; }
@@ -167,12 +189,7 @@
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
     let slot = S.mounted[id]; const fresh = !slot;
     const args = { ...params };
-    if (!slot) {
-      const view = h(`<div class="pview" data-view="${id}"><div class="app-root app-${id}"></div></div>`); $('#pbody').appendChild(view);
-      const el = view.firstElementChild; const ctx = makeCtx(id, el, args);
-      slot = S.mounted[id] = { view, el, ctx, ctl: null };
-      try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
-    }
+    if (!slot) slot = mountApp(id, args);
     const hasParams = Object.keys(args).length > 0;
     // 这四个应用的 mount 只初始化首屏，其余应用保留已有的 ctx.params 初始化。
     const shouldGo = fresh ? shellRoutedApps.includes(id) && route && (route !== 'home' || hasParams) : route || hasParams;
@@ -183,8 +200,19 @@
       else rememberPanel(id, route, args);
     }
     activate(id); if (S.layout !== 'max') setLayout('split');
-    if (typeof slot.ctl.ready === 'function') { try { await slot.ctl.ready(); } catch (e) {} }
+    const ready = await waitForApp(slot.ctl);
     if (S.mounted[id] !== slot || slot.navigation !== navigation) return;
+    if (!ready) {
+      console.warn(`「${mf(id).name}」等待就绪超过 3 秒，已显示首页`);
+      if (S.active === id && args.via !== 'operator') rememberPanel(id);
+      if (hasParams || !fresh) {
+        const active = S.active;
+        unmountApp(id);
+        slot = mountApp(id, {});
+        activate(active);
+      }
+      return slot;
+    }
     if (shouldGo && slot.ctl.go) {
       slot.ctx.params = args;
       try { await slot.ctl.go(route || 'home', args); } catch (e) { console.error(e); }
@@ -210,11 +238,14 @@
     const pt = $('#ptabs'); pt.classList.toggle('many', S.open.length > 4); const on = pt.querySelector('.ptab.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     renderSide();
   }
-  function closeTab(id) {
+  function unmountApp(id) {
     const slot = S.mounted[id]; if (slot) { try { slot.ctl && slot.ctl.unmount && slot.ctl.unmount(); } catch (e) {} slot.view.remove(); delete S.mounted[id]; }
+  }
+  function closeTab(id) {
+    unmountApp(id);
     S.open = S.open.filter((x) => x !== id); if (!S.open.length) return closePanel(); if (S.active === id) activate(S.open[S.open.length - 1]); else activate(S.active);
   }
-  function closePanel() { S.open.slice().forEach((x) => { const slot = S.mounted[x]; if (slot) { try { slot.ctl.unmount && slot.ctl.unmount(); } catch (e) {} slot.view.remove(); } }); S.open = []; S.mounted = {}; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
+  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
 
   /* ---------------- ctx（注入应用） ---------------- */
   function makeCtx(id, el, params) {
