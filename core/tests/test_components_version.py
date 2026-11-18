@@ -5,7 +5,7 @@ from pathlib import Path
 from haiknow_sdk.preview.components import c01, c02, c03, c04, c06, c07
 from haiknow_sdk.preview.components import common
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 JS_DIR = ROOT / "core" / "sdk" / "js" / "preview" / "components"
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 

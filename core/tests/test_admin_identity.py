@@ -8,7 +8,7 @@ from haiknow_core.identity_models import GRANT_ACTIONS
 from test_identity_auth import bootstrap
 from test_platform import login
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture

@@ -18,10 +18,10 @@ HAIKNOW_DATA_DIR="$(mktemp -d)" PYTHONPATH=core/server:core/sdk \
 
 ## 验证
 
-安装开发依赖并执行回归。完整 `check.py` 还会在 Node 可用时运行 SDK 的 JavaScript 行为测试。
+仓库默认的 `pytest -q` 收集 `tests/` 里的用例，只需 pytest。运行 core 和模板回归时，先安装开发依赖并显式指定目录。完整 `check.py` 覆盖两个测试集合，并在 Node 可用时运行 SDK 的 JavaScript 行为测试。
 
 ```sh
 python3 -m pip install -r requirements-dev.txt
-pytest -q
+python3 -m pytest -q core apps/_template/tests
 python3 scripts/check.py
 ```
