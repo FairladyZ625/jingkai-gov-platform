@@ -2,7 +2,10 @@
 
 import json
 import os
-from time import monotonic
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from time import monotonic, sleep as wait_briefly
 
 import pytest
 
@@ -63,6 +66,7 @@ def configure(monkeypatch, *, local=False, approve=False):
 def client_factory(make_client, isolated_platform, monkeypatch):
     for key in os.environ.keys() & {
         "JKQ_MODEL_PROVIDER",
+        *(f"JKQ_CODEX_MODEL_{key}" for key in ("ENABLED", "NAME", "TIMEOUT", "MAX_CONCURRENCY")),
         *(f"JKQ_{provider}_MODEL_{option}"
           for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "LOCAL_BACKUP", "OVERSEAS")
           for option in ("BASE_URL", "NAME", "API_KEY", "CONFIDENTIAL_BASE_URL")),
@@ -274,3 +278,224 @@ def test_stream_confidential_obeys_same_outbound_gate(client_factory, monkeypatc
             assert response.status_code == 403
             assert response.json()["error"]["code"] == "OUTBOUND_DENIED"
             assert seen == []
+
+
+PUBLIC = {**REQUEST, "classification": "public"}
+CLI_MODEL = "synthetic-cli-model"
+
+
+@pytest.fixture
+def fake_codex(client_factory, tmp_path, monkeypatch):
+    # CLI_ENV 只传白名单变量。用脚本自身的位置找到控制文件，与子进程 cwd 无关。
+    program = tmp_path / ("codex.py" if os.name == "nt" else "codex")
+    if os.name != "nt":
+        (tmp_path / "python3").symlink_to(sys.executable)
+    program.write_text("""#!/usr/bin/env python3
+import json
+import sys
+import time
+from pathlib import Path
+
+root = Path(__file__).resolve().parent
+prompt = sys.stdin.buffer.read().decode("utf-8")
+with (root / "calls").open("a", encoding="utf-8") as log:
+    log.write(json.dumps([sys.argv[1:], prompt]) + "\\n")
+sys.stdout.buffer.write((root / "reply").read_bytes())
+sys.stdout.buffer.flush()
+(root / "started").touch()
+deadline = time.monotonic() + 10
+while (root / "hold").exists():
+    if time.monotonic() >= deadline:
+        sys.exit(24)
+    time.sleep(0.01)
+sys.exit(23 if (root / "fail").exists() else 0)
+""", encoding="utf-8")
+    program.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "codex.cmd").write_text(f'@"{sys.executable}" "%~dp0codex.py" %*\n')
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("JKQ_CODEX_MODEL_NAME", CLI_MODEL)
+    (tmp_path / "reply").write_text("JKQ_CODEX_OK", encoding="utf-8")
+    return tmp_path
+
+
+def select_codex(client, *, fallback=False):
+    login(client)
+    response = client.put("/api/v1/models/current", json={"model": "codex-cli"})
+    assert response.status_code == 200, response.text
+    assert response.json()["current"] == "codex-cli"
+    if not fallback:
+        assert client.patch("/api/v1/models/mock", json={"enabled": False}).status_code == 200
+
+
+@pytest.fixture
+def codex_client(client_factory, fake_codex, monkeypatch):
+    monkeypatch.setenv("JKQ_CODEX_MODEL_ENABLED", "1")
+    return client_factory
+
+
+def test_codex_name_alone_leaves_mock_default(client_factory, fake_codex):
+    with client_factory() as client:
+        login(client)
+        items = client.get("/api/v1/models").json()["items"]
+        assert "codex-cli" not in {item["id"] for item in items}
+        response = client.post(PATH, json=PUBLIC)
+        assert response.status_code == 200 and response.json()["mock"] is True
+        assert not (fake_codex / "calls").exists()
+
+
+def test_codex_catalog_selection_and_public_reply(codex_client, fake_codex):
+    with codex_client() as client:
+        assert client.get("/api/v1/models").status_code == 401
+        assert client.post(PATH, json=PUBLIC).status_code == 401
+        assert not (fake_codex / "calls").exists()
+        select_codex(client, fallback=True)
+        catalog = client.get("/api/v1/models").json()
+        item = next(item for item in catalog["items"] if item["id"] == "codex-cli")
+        assert item["enabled"] and item["name"] == CLI_MODEL
+        assert catalog["current"] == "codex-cli"
+        response = client.post(PATH, json=PUBLIC)
+        assert response.status_code == 200
+        data = response.json()
+        assert (data["model"], data["content"], data["mock"]) == (CLI_MODEL, "JKQ_CODEX_OK", False)
+        argv, prompt = json.loads((fake_codex / "calls").read_text(encoding="utf-8"))
+        assert "exec" in argv and argv[argv.index("--model") + 1] == CLI_MODEL
+        assert REQUEST["messages"][0]["content"] in prompt
+
+
+@pytest.mark.parametrize("classification", ["internal", "confidential"])
+def test_codex_classification_denied_before_process(codex_client, fake_codex, classification):
+    with codex_client() as client:
+        select_codex(client)
+        response = client.post(PATH, json={**REQUEST, "classification": classification})
+        assert response.status_code == 403 and response.json()["error"]["code"] == "OUTBOUND_DENIED"
+        assert not (fake_codex / "calls").exists()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_codex_nonzero_discards_stdout(codex_client, fake_codex, stream):
+    (fake_codex / "fail").touch()
+    with codex_client() as client:
+        select_codex(client)
+        response = client.post(PATH, json={**PUBLIC, "stream": stream})
+        assert (fake_codex / "started").exists()
+        assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+        assert "JKQ_CODEX_OK" not in response.text
+
+
+def test_codex_timeout(codex_client, fake_codex, monkeypatch):
+    monkeypatch.setenv("JKQ_CODEX_MODEL_TIMEOUT", "1")
+    hold = fake_codex / "hold"
+    hold.touch()
+    with codex_client() as client:
+        select_codex(client)
+        start = monotonic()
+        try:
+            response = client.post(PATH, json=PUBLIC)
+        finally:
+            hold.unlink()
+        assert monotonic() - start < 6
+        assert (fake_codex / "started").exists()
+        assert response.status_code == 504 and response.json()["error"]["code"] == "TIMEOUT"
+
+
+def wait_for_stdout(root, request):
+    deadline = monotonic() + 5
+    while not (root / "started").exists():
+        assert monotonic() < deadline, "等待替身写出标准输出超时"
+        assert not request.done(), "CLI 启动前请求已返回"
+        wait_briefly(0.01)
+
+
+def test_codex_concurrency_across_requests_and_release(codex_client, fake_codex, monkeypatch):
+    monkeypatch.setenv("JKQ_CODEX_MODEL_MAX_CONCURRENCY", "1")
+    hold = fake_codex / "hold"
+    hold.touch()
+    with codex_client() as client, ThreadPoolExecutor(2) as pool:
+        select_codex(client)
+        first = pool.submit(client.post, PATH, json=PUBLIC)
+        try:
+            wait_for_stdout(fake_codex, first)
+            second = pool.submit(client.post, PATH, json=PUBLIC).result(timeout=3)
+            assert second.status_code == 429 and second.json()["error"]["code"] == "QUOTA_EXCEEDED"
+            assert len((fake_codex / "calls").read_text(encoding="utf-8").splitlines()) == 1
+        finally:
+            hold.unlink()
+        assert first.result(timeout=5).json()["content"] == "JKQ_CODEX_OK"
+        assert client.post(PATH, json=PUBLIC).json()["content"] == "JKQ_CODEX_OK"
+
+
+def test_codex_stream_waits_for_exit_then_chunks(codex_client, fake_codex):
+    reply = "公开🙂" * 113
+    (fake_codex / "reply").write_text(reply, encoding="utf-8")
+    hold = fake_codex / "hold"
+    hold.touch()
+    sent = Event()
+
+    # TestClient 会缓存完整响应，在 ASGI send 上观察真实的首个事件。
+    def observe(app):
+        async def wrapped(scope, receive, send):
+            async def observe_send(message):
+                if message["type"] == "http.response.body" and message.get("body"):
+                    sent.set()
+                await send(message)
+            await app(scope, receive, observe_send if scope.get("path") == PATH else send)
+        return wrapped
+
+    client = codex_client()
+    client.app.add_middleware(observe)
+    with client, ThreadPoolExecutor(1) as pool:
+        select_codex(client)
+        request = pool.submit(client.post, PATH, json={**PUBLIC, "stream": True})
+        try:
+            wait_for_stdout(fake_codex, request)
+            assert not sent.wait(0.25), "CLI 退出前已收到响应块"
+        finally:
+            hold.unlink()
+        result = events(request.result(timeout=5))
+    assert sent.is_set()
+    assert result[0][0] == "meta" and result[0][1]["model"] == CLI_MODEL
+    assert result[-1][0] == "done" and result[-1][1]["messageId"]
+    chunks = result[1:-1]
+    assert all(event == "delta" and 0 < len(data["text"]) <= 128 for event, data in chunks)
+    assert "".join(data["text"] for _, data in chunks) == reply
+
+
+def test_codex_registered_tool_event(codex_client, fake_codex):
+    call = {"name": ALIAS, "arguments": {"entId": "E001"}}
+    (fake_codex / "reply").write_text(json.dumps({"content": None, "tool_calls": [call]}))
+    with codex_client() as client:
+        select_codex(client)
+        result = events(client.post(PATH, json={**PUBLIC, "stream": True, "tools": [TOOL]}))
+        assert [name for name, _ in result] == ["meta", "tool", "done"]
+        assert result[1][1] == {"tool": TOOL, "args": call["arguments"]}
+        _, prompt = json.loads((fake_codex / "calls").read_text(encoding="utf-8"))
+        assert ALIAS in prompt and "entId" in prompt
+
+
+@pytest.mark.parametrize("reply", [
+    "CLI diagnostic",
+    '{"content":null,"tool_calls":[{"name":"unknown","arguments":{}}]}',
+    '{"content":null,"tool_calls":[{"name":"policy_match","arguments":"{}"}]}',
+    '{"content":42,"tool_calls":[]}',
+    '{"content":"ok","tool_calls":{}}',
+])
+def test_codex_invalid_tool_response(codex_client, fake_codex, reply):
+    (fake_codex / "reply").write_text(reply, encoding="utf-8")
+    with codex_client() as client:
+        select_codex(client)
+        response = client.post(PATH, json={**PUBLIC, "tools": [TOOL]})
+        assert (fake_codex / "started").exists()
+        assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+
+
+def test_codex_nonzero_falls_back_to_mock(codex_client, fake_codex):
+    (fake_codex / "fail").touch()
+    with codex_client() as client:
+        select_codex(client, fallback=True)
+        response = client.post(PATH, json=PUBLIC)
+        assert (fake_codex / "started").exists()
+        assert response.status_code == 200
+        reply = response.json()
+        assert reply["mock"] is True and "已回退" in reply["routeNote"]
+        assert "JKQ_CODEX_OK" not in reply["content"]
