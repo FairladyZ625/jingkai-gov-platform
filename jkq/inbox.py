@@ -15,6 +15,7 @@ from haiknow_sdk import DataError
 
 from . import feed
 from .admin import usage
+from .auth import require_action
 from .reviews_api import list_pending, STATUSES
 
 FEED_MAX_LIMIT = 200
@@ -175,9 +176,9 @@ def team_feed(request: Request, limit: int = Query(50, ge=1, le=FEED_MAX_LIMIT),
 
 
 @router.get('/api/v1/admin/usage')
-def admin_usage(request: Request, groupBy: Literal['app', 'model', 'user'] = 'app', user=Depends(current_user)):
-    platform = request.app.state.platform
-    if 'admin' not in platform.rbac.actions(user, '*'):
-        return error(403, 'FORBIDDEN', '需要管理员权限')
-    with platform.store._lock:
-        return usage.usage_page(platform.store._db, groupBy)
+def admin_usage(request: Request, groupBy: Literal['app', 'model', 'user'] = 'app',
+                user=Depends(require_action('*', 'admin'))):
+    # 越权与 #12 授权矩阵同口径：403 FORBIDDEN details {app, need} 并留审计。
+    store = request.app.state.platform.store
+    with store._lock:
+        return usage.usage_page(store._db, groupBy)
