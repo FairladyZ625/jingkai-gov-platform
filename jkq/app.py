@@ -31,8 +31,10 @@ def install_platform(app: FastAPI) -> None:
 
     from . import jobs_api, reviews_api
     from .conversations import routes as conversations
+    from .orchestrator import routes as orchestrator
 
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
+    orchestrator.install(app, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
 

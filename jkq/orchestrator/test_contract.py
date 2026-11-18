@@ -54,6 +54,11 @@ def test_rules_preserve_original_question_and_leave_general_chat_to_model():
         ("policy-match", {"entId": "E001"}, {"entId", "results"}),
     ),
     (
+        ToolCall("policy.match", {"profile": {"yearsInZone": 3}}),
+        {"profile": {"yearsInZone": 3}, "results": [{"id": "PI-01", "level": "check"}], "summary": {"check": 1}},
+        ("policy-match", {"tab": "match"}, {"entId", "results"}),
+    ),
+    (
         ToolCall("policy.search"), {"items": [{"id": "PI-01"}]},
         ("policy-items", {"tab": "library", "itemId": "PI-01"}, {"ids"}),
     ),
@@ -78,6 +83,15 @@ def test_rules_preserve_original_question_and_leave_general_chat_to_model():
         ("todos", {"meetingId": "MT-1112", "tab": "todos"}, {"items"}),
     ),
     (
+        ToolCall("meeting.get"), {"item": {"id": "MT-1112"}, "minutes": {"summary": "会议摘要"}},
+        ("meeting-list", {"meetingId": "MT-1112", "tab": "minutes"}, {"ids"}),
+    ),
+    (
+        ToolCall("meeting.summarize"),
+        {"item": {"id": "MT-1112"}, "minutes": {"todos": [{"id": "TD-1", "title": "回访"}]}},
+        ("todos", {"meetingId": "MT-1112", "tab": "todos"}, {"items"}),
+    ),
+    (
         ToolCall("document.draft"), {"item": {"templateId": "T06"}},
         ("doc-start", {"templateId": "T06", "autogen": True}, {"templateId"}),
     ),
@@ -89,6 +103,12 @@ def test_rules_preserve_original_question_and_leave_general_chat_to_model():
         ToolCall("document.compare", {"a": {"id": "D-1", "v": 1}, "b": {"id": "D-1", "v": 2}}),
         {"parts": [{"op": "add", "t": "演示说明"}]},
         ("diff", {"draftId": "D-1"}, {"a", "b", "parts"}),
+    ),
+    (
+        ToolCall("document.polish", {"id": "D-1", "style": "formal"}),
+        {"preview": {"title": "演示公文", "paras": ["正式表述"]},
+         "parts": [{"op": "add", "t": "正式表述"}], "changed": 1},
+        ("diff", {"draftId": "D-1"}, {"a", "b", "parts", "changed"}),
     ),
     (
         ToolCall("policy.notice", {"entId": "E001"}), {"text": "演示告知单"},
@@ -108,6 +128,15 @@ def test_card_fields_and_deep_links(call, result, expected):
     assert card["deepLink"] == {"app": call.app, "params": params}
     if kind == "policy-match":
         assert card["results"] == result["results"][:5]
+        assert card["entId"] == params.get("entId")
+    if call.tool == "meeting.get":
+        assert card["ids"] == [result["item"]["id"]]
+    if call.tool == "meeting.summarize" and "minutes" in result:
+        assert card["items"] == result["minutes"]["todos"]
+    if call.tool == "document.polish":
+        assert (card["a"], card["b"], card["parts"], card["changed"]) == (
+            call.args["id"], result["preview"], result["parts"], result["changed"],
+        )
     if kind == "kb-hits":
         assert card["hits"] == result["citations"]
 
