@@ -38,10 +38,7 @@ class Administration:
                 db.execute('begin immediate')
                 self.admin(user)
                 yield db
-                if protect_admin and not db.execute(
-                    "select 1 from users u join user_roles r on u.id=r.user_id join role_grants g on r.role_id=g.role_id "
-                    "where u.status='active' and g.app_id='*' and g.action='admin' limit 1"
-                ).fetchone():
+                if protect_admin and not self.directory.has_admin(db, active_only=True):
                     raise IdentityError(409, 'last_admin', '必须保留至少一个启用的管理员')
                 self.store.audit('platform', user.id, action, detail, connection=db)
         except sqlite3.IntegrityError as error:

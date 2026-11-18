@@ -54,10 +54,11 @@ CSV：标题、内容、状态、提交人、确认人，浏览器直接下载�
 
 ## 开发说明
 
+在仓库根目录按 [core/README.md](../../core/README.md#启动) 启动平台，再执行检查。
+
 ```bash
-scripts/dev.sh                                  # 起平台
-python scripts/check.py --app __APP_ID__        # 只查本应用
-python scripts/check.py                         # 提 MR 前全量
+python3 scripts/check.py --app __APP_ID__        # 只查本应用
+python3 scripts/check.py                       # 提 PR 前全量
 ```
 
 - 页面入口 `web/index.js`，后端入口 `api/router.py`，需求七问就是本文件。
@@ -78,4 +79,3 @@ message = ctx.preview.messages.send(
 
 - `record_id/version` 必须指向当前应用记录；平台校验所有收件人的 active 身份和来源权限。查询各人状态用 `ctx.preview.messages.sent()`，回执用 `inbox/get/read/acknowledge`。
 - 只改本目录；平台能力只经 `haiknow_sdk`、`/sdk/ui/index.js`（页面组件）和 `/sdk/haiknow.js`（`ctx` 与 `v1`）。
-- 启动服务与执行回归的命令见 [core/README.md](../../core/README.md)。

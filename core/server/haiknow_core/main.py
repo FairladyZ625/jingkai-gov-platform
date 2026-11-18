@@ -113,10 +113,10 @@ class Platform:
 def current_user(request: Request) -> User:
     p: Platform = request.app.state.platform
     uid = request.session.get("uid")
-    user = p.directory.user(uid) if uid else None
     # 会话携带签发时的代数；登出、改密、重置口令或强制下线把它抬高，旧 cookie 立即失效。
     # 上线前签发的会话没有 gen，按 0 与库中默认值相等，不强制重登。
-    if user is None or p.directory.session_gen(uid) != request.session.get("gen", 0):
+    user = p.directory.session_user(uid, request.session.get("gen", 0)) if uid else None
+    if user is None:
         raise HTTPException(401, "未登录")
     return user
 
@@ -198,8 +198,8 @@ def create_app(root: Path | None = None) -> FastAPI:
     found = mf.discover(apps_dir)
     good = [(d, m) for d, m, errs in found if m is not None and not errs]
     store = Store(data_dir)
-    directory = Directory(store)
-    directory.seed(config_dir, [m for _, m in good], demo=os.environ.get('HAIKNOW_DEMO_LOGIN') == '1')
+    directory = Directory(store, demo_login=os.environ.get('HAIKNOW_DEMO_LOGIN') == '1')
+    directory.seed(config_dir, [m for _, m in good], demo=directory.demo_login)
     try:
         scene_table = scenes.load(config_dir)
     except scenes.SceneTableError as exc:

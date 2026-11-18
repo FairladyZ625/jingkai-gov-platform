@@ -19,11 +19,6 @@ def timestamp():
     return datetime.fromtimestamp(time.time(), timezone.utc).isoformat()
 
 
-def has_admin(db):
-    return db.execute("select 1 from users u join user_roles r on u.id=r.user_id "
-                      "join role_grants g on r.role_id=g.role_id where g.app_id='*' and g.action='admin' limit 1").fetchone() is not None
-
-
 class PlatformSessions:
     """每次读取会话时长，避免并发请求改写共享 middleware 的 max_age。"""
     def __init__(self, app, directory, secret_key):
@@ -64,7 +59,7 @@ class PasswordBody(Body):
 
 def install(app, plat, current_user):
     directory, store = plat.directory, plat.store
-    demo = os.environ.get('HAIKNOW_DEMO_LOGIN') == '1'
+    demo = directory.demo_login
     router = APIRouter(prefix='/api/auth', route_class=IdentityRoute)
 
     @app.exception_handler(IdentityError)
@@ -74,7 +69,7 @@ def install(app, plat, current_user):
     @router.get('/state')
     def state():
         with store._lock:
-            return {'needsBootstrap': not has_admin(store._db), 'demoLogin': demo}
+            return {'needsBootstrap': not directory.has_admin(store._db), 'demoLogin': demo}
 
     @router.get('/users')
     def demo_users():
@@ -116,7 +111,7 @@ def install(app, plat, current_user):
         with store._lock, store._db:
             db = store._db
             db.execute('begin immediate')
-            if has_admin(db):
+            if directory.has_admin(db):
                 raise IdentityError(409, 'already_bootstrapped', '已存在管理员，请直接登录')
             uid = uuid.uuid4().hex
             try:
@@ -146,7 +141,7 @@ def install(app, plat, current_user):
             uid = row[0] if row else 'anonymous'
             if body.user_id is not None and (not demo or not row or not row[5]):
                 error = IdentityError(401, 'invalid_credentials', '用户名或口令不正确')
-            elif not row or row[2] != 'active':
+            elif not row or row[2] != 'active' or (row[5] and not demo):
                 if body.password is not None:
                     hash_password(body.password)
                 error = IdentityError(401, 'invalid_credentials', '用户名或口令不正确')
@@ -172,15 +167,13 @@ def install(app, plat, current_user):
     @router.post('/logout')
     def logout(request: Request):
         uid = request.session.get('uid')
-        if uid and directory.session_gen(uid) == request.session.get('gen', 0):
+        with store._lock, store._db:
+            db = store._db
+            db.execute('begin immediate')
             # 只对仍然有效的会话递增：被复制但已失效的 cookie 不能反复踢掉用户的其他会话。
-            with store._lock, store._db:
-                db = store._db
-                db.execute('begin immediate')
+            if uid and directory.session_user(uid, request.session.get('gen', 0)):
                 directory.bump_session_gen(db, uid)
-                store.audit('platform', uid, 'logout', {}, connection=db)
-        else:
-            store.audit('platform', uid or 'anonymous', 'logout', {})
+            store.audit('platform', uid or 'anonymous', 'logout', {}, connection=db)
         request.session.clear()
         return {'ok': True}
 
