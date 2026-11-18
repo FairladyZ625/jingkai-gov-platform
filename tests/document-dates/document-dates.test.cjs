@@ -109,6 +109,8 @@ const cases = [
   ['同时早于两个日期', '2026-11-30', '2026年11月6日', /原截止日.*发文日期/],
   ['早于原截止日（中文日期有空白）', '2026-11-30', '2026 年 11 月 29 日', /新截止日须晚于原截止日/],
   ['早于带时分的原截止日', '2026年11月30日17:00', '2026年11月29日', /新截止日须晚于原截止日/],
+  ['早于带空格时分的原截止日', '2026年11月30日 17 时 00 分', '2026年11月29日', /新截止日须晚于原截止日/],
+  ['早于带北京时间注记的原截止日', '2026年11月30日17:00（北京时间）', '2026年11月29日', /新截止日须晚于原截止日/],
   ['与原截止日同日但时分不同', '2026-11-30T09:00', '2026年11月30日 17：00', /新截止日须晚于原截止日/],
   ['早于发文日期（中文日期带时分）', '2026-11-01', '2026年11月16日17时30分', /新截止日须晚于发文日期/],
 ];
@@ -143,4 +145,25 @@ test('会话检索区分 F007 原通知、F008 往期延期和 T06 的后续批�
   assert.equal(inputs.oldEnd, '2026-11-30');
   assert.match(notice.name, /往期/);
   assert.match(notice.snippet, /往期.*2026年11月6日/);
+});
+
+test('首次加载的 DOC-1108 保留往期批次，新建 T06 使用后续批次', async () => {
+  const { JKAPI } = mock();
+  const url = documentApi + '/drafts/DOC-1108';
+  const { item } = await JKAPI.get(url);
+  const { content } = item.versions.at(-1);
+  const previousBatch = /《关于开展 2026 年数据券申报工作的通知》/;
+  const previousDates = /由2026年11月2日延长至2026年11月6日/;
+  assert.equal(item.status, '已定稿');
+  assert.equal(content.docNo, '京技产促〔2026〕51号');
+  assert.match(content.paragraphs[0], previousBatch);
+  assert.match(content.paragraphs[0], previousDates);
+  const exported = await JKAPI.get(url + '/export');
+  assert.equal(exported.final, true);
+  assert.match(exported.html, previousBatch);
+  assert.match(exported.html, previousDates);
+
+  const fresh = await draft(JKAPI);
+  assert.match(fresh.content.paragraphs[0], /《关于开展 2026 年数据券后续批次申报工作的通知》/);
+  assert.match(fresh.content.paragraphs[0], /由2026年11月30日延长至2026年12月15日/);
 });

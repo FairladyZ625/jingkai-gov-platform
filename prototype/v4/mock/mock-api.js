@@ -192,12 +192,11 @@
     }
     return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '京技产促〔2026〕【待补】号' };
   }
-  const DOC_DATE = String.raw`\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-]))`;
-  const DOC_TIME = String.raw`(?:\s*T?\d{1,2}(?:[:：]\d{2}(?:[:：]\d{2})?|时(?:\s*\d{1,2}\s*分)?))?`;
-  const DOC_DATE_INPUT = new RegExp(`^(${DOC_DATE})${DOC_TIME}$`);
-  const EXTENSION_DATES = new RegExp(String.raw`申报截止时间\s*由\s*([^。]*?)\s*延长至\s*(${DOC_DATE}${DOC_TIME})`);
+  const DOC_DATE_PREFIX = /^\s*(\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-])))/;
+  const EXTENSION_DATES = /申报截止时间\s*由([^。；]*?)延长至([^。；]+)/;
   function docDateValue(text) {
-    const match = DOC_DATE_INPUT.exec((text || '').trim());
+    // 规则按日历日比较，日期后的时分和时区注记不参与比较。
+    const match = DOC_DATE_PREFIX.exec(text || '');
     if (!match) return NaN;
     const [year, month, day] = match[1].match(/\d+/g);
     const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
@@ -250,7 +249,22 @@
     const v1 = clone(c); v1.paragraphs[3] = '三、申报时间。今年的通知还没出来，出来以后咱们马上告诉你们。';
     S.drafts['DOC-1112'] = { id: 'DOC-1112', title: c.title, templateId: 'T10', policyId: 'PI-03', status: '审签中', author: '王敏', versions: [{ v: 1, at: '2026-11-12 16:20', by: '王敏', content: v1 }, { v: 2, at: '2026-11-13 10:05', by: '王敏', content: c }],
       comments: [{ id: 'cm1', para: 1, by: '孙婷', at: '2026-11-13 11:02', text: '政策原文引用建议只保留关键句，太长了。', replies: [{ by: '王敏', text: '好的，审签后统一精简。' }], resolved: false }, { id: 'cm2', para: 3, by: '李阳', at: '2026-11-13 14:30', text: '申报时间表述可以，注意不要承诺具体日期。', replies: [], resolved: true }] };
-    S.documents.forEach((d) => { if (!S.drafts[d.id]) { const tt = S.docTemplates.find((x) => x.id === d.templateId); const inp = {}; tt.inputs.forEach((x) => (inp[x[0]] = x[2])); const c2 = genDoc(tt, inp); c2.title = d.title; if (d.status === '已定稿') c2.docNo = '京技产促〔2026〕51号'; S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author, versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content: c2 }], comments: [] }; } });
+    S.documents.forEach((d) => {
+      if (S.drafts[d.id]) return;
+      const tt = S.docTemplates.find((x) => x.id === d.templateId);
+      // 往期定稿沿用原批次的要素，新建通知使用当前模板示例。
+      const inp = d.id === 'DOC-1108' ? {
+        orig: '关于开展 2026 年数据券申报工作的通知',
+        oldEnd: '2026-11-02',
+        newEnd: '2026-11-06',
+        reason: '部分企业交易凭证开具延迟',
+      } : Object.fromEntries(tt.inputs.map(([key, , value]) => [key, value]));
+      const content = genDoc(tt, inp);
+      content.title = d.title;
+      if (d.status === '已定稿') content.docNo = '京技产促〔2026〕51号';
+      S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author,
+        versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content }], comments: [] };
+    });
   }
   function docSummary(dr) { return { id: dr.id, title: dr.title, templateId: dr.templateId, status: dr.status, author: dr.author, updated: dr.versions[dr.versions.length - 1].at, versions: dr.versions.length, comments: dr.comments.filter((c) => !c.resolved).length }; }
 
