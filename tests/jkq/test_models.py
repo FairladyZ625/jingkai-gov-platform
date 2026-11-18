@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,16 +19,35 @@ from jkq.models import ChatBody, current_model, router
 
 ROOT = Path(__file__).resolve().parents[2]
 CHAT = {"messages": [{"role": "user", "content": "公开演练消息"}]}
+APP_CHAT = "/api/apps/sample-app/sdk-chat"
+LOCAL_URL = "https://local.example.test/v1"
 
 
 @pytest.fixture
-def model_client(make_client, monkeypatch):
+def model_client(make_client, isolated_platform, monkeypatch):
     for key in os.environ.keys() & {
         "JKQ_MODEL_PROVIDER",
-        *(f"JKQ_{provider}_MODEL_{option}" for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "OVERSEAS")
-          for option in ("BASE_URL", "NAME", "API_KEY")),
+        *(f"JKQ_{provider}_MODEL_{option}"
+          for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "LOCAL_BACKUP", "OVERSEAS")
+          for option in ("BASE_URL", "NAME", "API_KEY", "CONFIDENTIAL_BASE_URL")),
     }:
         monkeypatch.delenv(key)
+
+    _, apps = isolated_platform
+    with (apps / "sample-app/api/router.py").open("a", encoding="utf-8") as app_router:
+        app_router.write('''
+
+from typing import Literal
+
+@router.post("/sdk-chat/{entry}")
+def sdk_chat(entry: Literal["ai", "model"], body: dict, ctx: AppContext = Depends(require("operate"))):
+    handle = ctx.ai if entry == "ai" else ctx.model
+    return {"available": ctx.model.available, "reply": handle.chat(**body)}
+
+@router.post("/sdk-embedding")
+def sdk_embedding(ctx: AppContext = Depends(require("operate"))):
+    return ctx.ai.embedding("公开演练")
+''')
 
     def start():
         client = make_client()
@@ -68,6 +88,10 @@ def configure(monkeypatch, provider, host=None, *, key=True):
     monkeypatch.setenv(f"{prefix}_NAME", f"{provider}-configured-name")
     if key:
         monkeypatch.setenv(f"{prefix}_API_KEY", "fake-test-credential")
+
+
+def approve_local(monkeypatch):
+    monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", LOCAL_URL)
 
 
 def upstream_response(with_usage=True):
@@ -140,6 +164,7 @@ def test_permissions_and_default_persist(model_client, monkeypatch):
 def test_confidential_chooses_only_intranet(model_client, monkeypatch):
     configure(monkeypatch, "cloud")
     configure(monkeypatch, "local", key=False)
+    approve_local(monkeypatch)
     seen = []
 
     def respond(request):
@@ -161,21 +186,129 @@ def test_confidential_chooses_only_intranet(model_client, monkeypatch):
         assert seen == ["local.example.test"]
 
 
-@pytest.mark.parametrize("disable_all", [False, True])
-def test_confidential_denied_before_transport(model_client, monkeypatch, disable_all):
+@pytest.mark.parametrize("model", [None, "local"])
+def test_confidential_denied_before_transport(model_client, monkeypatch, model):
     configure(monkeypatch, "cloud")
     client = model_client()
     with client:
         client.app.state.jkq_models.transport = mock_transport(no_request)
         login(client)
-        if disable_all:
-            for provider in ("cloud", "mock"):
-                assert client.patch(f"/api/v1/models/{provider}", json={"enabled": False}).status_code == 200
-        response = client.post("/api/v1/ai/chat", json={**CHAT, "classification": "confidential"})
+        body = {**CHAT, "classification": "confidential"}
+        if model:
+            body["model"] = model
+        response = client.post("/api/v1/ai/chat", json=body)
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "OUTBOUND_DENIED"
         store = client.app.state.platform.store
-        assert store.audit_list("platform")[0]["action"] == "ai.outbound_denied"
+        assert [r["action"] for r in store.audit_list("platform") if r["action"].startswith("ai.")] == [
+            "ai.outbound_denied",
+        ]
+
+
+def test_confidential_disabled_model_uses_outbound_contract(model_client, monkeypatch):
+    configure(monkeypatch, "local", key=False)
+    approve_local(monkeypatch)
+    with model_client() as client:
+        client.app.state.jkq_models.transport = mock_transport(no_request)
+        login(client)
+        for model in ("local", "mock"):
+            assert client.patch(f"/api/v1/models/{model}", json={"enabled": False}).status_code == 200
+        login(client, "sampleoperator")
+        body = {**CHAT, "model": "local"}
+        ordinary = client.post("/api/v1/ai/chat", json=body)
+        selection = client.put("/api/v1/models/current", json={"model": "local"})
+        for response in (ordinary, selection):
+            assert response.status_code == 403 and response.json()["error"]["code"] == "MODEL_DISABLED"
+
+        confidential = client.post("/api/v1/ai/chat", json={**body, "classification": "confidential"})
+        assert confidential.status_code == 403
+        assert confidential.json()["error"]["code"] == "OUTBOUND_DENIED"
+        unknown = client.post("/api/v1/ai/chat", json={**body, "model": "unknown", "classification": "confidential"})
+        assert unknown.status_code == 404 and unknown.json()["error"]["code"] == "NOT_FOUND"
+        events = [r for r in client.app.state.platform.store.audit_list("platform") if r["action"].startswith("ai.")]
+        assert [{"app": r["app"], "user": r["user"], "action": r["action"], "detail": r["detail"]}
+                for r in events] == [{
+            "app": "platform", "user": "sampleoperator", "action": "ai.outbound_denied",
+            "detail": {"capability": "chat", "classification": "confidential"},
+        }]
+
+
+def test_confidential_disabled_selection_can_use_approved_candidate(model_client, monkeypatch):
+    configure(monkeypatch, "local", key=False)
+    configure(monkeypatch, "cloud")
+    approve_local(monkeypatch)
+    seen = []
+
+    def respond(request):
+        seen.append(request.url.host)
+        return upstream_response()
+
+    with model_client() as client:
+        client.app.state.jkq_models.transport = mock_transport(respond)
+        login(client)
+        assert client.patch("/api/v1/models/cloud", json={"enabled": False}).status_code == 200
+        response = client.post("/api/v1/ai/chat", json={**CHAT, "model": "cloud", "classification": "confidential"})
+        assert response.status_code == 200
+        assert response.json()["model"] == "local-configured-name"
+        assert "按密级" in response.json()["routeNote"]
+        assert seen == ["local.example.test"]
+
+
+@pytest.mark.parametrize("approved", [None, "http://local.example.test/v1", "https://local.example.test:8443/v1",
+                                      "https://local.example.test/v2"], ids=["none", "scheme", "port", "path"])
+def test_confidential_primary_requires_approved_endpoint(model_client, monkeypatch, approved):
+    configure(monkeypatch, "local", key=False)
+    monkeypatch.setenv("JKQ_MODEL_PROVIDER", "local")
+    if approved:
+        monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", approved)
+    requests = []
+
+    def respond(request):
+        requests.append(request.url)
+        return upstream_response()
+
+    with model_client() as client:
+        client.app.state.jkq_models.transport = mock_transport(respond)
+        login(client, "sampleoperator")
+        response = client.post("/api/v1/ai/chat", json={**CHAT, "classification": "confidential"})
+        assert requests == []
+        assert response.status_code == 403 and response.json()["error"]["code"] == "OUTBOUND_DENIED"
+        entries = client.app.state.platform.store.audit_list("platform")
+        assert [(r["action"], r["user"]) for r in entries if r["action"].startswith("ai.")] == [
+            ("ai.outbound_denied", "sampleoperator"),
+        ]
+
+
+def test_confidential_does_not_send_to_unapproved_local_fallback(model_client, isolated_platform, monkeypatch):
+    config_dir, _ = isolated_platform
+    (config_dir / "models.yaml").write_text(json.dumps({
+        "models": [
+            {"id": ident, "kind": "openai", "group": "本地部署", "provider": ident, "env": env}
+            for ident, env in (("local", "JKQ_LOCAL_MODEL"), ("local-backup", "JKQ_LOCAL_BACKUP_MODEL"))
+        ],
+        "confidential_providers": ["local", "local-backup"],
+    }, ensure_ascii=False), encoding="utf-8")
+    configure(monkeypatch, "local", key=False)
+    configure(monkeypatch, "local_backup", "backup", key=False)
+    monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", "https://LOCAL.EXAMPLE.TEST:443/v1/")
+    monkeypatch.setenv("JKQ_LOCAL_BACKUP_MODEL_CONFIDENTIAL_BASE_URL", "https://backup.example.test/v2")
+    seen = []
+
+    def unavailable(request):
+        seen.append(request.url)
+        return httpx.Response(503)
+
+    with model_client() as client:
+        client.app.state.jkq_models.transport = mock_transport(unavailable)
+        login(client, "sampleoperator")
+        response = client.post("/api/v1/ai/chat", json={**CHAT, "classification": "confidential"})
+        assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+        assert seen == [httpx.URL(f"{LOCAL_URL}/chat/completions")]
+        entries = client.app.state.platform.store.audit_list("platform")
+        assert [(r["app"], r["user"], r["detail"]) for r in entries if r["action"] == "ai.chat"] == [
+            ("platform", "sampleoperator", {"provider": "local", "model": "local-configured-name",
+              "status": "provider_error", "usage": {"input": None, "output": None}}),
+        ]
 
 
 @pytest.mark.parametrize("failure", ["timeout", "deadline", "5xx"])
@@ -229,6 +362,118 @@ def test_retry_next_and_audit_each_attempt(model_client, monkeypatch, failure):
         }
 
 
+@pytest.mark.parametrize("entry", ["ai", "model"])
+def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatch, entry):
+    configure(monkeypatch, "cloud")
+    configure(monkeypatch, "deepseek")
+    requests = []
+    messages = [{"role": "user", "name": "demo", "content": [{"type": "text", "text": "公开演练"}]}]
+    body = {"messages": messages, "temperature": 0.3, "max_tokens": 20, "timeout": 4}
+    path = f"{APP_CHAT}/{entry}"
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.host, payload))
+        if request.url.host == "deepseek.example.test":
+            return httpx.Response(503)
+        return upstream_response()
+
+    client = model_client()
+    platform = client.app.state.platform
+    original = platform.model
+    with client:
+        assert platform.model is not original
+        client.app.state.jkq_models.transport = mock_transport(respond)
+        assert client.post(path, json=body).status_code == 401
+        login(client, "sampleoperator")
+        assert client.put("/api/v1/models/current", json={"model": "deepseek"}).status_code == 200
+        response = client.post(path, json=body)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["available"] is True
+        if entry == "ai":
+            envelope = result["reply"]
+            assert set(envelope) == {"result", "task_id", "capability", "provider", "model", "status", "created_at", "input"}
+            assert envelope["result"] == "收到公开演练请求"
+            assert envelope["provider"] == "cloud" and envelope["model"] == "cloud-configured-name"
+            assert envelope["task_id"] is None and envelope["capability"] == "chat" and envelope["status"] == "success"
+            assert envelope["input"]["kind"] == "text" and envelope["input"]["length"] > 0
+        else:
+            assert result["reply"] == "收到公开演练请求"
+
+        login(client)
+        assert client.patch("/api/v1/models/deepseek", json={"enabled": False}).status_code == 200
+        login(client, "sampleoperator")
+        assert client.post(path, json=body).status_code == 200
+        disabled = client.post(path, json={**body, "model": "deepseek-configured-name"})
+        assert disabled.status_code == 503
+        assert (disabled.json()["error"]["code"] if entry == "ai" else disabled.json()["kind"]) == "not_configured"
+        denied = client.post(path, json={**body, "model": "deepseek", "classification": "confidential"})
+        assert denied.status_code == 403
+        assert (denied.json()["error"]["code"] if entry == "ai" else denied.json()["kind"]) == "outbound_denied"
+
+        assert requests == [
+            (f"{ident}.example.test", {"messages": messages, "temperature": 0.3, "max_tokens": 20,
+                                      "model": f"{ident}-configured-name"})
+            for ident in ("deepseek", "cloud", "cloud")
+        ]
+        events = [r for r in platform.store.audit_list("sample-app") if r["action"].startswith("ai.")]
+        assert [(r["app"], r["user"]) for r in events] == [("sample-app", "sampleoperator")] * 4
+        assert [(r["action"], r["detail"]) for r in events] == [
+            ("ai.outbound_denied", {"capability": "chat", "classification": "confidential"}),
+            *[("ai.chat", {"provider": "cloud", "model": "cloud-configured-name", "status": "success",
+                          "usage": {"input": 8, "output": 5}})] * 2,
+            ("ai.chat", {"provider": "deepseek", "model": "deepseek-configured-name", "status": "provider_error",
+                         "usage": {"input": None, "output": None}}),
+        ]
+
+        login(client)
+        assert client.patch("/api/v1/models/cloud", json={"enabled": False}).status_code == 200
+        mock = client.post(path, json=body).json()
+        assert mock["available"] is False
+        assert (mock["reply"]["result"] if entry == "ai" else mock["reply"]).startswith("[模拟模型]")
+        usage = client.get("/api/model/usage").json()
+        assert usage["mode"] == "mock" and usage["scope"] == "process"
+        if entry == "model":
+            assert usage["calls"] == {"sample-app": 5}
+            assert usage["usage"] == {"sample-app": {"total": 5, "success": 3, "failure": 2, "mock": 1}}
+        else:
+            assert usage["calls"] == usage["usage"] == {}
+    assert platform.model is original
+    assert not hasattr(client.app.state, "jkq_models")
+
+
+def test_application_sdk_media_and_legacy_options_cannot_bypass_confidential_boundary(model_client):
+    with model_client() as client:
+        service = client.app.state.jkq_models
+        service.transport = mock_transport(no_request)
+        login(client)
+        assert client.put("/api/v1/admin/ai/providers/legacy-mock", json={
+            "kind": "mock", "models": ["legacy-model"], "allow_outbound": "confidential",
+        }).status_code == 200
+        for capability in ("chat", "embedding"):
+            assert client.put(f"/api/v1/admin/ai/routes/{capability}", json={
+                "provider": "legacy-mock", "model": "legacy-model",
+            }).status_code == 200
+
+        image = "data:image/png;base64,aW1hZ2U="
+        ai_media = {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": image}}]}]}
+        for entry, body in (("ai", ai_media), ("model", {**CHAT, "images": [image]})):
+            legacy = client.post(f"{APP_CHAT}/{entry}", json=body)
+            assert legacy.status_code == 200
+            result = legacy.json()["reply"]
+            assert (result["result"] if entry == "ai" else result).startswith("[模拟模型]")
+            denied = client.post(f"{APP_CHAT}/{entry}", json={**body, "classification": "confidential"})
+            assert denied.status_code == 400
+            error = denied.json()
+            assert (error["error"]["code"] if entry == "ai" else error["kind"]) == "bad_input"
+            stream = client.post(f"{APP_CHAT}/{entry}", json={**CHAT, "stream": True, "classification": "confidential"})
+            assert stream.status_code == 400
+        embedding = client.post("/api/apps/sample-app/sdk-embedding")
+        assert embedding.status_code == 200
+        assert embedding.json()["provider"] == "legacy-mock" and embedding.json()["capability"] == "embedding"
+
+
 @pytest.mark.parametrize("body", [
     {"messages": []}, {**CHAT, "classification": "other"}, {**CHAT, "stream": True},
     {**CHAT, "appId": "forged-app"}, {**CHAT, "temperature": 3},
@@ -273,9 +518,18 @@ def test_missing_codex_skips_without_model_dependencies(tmp_path):
     assert "跳过：本机没有 codex CLI。" in result.stdout
 
 
+def test_default_smoke_skips_without_configuration(tmp_path):
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/smoke_model.py")],
+        env={}, cwd=tmp_path, text=True, capture_output=True, timeout=10, check=True,
+    )
+    assert "跳过：未配置模型服务地址。" in result.stdout
+
+
 def test_confidential_failure_does_not_fall_back_to_cloud(model_client, monkeypatch):
     configure(monkeypatch, "cloud")
     configure(monkeypatch, "local", key=False)
+    approve_local(monkeypatch)
     seen = []
 
     def unavailable(request):
@@ -312,7 +566,7 @@ def test_quota_denies_without_second_provider_call(model_client, monkeypatch):
         assert seen == ["cloud.example.test"]
 
 
-def test_local_smoke_reports_only_length(tmp_path):
+def test_default_local_smoke_reports_only_length(tmp_path):
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -336,7 +590,7 @@ def test_local_smoke_reports_only_length(tmp_path):
         thread.start()
         try:
             result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts/smoke_model.py"), "--provider", "local"],
+                [sys.executable, str(ROOT / "scripts/smoke_model.py")],
                 env={
                     "JKQ_LOCAL_MODEL_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
                     "JKQ_LOCAL_MODEL_NAME": "local-smoke-model",
@@ -346,7 +600,8 @@ def test_local_smoke_reports_only_length(tmp_path):
         finally:
             server.shutdown()
             thread.join()
-    assert "local 模型冒烟通过，返回非空文本（8 字符）。" in result.stdout
+    length = re.fullmatch(r"local 模型冒烟通过，返回非空文本（(\d+) 字符）。", result.stdout.strip())
+    assert length and int(length[1]) == len(upstream_response().json()["choices"][0]["message"]["content"])
     assert len(requests) == 1
     path, body = requests[0]
     assert path == "/v1/chat/completions"
