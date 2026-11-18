@@ -15,6 +15,7 @@ from jkq.auth import AuthError, current_user, _error_response
 @pytest.fixture
 def instance(tmp_path, monkeypatch):
     app = FastAPI()
+    (tmp_path / "users.yaml").write_text("demoUsers: [{id: member, role: member}]")
     events = []
     app.state.platform = SimpleNamespace(
         config_dir=tmp_path, store=SimpleNamespace(audit=lambda *args: events.append(args)),
@@ -52,6 +53,9 @@ def test_reset_requires_admin_and_host_receipt(instance, monkeypatch):
     app.dependency_overrides[current_user] = lambda: user
     assert client.post(url).status_code == 403
     user.roles.append("admin")
+    user.id = "member"
+    assert client.post(url).status_code == 403
+    user.id = "sample"
     requests = []
     def accept(path):
         requests.append(path)
