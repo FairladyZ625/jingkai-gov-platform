@@ -188,7 +188,14 @@ def fill_missing(platform, user, intent, text, slots, fields, model):
                       and value.strip() and value in text})
 
 
-def plan_steps(intent, text, slots):
+def call_args(intent, slots, rule):
+    """规则给出的覆盖字段与已确认的企业一起作为工具入参，模型不参与。"""
+    if intent.id != "policy.fill" or rule is None or "overrides" not in rule.args or "ent" not in slots:
+        return None
+    return {"entId": slots["ent"], "overrides": dict(rule.args["overrides"])}
+
+
+def plan_steps(intent, text, slots, args=None):
     def step(label, action, *, write=False, **attributes):
         return dict(label=label, action=action, write=write, **attributes)
 
@@ -213,6 +220,8 @@ def plan_steps(intent, text, slots):
         steps = [step(f"打开{intent.name}", "open", target=intent.app)]
         if intent.tool or intent.write:
             target = {"tool": intent.tool} if intent.tool else {"target": intent.id}
+            if intent.tool and args is not None:
+                target["args"] = args
             action = "confirm" if intent.write else "call"
             label = f"{intent.label}（需要你确认）" if intent.write else intent.label
             steps.append(step(label, action, write=intent.write, **target))
@@ -251,5 +260,6 @@ def build_plan(platform, user, intents, text, context, model):
         return result, None
     slots, fields = rule_slots(intent, text, context, rule if rule_id == intent.id else None)
     fill_missing(platform, user, intent, text, slots, fields, model)
-    result.update(slots=slots, steps=plan_steps(intent, text, slots), understood=f"我理解为：{intent.label}")
+    args = call_args(intent, slots, rule if rule_id == intent.id else None)
+    result.update(slots=slots, steps=plan_steps(intent, text, slots, args), understood=f"我理解为：{intent.label}")
     return result, intent
