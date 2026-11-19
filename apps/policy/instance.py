@@ -58,6 +58,24 @@ class PolicyToolBridge:
         return {"result": response.json()}
 
 
+class _NoticeSelectionGuard:
+    """包住已安装的通用工具桥：未给出事项编号的告知单先追问，其余调用原样交回。"""
+
+    def __init__(self, bridge):
+        self._bridge = bridge
+
+    def __getattr__(self, name):
+        return getattr(self._bridge, name)
+
+    def tools(self, user):
+        return self._bridge.tools(user)
+
+    async def call_from_chat(self, request, app_id, tool, args):
+        if app_id == APP_ID and tool == "policy.notice" and "itemIds" not in args:
+            return {"tool": tool, "result": {"text": "请提供要写入告知单的政策事项编号。"}}
+        return await self._bridge.call_from_chat(request, app_id, tool, args)
+
+
 def _policy_call(text: str) -> ToolCall | None:
     text = unicodedata.normalize("NFKC", text).strip().rstrip("。?!")
     if match := re.fullmatch(rf"(?:看看)?({_DEMO_NAMES})能申请(?:什么|哪些(?:政策)?支持)", text):
@@ -101,4 +119,6 @@ def install(app, current_user):
     """不重复注册会话路由；通用编排按 app.state 读取网关与工具桥。"""
     if getattr(app.state, "apps_bridge", None) is None:
         app.state.apps_bridge = PolicyToolBridge(app)
+    else:
+        app.state.apps_bridge = _NoticeSelectionGuard(app.state.apps_bridge)
     app.state.chat_gateway = policy_gateway(getattr(app.state, "chat_gateway", None))
