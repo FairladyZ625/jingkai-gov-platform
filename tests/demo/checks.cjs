@@ -201,8 +201,8 @@ function installChecks() {
     ],
     [
       ['实际切换到浅色', () => themes.includes('light') && document.documentElement.dataset.theme === 'light' && caption(/深色、浅色两套主题/)],
-      ['回到王敏工作台和深色主题，显示演示结束', () => themes.includes('dark') && document.documentElement.dataset.theme === 'dark' &&
-        user('wangmin') && caption(/演示结束/)],
+      ['回到王敏工作台和深色主题，结束字幕指向左侧栏底部头像菜单的重置项', () => themes.includes('dark') && document.documentElement.dataset.theme === 'dark' &&
+        user('wangmin') && caption(/演示结束.*左侧栏底部头像菜单.*重置演示数据/) && !caption(/右下角/)],
     ],
   ];
 
