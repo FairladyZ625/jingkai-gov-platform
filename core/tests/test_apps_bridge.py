@@ -151,9 +151,9 @@ def test_existing_application_catalog_is_visible_without_executable_tools(make_c
     legacy_ids = {"document", "enterprise", "meeting"}
     catalog = {item["id"]: item for item in client.get("/api/v1/apps").json()["items"]}
     assert legacy_ids | {"policy"} <= catalog.keys()
-    # 政策兑现已完整绑定工具桥（告知单路由未落入主线前不声明），其余存量应用仍只展示目录。
+    # 政策兑现已完整绑定工具桥（含告知单），其余存量应用仍只展示目录。
     assert {tool["name"] for tool in catalog["policy"]["tools"]} == {
-        "policy.match", "policy.calc", "policy.search"}
+        "policy.match", "policy.calc", "policy.search", "policy.notice"}
     assert not any(tool["app"] in legacy_ids for tool in client.get("/api/v1/tools").json()["items"])
     for app_id in legacy_ids:
         details = client.get(f"/api/v1/apps/{app_id}")
@@ -574,7 +574,7 @@ def test_default_instance_catalog_skills_and_tool_permissions(role, username, vi
         legacy_apps = business_apps - {"policy"}
         assert all(item["app"] not in legacy_apps for item in tools.json()["items"])
         assert {item["name"] for item in tools.json()["items"] if item["app"] == "policy"} == {
-            "policy.match", "policy.calc", "policy.search"}
+            "policy.match", "policy.calc", "policy.search", "policy.notice"}
         for app_id in legacy_apps:
             detail = client.get(f"/api/v1/apps/{app_id}")
             legacy = platform.apps[app_id].manifest["tools"][0]["name"]
