@@ -463,8 +463,10 @@
           await run.sleep(600); await run.step(2);
           await run.click('[data-op="skills.next"]');
           await run.wait(() => el.querySelector('[data-op="skills.trial"]'));
-          await run.click('[data-op="skills.trial"]');
-          await run.wait(() => el.querySelector('[data-op="skills.result"]'), 12000);
+          st.out = null; await run.click('[data-op="skills.trial"]');
+          await run.wait(() => el.querySelector('[data-op="skills.result"]') || (st.out && st.out.status === 'failed'), 12000);
+          // 无模型的演示配置下试运行会因密级路由失败：不放宽路由，演示到保存草稿为止，跳过分享与发布。
+          if (!el.querySelector('[data-op="skills.result"]')) { run.done(`技能「${st.make.skill.name}」已起草。演示配置没有可处理该密级的模型，试运行、分享与发布这一步演示时跳过`); return; }
           await run.scroll('[data-op="skills.result"]'); await run.sleep(500);
           await run.step(3);
           const c = await run.ask('试运行结果出来了。要把这个技能发布给谁用？', ['发布到本部门', '先只给自己用', '申请全区公开（需审核）']);
