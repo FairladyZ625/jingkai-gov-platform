@@ -140,7 +140,12 @@ async function walkthrough(browser, width, theme) {
     if (theme === 'light') {
       assert.equal(await page.evaluate(() => JKShell.S.me.username), 'wangmin');
       await checkInFrame(page.locator('#btn-me .nm'));
-      await capture('12-end', 'dark');
+      // #144：演示结束后恢复启动时的主题，浅色组的结束页仍为浅色。
+      // 主题切换的颜色过渡未结束时卡片仍是半深色，先等过渡完成再取景。
+      await page.evaluate(() => Promise.all(document.getAnimations()
+        .filter(animation => animation instanceof CSSTransition)
+        .map(animation => animation.finished.catch(() => {}))));
+      await capture('12-end', theme);
     }
     assert.deepEqual(failures, []);
     for (const name of ['08-before', '08-1', '09-1', '09', '12']) {
