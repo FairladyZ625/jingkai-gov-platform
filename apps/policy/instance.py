@@ -7,7 +7,6 @@ import unicodedata
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
-from jkq.orchestrator import routes as orchestrator
 from jkq.orchestrator.ports import ModelTurn, ToolCall
 
 
@@ -74,18 +73,32 @@ def _policy_call(text: str) -> ToolCall | None:
     return None
 
 
-async def _policy_gateway(request, *, messages, tools, model, classification):
-    """在尚无通用模型接线时解析本任务的演示话术。"""
-    last = messages[-1]
-    if last["role"] == "tool":
-        result = json.loads(last["content"])
-        return ModelTurn(deltas=(result.get("text") or "查询结果见卡片。",))
-    if (call := _policy_call(last["content"])) and call.tool in tools:
-        return ModelTurn(calls=(call,))
-    return ModelTurn(deltas=("这条请求没有可用的政策工具。",))
+def policy_gateway(fallback=None):
+    """在已安装的对话编排上挂政策话术：其余请求交回原网关，未配置模型时保持原有提示。"""
+
+    async def gateway(request, *, messages, tools, model, classification, on_delta=None):
+        last = messages[-1]
+        if last["role"] == "tool" and _answers_policy_call(messages):
+            result = json.loads(last["content"])
+            return ModelTurn(deltas=(result.get("text") or "查询结果见卡片。",))
+        if last["role"] == "user" and (call := _policy_call(last["content"])) and call.tool in tools:
+            return ModelTurn(calls=(call,))
+        if fallback is None:
+            raise RuntimeError("未配置对话模型")
+        return await fallback(request, messages=messages, tools=tools, model=model,
+                              classification=classification, on_delta=on_delta)
+
+    return gateway
+
+
+def _answers_policy_call(messages):
+    calls = next((message.get("tool_calls") for message in reversed(messages)
+                  if message["role"] == "assistant" and message.get("tool_calls")), None) or []
+    return bool(calls) and all(call["function"]["name"].startswith(APP_ID + ".") for call in calls)
 
 
 def install(app, current_user):
+    """不重复注册会话路由；通用编排按 app.state 读取网关与工具桥。"""
     if getattr(app.state, "apps_bridge", None) is None:
         app.state.apps_bridge = PolicyToolBridge(app)
-    orchestrator.install(app, current_user, gateway=_policy_gateway)
+    app.state.chat_gateway = policy_gateway(getattr(app.state, "chat_gateway", None))
