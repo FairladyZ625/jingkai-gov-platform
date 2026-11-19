@@ -517,3 +517,42 @@ def test_template_and_generated_app_pass_manifest_cli(tmp_path):
         cwd=ROOT, check=True, capture_output=True, text=True,
     )
     assert "全部通过。" in result.stdout
+
+
+@pytest.mark.parametrize(("role", "username", "visible"), [
+    ("admin", "admin", {"document", "enterprise", "meeting", "policy"}),
+    ("partner", "hejun", {"enterprise", "policy"}),
+])
+def test_instance_roles_can_open_existing_apps_after_bridge_install(role, username, visible, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from jkq.app import create_app
+
+    for setting in ("HAIKNOW_APPS_DIR", "HAIKNOW_CONFIG_DIR", "JKQ_WEB_DIR"):
+        monkeypatch.delenv(setting, raising=False)
+    monkeypatch.setenv("HAIKNOW_ROOT", str(ROOT))
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HAIKNOW_SECRET", "isolated-instance-test-signing")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    for account in ("admin", "leader", "member", "partner"):
+        monkeypatch.setenv(f"JKQ_DEMO_{account.upper()}_PASSWORD", f"test-{account}")
+
+    app = create_app()
+    install(app, current_user)
+    with TestClient(app) as client:
+        session = client.post("/api/v1/auth/login", json={"username": username, "password": f"test-{role}"})
+        assert session.status_code == 200, session.text
+        business_apps = {"document", "enterprise", "meeting", "policy"}
+        catalog = client.get("/api/v1/apps")
+        assert catalog.status_code == 200
+        assert {item["id"] for item in catalog.json()["items"]} & business_apps == visible
+        tools = client.get("/api/v1/tools")
+        assert tools.status_code == 200
+        assert all(item["app"] not in business_apps for item in tools.json()["items"])
+        for app_id in business_apps:
+            detail = client.get(f"/api/v1/apps/{app_id}")
+            if app_id in visible:
+                assert detail.status_code == 200
+                assert detail.json()["id"] == app_id and detail.json()["tools"] == []
+            else:
+                assert_error(detail, 403, "FORBIDDEN")
