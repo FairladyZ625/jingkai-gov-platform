@@ -151,9 +151,9 @@ def test_existing_application_catalog_is_visible_without_executable_tools(make_c
     legacy_ids = {"document", "enterprise", "meeting"}
     catalog = {item["id"]: item for item in client.get("/api/v1/apps").json()["items"]}
     assert legacy_ids | {"policy"} <= catalog.keys()
-    # 政策兑现已完整绑定工具桥，其余存量应用仍只展示目录。
+    # 政策兑现已完整绑定工具桥（告知单路由未落入主线前不声明），其余存量应用仍只展示目录。
     assert {tool["name"] for tool in catalog["policy"]["tools"]} == {
-        "policy.match", "policy.calc", "policy.notice", "policy.search"}
+        "policy.match", "policy.calc", "policy.search"}
     assert not any(tool["app"] in legacy_ids for tool in client.get("/api/v1/tools").json()["items"])
     for app_id in legacy_ids:
         details = client.get(f"/api/v1/apps/{app_id}")
@@ -574,7 +574,7 @@ def test_default_instance_catalog_skills_and_tool_permissions(role, username, vi
         legacy_apps = business_apps - {"policy"}
         assert all(item["app"] not in legacy_apps for item in tools.json()["items"])
         assert {item["name"] for item in tools.json()["items"] if item["app"] == "policy"} == {
-            "policy.match", "policy.calc", "policy.notice", "policy.search"}
+            "policy.match", "policy.calc", "policy.search"}
         for app_id in legacy_apps:
             detail = client.get(f"/api/v1/apps/{app_id}")
             legacy = platform.apps[app_id].manifest["tools"][0]["name"]
@@ -601,3 +601,44 @@ def test_default_instance_catalog_skills_and_tool_permissions(role, username, vi
                 assert call.status_code == 200 and "items" in call.json()["result"]
             else:
                 assert_error(call, 403, "FORBIDDEN")
+
+
+def test_bridge_forwards_get_tool_args_as_query_string(monkeypatch, tmp_path):
+    """GET 工具的 args 以查询串转给业务路由，结果与界面直接查询一致。"""
+    import httpx
+    from fastapi.testclient import TestClient
+    from jkq.app import create_app
+
+    for setting in ("HAIKNOW_APPS_DIR", "HAIKNOW_CONFIG_DIR", "JKQ_WEB_DIR"):
+        monkeypatch.delenv(setting, raising=False)
+    monkeypatch.setenv("HAIKNOW_ROOT", str(ROOT))
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("HAIKNOW_SECRET", "isolated-instance-test-signing")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    for account in ("admin", "leader", "member", "partner"):
+        monkeypatch.setenv(f"JKQ_DEMO_{account.upper()}_PASSWORD", f"test-{account}")
+
+    sent = []
+    original_send = httpx.AsyncClient.send
+
+    async def record(self, request, *args, **kwargs):
+        sent.append(request)
+        return await original_send(self, request, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", record)
+    with TestClient(create_app()) as client:
+        session = client.post("/api/v1/auth/login", json={"username": "wangmin", "password": "test-member"})
+        assert session.status_code == 200, session.text
+        everything = client.get("/api/apps/policy/items").json()["items"]
+        direct = client.get("/api/apps/policy/items", params={"q": "RP-006"}).json()
+        call = client.post("/api/v1/apps/policy/tools/search", json={"args": {"q": "RP-006"}})
+        assert call.status_code == 200, call.text
+        assert call.json() == {"tool": "policy.search", "result": direct}
+
+    request, = sent
+    assert (request.method, request.url.path, dict(request.url.params)) == (
+        "GET", "/api/apps/policy/items", {"q": "RP-006"})
+    assert request.content == b""
+    ids = [item["id"] for item in direct["items"]]
+    assert "RP-006" in ids and len(ids) < len(everything)
