@@ -42,3 +42,30 @@ def test_computer_summary_guards_missing_enterprise():
     source = (Path(__file__).resolve().parents[2] / "prototype/v4/apps/computer/app.js").read_text(encoding="utf-8")
     assert "${r.ent.short}" not in source
     assert "(r && r.ent && r.ent.short) || '示例企业'" in source
+
+
+@pytest.mark.parametrize("server", [()], indirect=True)
+def test_review_inbox_marks_assignee_and_decides_with_version(server):
+    import httpx
+
+    with httpx.Client(base_url=server.url, trust_env=False) as c:
+        c.post("/api/v1/auth/login", json={"username": "wangmin", "password": server.password}).raise_for_status()
+        draft = c.post("/api/apps/document/drafts", json={"templateId": "T06", "inputs": {
+            "orig": "公开演示通知", "oldEnd": "2026-11-20", "newEnd": "2026-12-15", "reason": "系统维护",
+            "to": "各有关企业：", "sign": "公文演示工作组", "date": "2026年11月18日"}}).json()["item"]
+        submitted = c.post(f"/api/apps/document/drafts/{draft['id']}/submit", json={"assignee": "u-liyang"})
+        assert submitted.status_code == 200, submitted.text
+        review_id = submitted.json()["review"]["id"]
+    with sync_playwright() as engine:
+        browser = engine.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.goto(server.url)
+            page.locator('[data-u="liyang"]').click()
+            page.wait_for_function("JKShell.S.me && JKShell.S.me.username === 'liyang'")
+            item = page.evaluate("id => JKApi.reviews.list().then(r => r.items.find(x => x.id === id))", review_id)
+            assert item["approver"] is True and item["type"] == "review"
+            decided = page.evaluate("id => JKApi.reviews.decide(id, {decision: 'approve', comment: ''})", review_id)
+            assert decided["item"]["decision"]["decision"] == "approve"
+        finally:
+            browser.close()
