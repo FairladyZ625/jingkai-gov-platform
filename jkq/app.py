@@ -30,6 +30,8 @@ def install_platform(app: FastAPI) -> None:
     """安装需要包住 core 路由或挂平台存储的模块，每个模块一行。"""
     from haiknow_core.main import current_user  # 登录依赖只在这里指定
 
+    from apps.policy import instance as policy
+
     from . import admin, apps_bridge, demo, jobs_api, reviews_api
     from .skills.storage import Skills
     from .conversations import routes as conversations
@@ -62,6 +64,7 @@ def install_platform(app: FastAPI) -> None:
         from apps.document.instance import install as install_document
 
         install_document(app)
+    policy.install(app, current_user)
 
 
 def create_app() -> FastAPI:
