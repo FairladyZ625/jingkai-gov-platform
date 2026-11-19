@@ -10,13 +10,13 @@ from uuid import uuid4
 
 from .analysis import KINDS, analyze_document
 from .parsing import ParseError, parse_document
-from .public_url import PublicURLReader
+from .public_url import PublicURLError, PublicURLReader
 from .repository import ImportRepository
 
 SPACE_NAMES = {"policy": "政策库", "template": "公文范文", "minutes": "会议纪要",
                "rules": "部门制度", "enterprise": "企业档案"}
 CLASSIFICATIONS = ("public", "internal", "confidential")
-ORIGINS = ("官网", "上传", "粘贴", "网址", "对话", "企业管理")
+ORIGINS = ("官网", "上传", "粘贴", "网址", "对话", "企业管理", "公文协作", "政策匹配")
 ITEM_FIELDS = {
     "key", "name", "ext", "size", "from", "parse", "text", "url", "meta", "tags", "classification",
     "fileIndex", "decision", "skip", "dup", "ok", "chars", "chunks", "chunkPreview", "stages", "real",
@@ -297,7 +297,12 @@ class ImportService:
         return prepared
 
     async def _prepare_url(self, user, url, access, space, classification, origin="网址"):
-        page = await self._reader.read(url)
+        try:
+            page = await self._reader.read(url)
+        except PublicURLError:
+            raise
+        except Exception:
+            raise ImportFailure(502, "URL_FETCH_FAILED", "无法读取公开网页，请检查网址或改用粘贴正文") from None
         name = page.title[:2048] or urlsplit(page.url).hostname
         value = {"name": name, "text": page.text, "url": page.url, "from": origin, "real": True}
         if page.title:
