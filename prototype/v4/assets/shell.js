@@ -64,21 +64,65 @@
           ${err ? `<div class="callout h-red">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
           <button class="btn primary lg" data-op="login.go" style="width:100%;margin-top:4px">登录</button>
         </div>
-        ${accts.length ? `<div class="sect" style="margin-top:28px">演示账号 · 点一下直接进入</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}" data-p="${esc(a.password)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)} / ${esc(a.password)}</div></span></button>`).join('')}</div>` : ''}
+        ${accts.length ? `<div class="sect" style="margin-top:28px">演示账号 · 点一下直接进入</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}" data-p="${window.JKHttp.mode() === 'http' ? '' : esc(a.password)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)}${window.JKHttp.mode() === 'http' ? ' · 请输入口令' : ' / ' + esc(a.password)}</div></span></button>`).join('')}</div>` : ''}
       </form></div></div>`;
     const go = async (u, p) => { try { await API.auth.login({ username: u, password: p }); await afterLogin(); } catch (e) { renderLogin(e.message || '登录失败', u); const pw = $('#lf [name=p]'); if (pw) pw.focus(); } };
     $('#lf').onsubmit = (e) => { e.preventDefault(); go(e.target.u.value.trim(), e.target.p.value); };
-    $$('.ql').forEach((b) => (b.onclick = () => go(b.dataset.u, b.dataset.p)));
+    $$('.ql').forEach((b) => (b.onclick = () => {
+      if (window.JKHttp.mode() === 'http') { $('#lf [name=u]').value = b.dataset.u; $('#lf [name=p]').focus(); }
+      else go(b.dataset.u, b.dataset.p);
+    }));
+  }
+  // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
+  function passwordLogin(account) {
+    return new Promise((resolve) => {
+      let accepted = false, busy = false;
+      const holdClose = (event) => {
+        if (busy && (event.key === 'Escape' || event.target.closest?.('[data-cancel],[data-x],.mask-bg'))) {
+          event.preventDefault(); event.stopImmediatePropagation();
+        }
+      };
+      document.addEventListener('click', holdClose, true); document.addEventListener('keydown', holdClose, true);
+      const modal = JK.modal({ title: `登录 ${account.name}`, okText: '登录并切换',
+        body: `<form autocomplete="off"><label>请输入 ${esc(account.username)} 的口令<input class="input" type="password" autocomplete="off" data-op="switch.password"></label><div role="alert" data-op="switch.error"></div></form>`,
+        ok: async (dialog) => {
+          if (busy) return false;
+          busy = true;
+          const input = dialog.querySelector('[data-op="switch.password"]');
+          const request = { username: account.username, password: input.value }; input.value = '';
+          try {
+            await API.auth.login(request); accepted = true;
+          } catch (error) {
+            dialog.querySelector('[data-op="switch.error"]').textContent = '口令不正确或登录失败，当前会话已保留';
+            input.focus(); return false;
+          } finally { request.password = ''; busy = false; }
+        },
+        onMount: (dialog) => {
+          dialog.querySelector('form').onsubmit = (event) => { event.preventDefault(); dialog.querySelector('[data-ok]').click(); };
+          dialog.querySelector('input').focus();
+        },
+      });
+      const observer = new MutationObserver(() => {
+        if (!modal.el.isConnected) {
+          modal.el.querySelector('input').value = ''; observer.disconnect(); document.removeEventListener('click', holdClose, true); document.removeEventListener('keydown', holdClose, true); resolve(accepted);
+        }
+      });
+      observer.observe(document.body, { childList: true });
+    });
   }
   async function switchUser(username, run) {
     const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a) return;
     if (switchingAccount) return;
     switchingAccount = true;
     try {
+      if (window.JKHttp.mode() === 'http') {
+        if (!(await passwordLogin(a))) { if (run) run.fail('已取消切号，当前会话已保留'); return; }
+      } else {
+        await API.auth.logout().catch(() => {});
+        await API.auth.login({ username: a.username, password: a.password });
+      }
       if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
       rememberActivePanel();
-      await API.auth.logout().catch(() => {});
-      await API.auth.login({ username: a.username, password: a.password });
       // 登录和权限刷新都成功才完成原任务。
       await afterLogin(() => { if (run) run.done(); });
       toast(`已切换为 ${a.name}（${a.role}）`);

@@ -10,19 +10,20 @@ from uuid import uuid4
 
 from .analysis import KINDS, analyze_document
 from .parsing import ParseError, parse_document
-from .public_url import PublicURLReader
+from .public_url import PublicURLError, PublicURLReader
 from .repository import ImportRepository
 
 SPACE_NAMES = {"policy": "政策库", "template": "公文范文", "minutes": "会议纪要",
                "rules": "部门制度", "enterprise": "企业档案"}
 CLASSIFICATIONS = ("public", "internal", "confidential")
-ORIGINS = ("官网", "上传", "粘贴", "网址", "对话", "企业管理")
+ORIGINS = ("官网", "上传", "粘贴", "网址", "对话", "企业管理", "公文协作", "政策匹配")
 ITEM_FIELDS = {
     "key", "name", "ext", "size", "from", "parse", "text", "url", "meta", "tags", "classification",
     "fileIndex", "decision", "skip", "dup", "ok", "chars", "chunks", "chunkPreview", "stages", "real",
     "file", "error",
 }
 BATCH_FIELDS = {"items", "space", "from", "classification"}
+OPTIONAL_TEXT_FIELDS = frozenset({"text", "title", "url"})
 META_FIELDS = {"title", "space", "kind", "docNo", "org", "date", "status", "url", "expire"}
 MAX_ITEMS = 32
 
@@ -251,6 +252,10 @@ class ImportService:
         return _Prepared(item, chunks, decision, expected)
 
     async def _prepare_batch(self, user, payload, access, files, *, one_step=False):
+        if isinstance(payload, dict):
+            # 原型适配层未填的 text/title/url 以 null 发送，与缺键同义；其他字段的 null 照常校验。
+            payload = {key: value for key, value in payload.items()
+                       if not (key in OPTIONAL_TEXT_FIELDS and value is None)}
         extra = {"text", "title", "url"} if one_step else set()
         _mapping(payload, BATCH_FIELDS | extra, "导入请求格式无效或包含未知字段")
         space = _space(access, payload["space"]) if "space" in payload else None
@@ -292,7 +297,12 @@ class ImportService:
         return prepared
 
     async def _prepare_url(self, user, url, access, space, classification, origin="网址"):
-        page = await self._reader.read(url)
+        try:
+            page = await self._reader.read(url)
+        except PublicURLError:
+            raise
+        except Exception:
+            raise ImportFailure(502, "URL_FETCH_FAILED", "无法读取公开网页，请检查网址或改用粘贴正文") from None
         name = page.title[:2048] or urlsplit(page.url).hostname
         value = {"name": name, "text": page.text, "url": page.url, "from": origin, "real": True}
         if page.title:

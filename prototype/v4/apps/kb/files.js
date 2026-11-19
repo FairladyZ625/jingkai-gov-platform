@@ -60,6 +60,6 @@
     return `${t}\n【模拟解析】原型在浏览器里读不出这个文件的正文（扫描件或 ${EXT(name).toUpperCase()} 格式）。正式版由后端 MinerU 解析全文、表格和页码，入库后即可检索。`;
   }
   /* 从对话框传来的 file（{name, ext, text, sample}）直接用其 text */
-  function fromChat(f) { const ext = f.ext || EXT(f.name); if (f.text) return { name: f.name, ext, size: f.size || f.text.length * 2, text: f.text, parse: f.sample ? 'sample' : 'real', from: '对话' }; return { name: f.name, ext, from: '对话', parse: 'simulated', text: simulated(f.name) }; }
+  function fromChat(f) { const ext = f.ext || EXT(f.name); if (f.text) return { name: f.name, ext, size: Number.isInteger(f.size) && f.size >= 0 ? f.size : f.text.length * 2, text: f.text, parse: f.sample ? 'sample' : 'real', from: '对话' }; return { name: f.name, ext, from: '对话', parse: 'simulated', text: simulated(f.name) }; }
   window.JKKBFiles = { read, fromChat, ext: EXT };
 })();

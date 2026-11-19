@@ -4,6 +4,20 @@
  * ===================================================================== */
 (function () {
   const H = window.JKHttp;
+  // 真后端审签单不带界面用的 approver/type/title，决定须带版本号；HTTP 模式下在适配层补齐，模拟后端原样。
+  const reviewVersions = {};
+  const reviewView = (r) => {
+    if (H.mode() !== 'http' || !r) return r;
+    const me = window.JKShell && JKShell.S && JKShell.S.me;
+    (r.items || []).forEach((x) => {
+      reviewVersions[x.id] = x.version;
+      if (x.approver === undefined) x.approver = !!me && (!x.assignee || x.assignee === me.id) && x.submitter !== me.id;
+      x.type = x.type || 'review'; x.title = x.title || '待审签文稿';
+    });
+    return r;
+  };
+  const reviewDecision = (id, b) => (H.mode() === 'http' && b && b.version == null && reviewVersions[id] != null
+    ? Object.assign({}, b, { version: reviewVersions[id] }) : b);
   window.JKApi = window.JKApi || {};
   Object.assign(window.JKApi, {
     auth: {
@@ -29,8 +43,8 @@
     },
     apps: { /** → {items:App[], skills} */ list: () => H.get('/api/v1/apps') },
     reviews: {
-      /** → {items:Review[]} */ list: () => H.get('/api/v1/reviews'),
-      /** {decision:'approve'|'reject', comment} → {item} */ decide: (id, b) => H.post(`/api/v1/reviews/${id}/decisions`, b),
+      /** → {items:Review[]} */ list: () => H.get('/api/v1/reviews').then(reviewView),
+      /** {decision:'approve'|'reject', comment} → {item} */ decide: (id, b) => H.post(`/api/v1/reviews/${id}/decisions`, reviewDecision(id, b)),
     },
     todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id, b) },
     feed: { list: () => H.get('/api/v1/feed') },

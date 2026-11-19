@@ -363,7 +363,9 @@
           inFlow(); if (!run) { pickTpl(id, inputs); if (!inputs) S.tpl.inputs.forEach(([k, , v]) => { if (!S.inputs[k]) S.inputs[k] = v; }); await generate(); return S.doc; }
           if (S.step !== 0) { S.step = 0; body(); }
           await run.step(1); await run.click(`[data-op="document.tpl-${id}"]`); await run.wait('[data-op="document.sample"]', 6000);
-          await run.step(2); if (inputs) { for (const [k, v] of Object.entries(inputs)) if (el.querySelector(`[data-op="document.in-${k}"]`)) { S.inputs[k] = String(v); } step1(); await run.sleep(300); } await run.click('[data-op="document.sample"]');
+          await run.step(2); if (inputs) { for (const [k, v] of Object.entries(inputs)) if (el.querySelector(`[data-op="document.in-${k}"]`)) { S.inputs[k] = String(v); } step1(); await run.sleep(300); }
+          if (window.JKDemo && JKDemo.state && JKDemo.state.on && C.demoInputs) Object.entries(C.demoInputs).forEach(([k, v]) => { if (!String(S.inputs[k] || '').trim()) S.inputs[k] = v; });
+          await run.click('[data-op="document.sample"]');
           await run.step(3); await run.click('[data-op="document.gen"]'); await run.wait(() => S.doc && S.issues && el.querySelector('[data-op="document.paper"]'), 10000);
           await run.step(4); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length;
           run.done(`已起草「${S.doc.title}」，${sumIssues()}`, [...(nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []), { label: '润色', say: '润色一下，更正式些' }, { label: '送审签', say: '送审签' }]);

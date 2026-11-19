@@ -32,7 +32,7 @@ def install_platform(app: FastAPI) -> None:
 
     from apps.policy import instance as policy
 
-    from . import admin, apps_bridge, jobs_api, reviews_api
+    from . import admin, apps_bridge, demo, jobs_api, reviews_api
     from .skills import publication as skills_publication
     from .skills.storage import Skills
     from .conversations import routes as conversations
@@ -60,6 +60,7 @@ def install_platform(app: FastAPI) -> None:
         ]
 
     apps_bridge.install(app, current_user, list_skills=list_skills, register_catalog=False)
+    demo.install(app)
     admin.install(app)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。

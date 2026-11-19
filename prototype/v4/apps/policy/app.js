@@ -30,10 +30,11 @@
         { id: 'policy.toDocument', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
       starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
+      // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。
       demo: [
-        { title: '政策匹配', say: `帮我查一下${seedShort('E002')}能申报哪些政策` },
+        { title: '政策匹配', say: `帮我查一下${seedShort('E020')}能申报哪些政策` },
         { title: '补填再算', say: '补填数据采购额 30 万' },
-        { title: '告知单', say: `给${seedShort('E002')}生成政策告知单` },
+        { title: '告知单', say: `给${seedShort('E020')}生成政策告知单` },
       ],
     },
 
