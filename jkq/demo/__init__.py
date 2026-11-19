@@ -257,6 +257,10 @@ def install(app):
     app.add_middleware(KnowledgeSource)
     if options.preset_on_failure:
         app.add_middleware(SkillDraftPreset, service=app.state.jkq_models)
+    if getattr(platform, "root", None) is not None:
+        from .seed import DemoSeed
+
+        app.add_middleware(DemoSeed, target=app, root=Path(platform.root))
     reset_key = os.environ.get("JKQ_DEMO_RESET_KEY", "").encode()
 
     @app.post("/api/v1/demo/reset", status_code=202, response_model=ResetReceipt,
