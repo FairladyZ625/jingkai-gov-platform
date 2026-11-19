@@ -365,3 +365,53 @@ def test_concurrent_votes_keep_both_users(api):
         assert [job.result().status_code for job in responses] == [200, 200]
     item = call(api, "GET", path).json()["item"]
     assert (item["ratingN"], item["usefulRate"]) == (2, 50)
+
+
+def test_create_app_inbox_keeps_zone_publish_review(isolated_platform, cheap_password_hash, monkeypatch):
+    """经 jkq.app.create_app 的真实安装顺序：王敏发布全区技能后，李阳收件箱能看到并审签。"""
+    import secrets
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from jkq.app import create_app
+
+    repo = Path(__file__).resolve().parents[2]
+    password = secrets.token_urlsafe(12)
+    for name in ("HAIKNOW_ROOT", "JKQ_WEB_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("ADMIN", "LEADER", "MEMBER", "PARTNER"):
+        monkeypatch.setenv(f"JKQ_DEMO_{name}_PASSWORD", password)
+    monkeypatch.setenv("JKQ_DEMO_MODE", "1")
+    monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
+    monkeypatch.setenv("HAIKNOW_SECRET", password)
+    monkeypatch.setenv("HAIKNOW_CONFIG_DIR", str(repo / "config"))
+    monkeypatch.setenv("HAIKNOW_APPS_DIR", str(repo / "apps"))
+
+    with TestClient(create_app()) as api:
+        def sign_in(username):
+            response = api.post("/api/v1/auth/login", json={"username": username, "password": password})
+            assert response.status_code == 200, response.text
+
+        sign_in("wangmin")
+        created = api.post("/api/v1/skills", json={"name": "共享技能"})
+        assert created.status_code == 200, created.text
+        sid = created.json()["item"]["id"]
+        published = api.post(
+            f"/api/v1/skills/{sid}/publish",
+            json={"share": {"scope": "zone", "perm": "use"}},
+        )
+        assert published.status_code == 200, published.text
+        review = published.json()["review"]
+
+        sign_in("liyang")
+        queue = api.get("/api/v1/reviews")
+        assert queue.status_code == 200, queue.text
+        assert [entry["id"] for entry in queue.json()["items"]] == [review["id"]]
+
+        decided = api.post(
+            f"/api/v1/reviews/{review['id']}/decisions",
+            json={"decision": "approve", "version": review["version"]},
+        )
+        assert decided.status_code == 200, decided.text
+        assert api.get("/api/v1/reviews").json()["items"] == []
