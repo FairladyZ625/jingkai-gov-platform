@@ -42,9 +42,9 @@ html[data-mac]{--font:var(--font-mac)}
   --hover:#F4F4F5;
   --active:#EEEEF0;      /* 选中 */
   --nav-on:#E9E9EB;      /* 侧栏选中 */
-  --border:#EDEDF0;      /* multica --border oklch(.945) */      /* 发丝线 */
-  --border-strong:#E4E4E7; /* multica --surface-border / --input oklch(.92) */ /* 控件边框 */
-  --border-hover:#D4D4D8;
+  --border:#E2E2E6;      /* 2.2 边框：实色，看得清但不重（原 #EDEDF0） */      /* 发丝线 */
+  --border-strong:#D6D6DB; /* 卡片/控件边框（原 #E4E4E7） */
+  --border-hover:#B4B4BC;
   --text:#09090B;
   --text-2:#64636E;
   --text-3:#6F6F79;
@@ -54,13 +54,13 @@ html[data-mac]{--font:var(--font-mac)}
   --accent-soft:rgba(0,112,227,.08);
   --accent-line:rgba(0,112,227,.35);
   --accent-fg:#FFFFFF;
-  --ring:#9F9FA9;
-  --focus:0 0 0 3px rgba(159,159,169,.28);
+  --ring:#0070E3;         /* 2.2 焦点：清晰实线，不用光晕 */
+  --focus:0 0 0 1px var(--ring);
   --overlay:rgba(9,9,11,.32);
-  --shadow-1:0 1px 2px rgba(15,23,42,.04),0 1px 1px rgba(15,23,42,.03); /* multica --surface-shadow */
-  --shadow-menu:0 8px 24px rgba(15,23,42,.08),0 2px 6px rgba(15,23,42,.05);
-  --shadow-pop:0 16px 40px rgba(15,23,42,.14),0 3px 10px rgba(15,23,42,.08);
-  --scroll:rgba(0,0,0,.12);
+  --shadow-1:0 1px 2px rgba(0,0,0,.06); /* 2.2 只留极轻层级，不做光晕 */
+  --shadow-menu:0 2px 6px rgba(0,0,0,.08);
+  --shadow-pop:0 4px 12px rgba(0,0,0,.10),0 0 0 1px var(--border-strong);
+  --scroll:rgba(0,0,0,.18);
   --ok:#1C882D; --warn:#C28E00; --danger:#E40014; --info:#0070E3;
   /* 标签色槽（11 色相）：fg = 圆点/图标/文字色，bg = 淡底（.soft 用），bd = 淡边 */
   --t-gray-fg:#71717A;   --t-gray-bg:#F4F4F5;  --t-gray-bd:#E4E4E7;
@@ -90,9 +90,9 @@ html[data-mac]{--font:var(--font-mac)}
   --hover:#232326;
   --active:#2D2D31;
   --nav-on:#232326;
-  --border:rgba(255,255,255,.06);
-  --border-strong:rgba(255,255,255,.12);
-  --border-hover:rgba(255,255,255,.20);
+  --border:#2C2C32;
+  --border-strong:#36363D;
+  --border-hover:#4E4E57;
   --text:#FAFAFA;
   --text-2:#A1A1AA;
   --text-3:#8A8A94;
@@ -102,13 +102,13 @@ html[data-mac]{--font:var(--font-mac)}
   --accent-soft:rgba(67,144,238,.14);
   --accent-line:rgba(67,144,238,.45);
   --accent-fg:#FFFFFF;
-  --ring:#71717B;
-  --focus:0 0 0 3px rgba(113,113,123,.35);
+  --ring:#5FA3F5;
+  --focus:0 0 0 1px var(--ring);
   --overlay:rgba(0,0,0,.55);
-  --shadow-1:0 1px 2px rgba(0,0,0,.2);
-  --shadow-menu:0 10px 28px rgba(0,0,0,.30),0 2px 8px rgba(0,0,0,.18),0 0 0 1px rgba(255,255,255,.07);
-  --shadow-pop:0 20px 48px rgba(0,0,0,.46),0 4px 12px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.08);
-  --scroll:rgba(255,255,255,.10);
+  --shadow-1:0 1px 2px rgba(0,0,0,.25);
+  --shadow-menu:0 2px 6px rgba(0,0,0,.35);
+  --shadow-pop:0 4px 12px rgba(0,0,0,.45),0 0 0 1px var(--border-strong);
+  --scroll:rgba(255,255,255,.16);
   --ok:#4AA651; --warn:#D4A20A; --danger:#FF6568; --info:#4390EE;
   --t-gray-fg:#A1A1AA;   --t-gray-bg:rgba(161,161,170,.10); --t-gray-bd:rgba(161,161,170,.20);
   --t-blue-fg:#5FA7FF;   --t-blue-bg:rgba(67,144,238,.13);  --t-blue-bd:rgba(67,144,238,.28);

@@ -96,7 +96,7 @@
         <div class="brand"><span class="brand-mark">${icon('cube')}</span><b class="grow clip">${esc(CFG.platformName)}</b><button class="btn icon sm ghost" id="btn-side" title="收起侧栏">${icon('sidebar')}</button></div>
         <div class="side-sc" id="side-sc"></div>
         <div class="side-foot">
-          <a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>
+          ${CFG.showDevPlan === true ? `<a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>` : ''}
           <button class="nav-i" id="btn-demo" data-op="shell.demo" title="把每个功能自动走一遍"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">约 3 分钟</span></button>
           <div class="me" id="btn-me" data-op="shell.me"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><div class="nm clip">${esc(S.me.name)}</div><div class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</div></span><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
         </div>
@@ -113,7 +113,7 @@
     const work = appsVisible('work').some((a) => a.id === S.active);
     const it = (k, ic, t, on, extra = '') => `<button class="rail-i ${on ? 'on' : ''}" ${k} title="${esc(t)}"><span class="ri">${ic}${extra}</span><span class="rt">${esc(t)}</span></button>`;
     const has = (id) => appsVisible('platform').some((a) => a.id === id);
-    const pending = S.inbox.length;
+    const pending = pendingCount();
     el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏">${icon('cube')}</button>
       ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !S.active || work)}
       ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
@@ -129,7 +129,7 @@
     renderRail();
     const el = $('#side-sc'); if (!el) return;
     const navApp = (a) => { const m = mf(a.id); return `<button class="nav-i ${S.active === a.id ? 'on' : ''}" data-app="${a.id}" data-op="nav.${a.id}" title="${esc(m.summary || m.name)}">${appIcon(a.id, 'sm')}<span class="t">${esc(m.name)}</span></button>`; };
-    const pending = S.inbox.length;
+    const pending = pendingCount();
     el.innerHTML = `
       <button class="nav-i entry" data-nav="chat" data-op="nav.chat" title="新对话">${icon('chat')}<span class="t">总控对话</span><span class="kbd">新</span></button>
       <button class="nav-i" data-nav="cmdk" data-op="nav.cmdk">${icon('search')}<span class="t">搜索与命令</span><span class="kbd">⌘K</span></button>
@@ -825,6 +825,8 @@
   }
 
   /* ---------------- 收件箱 ---------------- */
+  // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
+  function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
   async function refreshInbox() {
     try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
     try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }

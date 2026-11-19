@@ -34,7 +34,7 @@
 @keyframes cuPulse{50%{opacity:.3}}
 .app-computer .cu-vp{height:clamp(340px,50vh,480px);overflow:auto;background:var(--bg)}
 .app-computer .cu-shield{position:absolute;inset:36px 0 0;z-index:2;cursor:not-allowed}
-.app-computer .cu-cur{position:absolute;z-index:4;left:50%;top:50%;opacity:0;pointer-events:none;transition:left .55s var(--ease),top .55s var(--ease),opacity .2s;filter:drop-shadow(0 2px 6px rgba(0,0,0,.35))}
+.app-computer .cu-cur{position:absolute;z-index:4;left:50%;top:50%;opacity:0;pointer-events:none;transition:left .55s var(--ease),top .55s var(--ease),opacity .2s;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
 .app-computer .cu-cur span{position:absolute;left:18px;top:16px;padding:1px 6px;border-radius:5px;background:var(--t-amber-fg);color:var(--surface);font-size:11px;font-weight:var(--fw-b)}
 .app-computer .cu-rip{position:absolute;left:-10px;top:-10px;width:24px;height:24px;border-radius:50%;border:2px solid var(--t-amber-fg);animation:cuRip .5s ease-out forwards} @keyframes cuRip{to{transform:scale(2.2);opacity:0}}
 .app-computer .cu-bubble{position:absolute;z-index:3;left:var(--s3);bottom:var(--s3);max-width:70%;padding:6px 10px;border-radius:var(--r-md);background:var(--surface-3);box-shadow:var(--shadow-pop);font-size:var(--fs-xs);color:var(--text);opacity:0;transform:translateY(4px);transition:all .2s}
@@ -107,7 +107,7 @@
 /* 2.0：提示条中性底；“等你确认”用细色边 + 色相图标，不用色块 */
 .app-computer .callout[class*=" h-"]{background:var(--surface-2);border-color:var(--border)}
 .app-computer .cu-wait{background:var(--surface);border-color:var(--border-strong);box-shadow:var(--shadow-1)}
-.app-computer .cu-wait[data-op="computer.wait"]{border-color:var(--tb);box-shadow:0 0 0 3px var(--tg)}
+.app-computer .cu-wait[data-op="computer.wait"]{border-color:var(--tb);box-shadow:0 0 0 1px var(--tb)}
 .app-computer .cu-wait>.ico{color:var(--tf)}
 .app-computer .cu-wait b{font-weight:var(--fw-b)}
 .app-computer .cu-head h2,.app-computer .cu-sh h2{font-weight:var(--fw-m);letter-spacing:var(--track-tight)}

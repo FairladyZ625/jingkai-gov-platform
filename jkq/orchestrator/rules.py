@@ -35,10 +35,26 @@ RULES = (
 ENT_ARG = {"enterprise.get": "id"}
 KNOWLEDGE = re.compile(
     r"知识库.*(?:有没有|是否|哪些|什么|哪份|查到)|(?:查|找|看|有没有).*(?:知识库|原文)|原文|政策条款|什么政策|政策依据|"
-    r"(?:政策|补贴|补助|奖励|申报|办法|规定|通知).*(?:是[什么]|多少|哪些|多久|何时|什么时候|条件|截止|要求|如何|怎么|解读)|"
-    r"(?:查找|查询|找|哪些|有没有|关于|解读).*(?:政策|条款|实施方案)|"
-    r"(?:数据券|算力券|奖励|补贴).*\?|(?:三[个种]时间)"
+    r"三[个种]时间|"
+    r"(?:政策|补贴|补助|奖励|申报|办法|规定|通知|数据券|算力券|资格|认定|适用范围)"
+    r".*(?:什么|多少|哪些|多久|何时|条件|截止|要求|如何|怎么|解读|细则|标准|[?])|"
+    r"(?:查找|查询|查一下|找|哪些|有没有|关于|解读|解释|介绍|说明|怎么|如何|何时|什么时候|多少|什么)"
+    r".*(?:政策|条款|实施方案|数据券|算力券|补贴|奖励|申报|办法|规定)"
 )
+KB_ACTION = re.compile(r"(?:导入|上传|入库|发布|删除|移除|编辑|重命名|创建空间|打开知识库)")
+KB_ACTION_QUESTION = re.compile(r"(?:如何|怎么|为何|为什么|什么是|是否支持|需要什么|需要哪些)")
+KB_QUESTION = re.compile(r"^(?:请问|查|找|搜|帮我[查找搜])|(?:什么|哪[些个份]|能否|可以吗|有没有|怎么|如何|[?])$")
+KB_FOLLOWUP = re.compile(r"^(?:那|那么|这个|该|它|上述|刚才|还有)")
+
+
+def knowledge_query(text: str, *, within_kb: bool = False, followup: bool = False) -> ToolCall | None:
+    normalized = unicodedata.normalize("NFKC", text).strip().rstrip("。!")
+    if KB_ACTION.search(normalized) and not KB_ACTION_QUESTION.search(normalized):
+        return None
+    if (KNOWLEDGE.search(normalized) or (within_kb and KB_QUESTION.search(normalized))
+            or (followup and KB_FOLLOWUP.match(normalized) and KB_QUESTION.search(normalized))):
+        return ToolCall("kb.ask", {"q": text})
+    return None
 
 
 def match_rule(text: str) -> ToolCall | None:
@@ -52,6 +68,4 @@ def match_rule(text: str) -> ToolCall | None:
             if ent := groups.get("ent"):
                 args[ENT_ARG.get(rule.call.tool, "entId")] = ENTERPRISES[ent]
             return ToolCall(rule.call.tool, args)
-    if KNOWLEDGE.search(unicodedata.normalize("NFKC", text)):
-        return ToolCall("kb.ask", {"q": text})
-    return None
+    return knowledge_query(text)

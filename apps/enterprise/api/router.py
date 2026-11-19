@@ -6,7 +6,17 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
+from . import visit_tools, visits
+from .ledger import router as ledger_router
+from .reminders import register
+
 router = APIRouter()
+# 走访路由先于台账挂载：企业列表和详情由其补上最近走访与待确认建议。
+router.include_router(visits.router)
+router.include_router(ledger_router)
+router.include_router(visit_tools.router)
+# 诉求、提醒查询及每日扫描任务；任务与调度声明合入本入口模块。
+register(router, globals())
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:

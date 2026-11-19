@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -31,14 +32,21 @@ class ModelTurn:
     route_note: str | None = None
 
 
+DeltaSink = Callable[[str], Awaitable[None]]
+
+
 class ModelGateway(Protocol):
     async def __call__(
         self, request: Request, *, messages: list[dict], tools: list[str],
-        model: str | None, classification: str,
-    ) -> ModelTurn: ...
+        model: str | None, classification: str, on_delta: DeltaSink | None = None,
+    ) -> ModelTurn:
+        """on_delta 只接收可直接展示的最终文本。调用后不得返回工具调用或重放增量。"""
+        ...
 
 
 class ToolBridge(Protocol):
     def tools(self, user: User) -> dict: ...
 
-    async def call_from_chat(self, request: Request, app_id: str, tool: str, args: dict) -> dict: ...
+    async def call_from_chat(self, request: Request, app_id: str, tool: str, args: dict) -> dict:
+        """T16 对写工具检查 operate 和业务预检，持久化 Review 后返回 pending 与 reviewId。"""
+        ...

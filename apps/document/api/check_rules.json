@@ -1,0 +1,20 @@
+[
+  {"id":"missing-content","level":"error","kind":"缺要素","basis":"公文模板必填项","condition":"公文要素尚未填写","fields":["title","to","date","sign","paragraphs"],"pattern":"【待补(?:[：:][^】]*)?】"},
+  {"id":"missing-field","level":"error","kind":"缺要素","basis":"公文模板必填项","condition":"标题、成文日期或发文机关为空","fields":["title","date","sign"],"match":"blank"},
+  {"id":"missing-addressee","level":"error","kind":"缺要素","basis":"公文模板主送机关","condition":"通知或函应填写主送机关","fields":["to"],"kinds":["通知","函"],"match":"blank"},
+  {"id":"missing-body","level":"error","kind":"缺要素","basis":"公文模板正文","condition":"公文正文为空","fields":["body"],"match":"blank"},
+  {"id":"notice-title","level":"error","kind":"文种要素","basis":"通知模板标题","condition":"通知标题应以“通知”结尾","fields":["title"],"kinds":["通知"],"pattern":"(?s)^(?!.*通知\\s*$).+"},
+  {"id":"public-title","level":"error","kind":"文种要素","basis":"公示模板标题","condition":"公示标题应以“公示”结尾","fields":["title"],"kinds":["公示"],"pattern":"(?s)^(?!.*公示\\s*$).+"},
+  {"id":"recommendation-title","level":"error","kind":"文种要素","basis":"拟推荐结果公示模板","condition":"拟推荐结果应在标题中标明“拟”","fields":["title"],"templates":["T08"],"pattern":"(?s)^(?!.*拟).+"},
+  {"id":"missing-number","level":"warn","kind":"文号","basis":"公文发文字号","condition":"发文字号待补，请按实际编发编号填写","fields":["docNo"],"match":"missing-number"},
+  {"id":"number-format","level":"warn","kind":"文号","basis":"GB/T 9704—2012 §7.2.5","condition":"发文字号应为机关代字、六角括号年份和发文顺序号","fields":["docNo"],"match":"number-format"},
+  {"id":"date-format","level":"warn","kind":"日期格式","basis":"公文日期书写约定","condition":"日期应写为“YYYY年M月D日”","fields":["date","paragraphs"],"match":"date-format"},
+  {"id":"invalid-date","level":"error","kind":"日期","basis":"公历日期","condition":"日期无效，请核对实际年月日","fields":["date","paragraphs"],"match":"invalid-date"},
+  {"id":"deadline-order","level":"error","kind":"日期先后","basis":"申报期限调整通知模板","condition":"新截止日须晚于原截止日与成文日期","fields":["paragraphs"],"templates":["T06"],"match":"deadline-order"},
+  {"id":"duplicate-de","level":"warn","kind":"错别字","basis":"公文用语校对","condition":"疑似重复写了“的”","fields":["paragraphs"],"pattern":"的{2,}","replacement":"的"},
+  {"id":"duplicate-apply","level":"warn","kind":"错别字","basis":"公文用语校对","condition":"疑似重复写了“申报”","fields":["paragraphs"],"pattern":"(?:申报){2,}","replacement":"申报"},
+  {"id":"deadline-typo","level":"warn","kind":"错别字","basis":"公文用语校对","condition":"“载止”疑似为“截止”","fields":["paragraphs"],"pattern":"载止","replacement":"截止"},
+  {"id":"expired-policy","level":"error","kind":"政策引用","basis":"知识库政策效力与有效期","condition":"引用的政策已失效，请核对可用依据","fields":["refs"],"match":"expired-policy"},
+  {"id":"unverified-policy","level":"warn","kind":"政策引用","basis":"知识库政策引用","condition":"暂时无法核实引用来源，请人工核对","fields":["refs"],"match":"unverified-policy"},
+  {"id":"language","level":"info","kind":"语体","basis":"公文语体检查","condition":"检查正文中的错别字、明显病句和不符合公文语体的用词","fields":["paragraphs"],"match":"language"}
+]

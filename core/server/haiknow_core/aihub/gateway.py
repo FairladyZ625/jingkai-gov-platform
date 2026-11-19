@@ -214,6 +214,8 @@ class Gateway:
     def call(self, app_id, capability, payload, timeout=50, *, override_model=None, legacy=False, principal=None,
              _stream=None):
         decoded_audio = self._validate(capability, payload, timeout)
+        if capability == 'chat' and isinstance(payload, streaming.ChatRequest):
+            _stream = payload.events
         classification = None
         if capability in OUTBOUND_CAPABILITIES:
             classification = payload.get('classification') or DEFAULT_CLASSIFICATION
@@ -470,11 +472,20 @@ class Gateway:
     async def _invoke(self, provider, model, capability, payload, file, timeout, deadline, decoded_audio=None, stream=None):
         if capability not in CAPABILITY_SUPPORT[provider['kind']]:
             raise AIError('provider_error', f'服务商 {provider["id"]} 不支持能力 {capability}。')
+        if capability == 'chat' and isinstance(payload, streaming.ChatRequest):
+            if stream is not None:
+                return await streaming.chat_events(provider, model, payload, timeout, stream)
+            if provider['kind'] == 'mock':
+                return streaming.chat_message(streaming.mock_message(provider))
         if stream is not None:
             return await streaming.request(provider, model, payload, timeout, stream)
         if provider['kind'] == 'mock':
             return self._mock(provider, capability, payload, file, model)
         if provider['kind'] == 'codex-cli':
+            if isinstance(payload, streaming.ChatRequest):
+                if payload.get('tools'):
+                    raise AIError('provider_error', '当前服务商不支持工具调用。')
+                return streaming.chat_message({'content': await codex.chat(model, payload)})
             return await codex.chat(model, payload)
         if capability == 'parse':
             return await adapters.mineru_parse(provider, model, file, timeout, deadline)
@@ -513,7 +524,10 @@ class Gateway:
                     return {'audio_base64': base64.b64encode(response.content).decode()}
                 result = response.json()
                 if capability == 'chat':
-                    content = result['choices'][0]['message']['content']
+                    message = result['choices'][0]['message']
+                    if isinstance(payload, streaming.ChatRequest):
+                        return streaming.chat_message(message)
+                    content = message['content']
                     if not isinstance(content, str):
                         raise TypeError('响应格式错误')
                     return content
@@ -539,7 +553,7 @@ class Gateway:
 
     def _mock(self, provider, capability, payload, file, model):
         if capability == 'chat':
-            return '[模拟模型] 已收到输入。'
+            return streaming.MOCK_CONTENT
         if capability == 'image':
             return [{'url': 'mock://' + provider['id']}]
         if capability == 'transcribe':

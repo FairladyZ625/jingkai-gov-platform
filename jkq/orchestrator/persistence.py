@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from jkq.conversations.store import ConversationStore, encode, now
 
+from .classification import strictest
+
 
 @dataclass(frozen=True)
 class PendingTurn:
@@ -20,17 +22,28 @@ def _new_message(role: str, content: str, at: str, **metadata) -> dict:
                 cards=[], citations=[], toolCalls=[], **metadata)
 
 
-def start_turn(store: ConversationStore, owner: str, cid: str, text: str, files: list[dict]) -> PendingTurn:
+def start_turn(
+    store: ConversationStore, owner: str, cid: str, text: str, files: list[dict],
+    *, app: str | None = None, app_classes: dict | None = None, classification: str | None = None,
+) -> PendingTurn:
     with store.transaction(write=True):
-        store._owned(owner, cid)
+        conversation = store._owned(owner, cid)
         rows = store.db.execute(
             "select document from jkq_messages where conversation_id=? order by seq desc limit 20",
             (cid,),
         ).fetchall()
         history = [json.loads(document) for (document,) in reversed(rows)]
+        app_classes = app_classes or {}
+        apps = (app_classes.get(app_id) for app_id in {app, conversation["app"]} if app_id is not None)
+        prior = (
+            "confidential" if message.get("toolCalls") or message.get("files") else message.get("classification")
+            for message in history if not message.get("incomplete")
+        )
+        # 附件引用由客户端提交，未从可信附件存储核验前按机密处理。
+        effective = strictest(classification, *apps, *prior, *(["confidential"] if files else []))
         at = now()
-        user = _new_message("user", text, at, files=files)
-        assistant = _new_message("assistant", "", at, incomplete=True)
+        user = _new_message("user", text, at, files=files, classification=effective)
+        assistant = _new_message("assistant", "", at, incomplete=True, classification=effective)
         for message in (user, assistant):
             inserted = store.db.execute(
                 "insert into jkq_messages(conversation_id, document) values (?,?)",
@@ -41,11 +54,22 @@ def start_turn(store: ConversationStore, owner: str, cid: str, text: str, files:
         return PendingTurn(user, assistant, inserted.lastrowid, history)
 
 
-def finish_turn(store: ConversationStore, owner: str, cid: str, turn: PendingTurn, fields: dict) -> dict:
+def completed_reply(store: ConversationStore, owner: str, cid: str, turn: PendingTurn, fields: dict) -> dict:
+    message = {**turn.assistant, **fields, "incomplete": False}
+    if message["toolCalls"]:
+        message["classification"] = "confidential"
+    with store.transaction():
+        conversation = store._owned(owner, cid)
+    return {"conversation": {**conversation, "updated": now()}, "user": turn.user, "reply": message}
+
+
+def finish_turn(
+    store: ConversationStore, owner: str, cid: str, turn: PendingTurn, payload: dict,
+) -> None:
     """补全当前请求的占位回复，完整正文、卡片和引用一次提交。"""
     with store.transaction(write=True):
         store._owned(owner, cid)
-        message = {**turn.assistant, **fields, "incomplete": False}
+        message = payload["reply"]
         changed = store.db.execute(
             """update jkq_messages set document=?
                where seq=? and conversation_id=? and json_extract(document, '$.id')=?
@@ -54,6 +78,6 @@ def finish_turn(store: ConversationStore, owner: str, cid: str, turn: PendingTur
         )
         if changed.rowcount != 1:
             raise RuntimeError("待完成的会话回复不存在")
-        store.db.execute("update jkq_conversations set updated=? where id=?", (now(), cid))
+        store.db.execute("update jkq_conversations set updated=max(updated, ?) where id=?",
+                         (payload["conversation"]["updated"], cid))
         store._audit(owner, cid, "message.complete", messageId=message["id"], model=message["model"])
-        return {"conversation": store._owned(owner, cid), "user": turn.user, "reply": message}

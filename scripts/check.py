@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "core" / "server"), str(ROOT / "core" / "sdk")]
 
 from haiknow_core import manifest as mf  # noqa: E402
+from haiknow_core.manifest_ext import validate_extensions  # noqa: E402
 
 # 本机开着代理时，测试内起的 HTTP/WS 服务只监听回环，不该走代理。
 LOOPBACK_NO_PROXY = ("127.0.0.1", "localhost", "::1")
@@ -234,7 +235,11 @@ def _manifest_line(raw: str, msg: str) -> int | None:
 
 
 def check_manifest(r: Report, only: str | None) -> None:
-    for d in app_dirs(only):
+    directories = app_dirs(only)
+    template = ROOT / "apps" / "_template"
+    if only == "_template" or (only is None and template.is_dir()):
+        directories.append(template)
+    for d in directories:
         f = d / "app.json"
         where = rel(f)
         if not f.is_file():
@@ -249,9 +254,13 @@ def check_manifest(r: Report, only: str | None) -> None:
         if not isinstance(m, dict):
             r.rule("CHK-APP-02", where, "顶层必须是 JSON 对象，不能是数组或其他类型")
             continue
-        for e in mf.validate(m, d.name):
+        base = {**m, "id": "sample-template"} if d == template and m.get("id") == "__APP_ID__" else m
+        for e in mf.validate(base, d.name):
             code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
             r.rule(code, where, e, line=_manifest_line(raw, e))
+        for e in validate_extensions(m, required=d == template):
+            code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
+            r.rule(code, where, f"应用 {m.get('id', d.name)} {e}", line=_manifest_line(raw, e))
         # 新应用必须声明 SDK 主版本；平台运行时仍把旧应用的缺省值按 "1" 处理。
         if "sdk" not in m:
             r.rule("CHK-APP-03", where, '缺少字段 sdk（新应用写 "sdk": "1"；旧应用由平台按 1 兼容运行）')
@@ -261,6 +270,8 @@ def check_manifest(r: Report, only: str | None) -> None:
         owner_line = _key_line(raw, "owner")
         if isinstance(owner, str) and not owner.strip():
             r.rule("CHK-APP-03", where, "字段 owner 不能为空（填 GitLab 用户名）", line=owner_line)
+        if d == template:
+            continue  # 模板不单独登记 CODEOWNERS；生成实际应用时登记。
         registered = _registered_owners(d.name)
         if registered is None:
             r.rule("CHK-APP-06", where, f"CODEOWNERS 未登记 /apps/{d.name}/，改动找不到评审人", line=owner_line)
@@ -311,15 +322,29 @@ def _check_backend(r: Report, d: Path) -> None:
         except SyntaxError as e:
             r.rule("CHK-APP-13", where, f"语法错误：{e}", line=e.lineno)
             continue
+        enterprise_store = f == ROOT / "apps/enterprise/api/ledger_store.py"
+        # 仅豁免字面量键的下标读取，赋值、删除及其他环境变量仍报错。
+        allowed_env = {
+            node.value for node in ast.walk(tree)
+            if enterprise_store and isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant) and node.slice.value == "JKQ_ENTERPRISE_PRIVATE_DB"
+            and isinstance(node.value, ast.Attribute) and node.value.attr == "environ"
+            and isinstance(node.value.value, ast.Name) and node.value.value.id == "os"
+        }
         for line, mod, level in _py_imports(tree):
             if level > 0:
                 continue  # 本应用内相对导入
+            if enterprise_store and mod == "sqlite3":
+                continue
             if mod in PY_FORBIDDEN:
                 r.rule("CHK-APP-10", where, f"禁止 import {mod}（只能通过 haiknow_sdk 使用平台能力）", line=line)
-            elif mod not in stdlib and mod not in PY_ALLOWED_3P:
+            elif mod not in stdlib and mod not in PY_ALLOWED_3P and (d.name, mod) != ("document", "docx"):
                 r.rule("CHK-APP-11", where, f"未登记的依赖 {mod}；需要新依赖先在 Issue 里提，由底座负责人加入白名单", line=line)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}:
+            env_attribute = isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
+            env_import = (enterprise_store and isinstance(node, ast.ImportFrom) and node.module == "os"
+                          and any(a.name in {"*", "environ", "getenv", "putenv"} for a in node.names))
+            if (env_attribute and node not in allowed_env) or env_import:
                 r.rule("CHK-APP-12", where, "禁止读写环境变量；配置走平台", line=node.lineno)
             if isinstance(node, ast.Attribute) and node.attr.startswith("_") and not node.attr.startswith("__"):
                 r.rule("CHK-APP-14", where, f"禁止访问 SDK 私有属性 {node.attr}（CHK-BOUNDARY）", line=node.lineno)

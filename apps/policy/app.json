@@ -42,7 +42,7 @@
       "input": {
         "entId": "string"
       },
-      "endpoint": "POST /api/apps/policy/tools/match"
+      "endpoint": "POST /api/apps/policy/match"
     },
     {
       "name": "policy.calc",
@@ -71,7 +71,7 @@
       "input": {
         "q": "string"
       },
-      "endpoint": "GET /api/apps/policy/tools/search"
+      "endpoint": "GET /api/apps/policy/items"
     }
   ],
   "intents": [

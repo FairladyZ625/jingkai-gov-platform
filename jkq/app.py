@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match, Mount, get_route_path
 
+from .app_catalogs import install as install_app_catalogs
 from .compat import Compatibility, install_error_handlers
 from .projects import load_project_seed, restore_empty_projects
 from .settings import REPO_ROOT, core_environment, required_environment, web_directory
@@ -31,12 +32,37 @@ def install_platform(app: FastAPI) -> None:
 
     from apps.policy import instance as policy
 
-    from . import jobs_api, reviews_api
+    from . import admin, apps_bridge, jobs_api, reviews_api
+    from .skills.storage import Skills
     from .conversations import routes as conversations
+    from .kb import ask as kb_ask
+    from .operator import routes as operator
+    from .orchestrator import routes as orchestrator
 
     app.state.conversations = conversations.install(app, app.state.platform, current_user)
+    orchestrator.install(app, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    operator.install(app, current_user)
+    kb_ask.install(app, app.state.platform, current_user)
+    skills = Skills(app.state.platform)
+
+    def list_skills(user):
+        if "view" not in app.state.platform.rbac.actions(user, "skills"):
+            return []
+        return [
+            skills.view(user, doc, history=False)
+            for doc in skills.records.list_records(user, "skills")["items"]
+            if not doc["data"]["deleted"] and skills.access(user, doc["data"])[0]
+        ]
+
+    apps_bridge.install(app, current_user, list_skills=list_skills, register_catalog=False)
+    admin.install(app)
+    if "document" in app.state.platform.data.apps:
+        # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。
+        from apps.document.instance import install as install_document
+
+        install_document(app)
     policy.install(app, current_user)
 
 
@@ -52,6 +78,7 @@ def create_app() -> FastAPI:
         from .routers import register_routes
 
         app = create_core_app(root)
+        install_app_catalogs(app)
         restore_empty_projects(app.state.platform.store, seed)
         register_routes(app)
         install_auth(app)
