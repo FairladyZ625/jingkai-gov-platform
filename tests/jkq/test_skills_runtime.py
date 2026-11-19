@@ -721,6 +721,8 @@ def test_instance_skill_local_failure_routes_by_selection(instance, operation, m
     options = {item["id"]: item for item in api.get(f"{ROOT}/meta/options").json()["models"]}
     assert options["local"]["local"] and options["acceptance-local"]["local"]
     assert not options["auto"]["local"] and not options["cloud"]["local"]
+    assert all(not options[value].get("disabled", False)
+               for value in ("local", "acceptance-local", "auto", "cloud", "acceptance-cloud"))
     calls = []
     marker = "合成技能输入，仅用于离线验证"
 
@@ -763,7 +765,11 @@ def test_instance_explicit_unapproved_local_skill_has_no_transport(instance):
     api, sign_in = instance
     sign_in()
     options = {item["id"]: item for item in api.get(f"{ROOT}/meta/options").json()["models"]}
-    assert not options["local"]["local"]
+    for value in ("local", "acceptance-local"):
+        assert options[value]["disabled"] and not options[value]["local"]
+        assert "审批" in options[value]["disabledReason"]
+    assert all(not options[value].get("disabled", False)
+               for value in ("auto", "cloud", "acceptance-cloud"))
     calls = []
 
     def record(request):

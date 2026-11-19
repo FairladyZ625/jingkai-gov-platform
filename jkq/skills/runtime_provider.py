@@ -47,12 +47,17 @@ def editor_options(app, user):
         if model_id == "auto":
             options["models"].append({"id": model_id, "name": name, "local": False})
         elif item["enabled"] and provider["kind"] != "mock":
-            local = _approved_local(service.models[model_id], provider)
-            options["models"].append({"id": model_id, "name": name, "local": local})
+            definition = service.models[model_id]
+            local = _approved_local(definition, provider)
+            # 保留已有规格按 ID 或名称回显的能力；禁用状态与显式调用的端点准入共用判据。
+            flags = {"local": local}
+            if definition.group == "本地部署" and not local:
+                flags.update(disabled=True, disabledReason="本地端点尚未获准，请先配置机密数据审批地址")
+            options["models"].append({"id": model_id, "name": name, **flags})
             # 模型名称别名必须能在现有双引号 value 属性中原样往返。
             if (name not in service.models and service._sdk_model_id(name) == model_id
                     and name.isprintable() and not any(char in name for char in '&"<>')):
-                options["models"].append({"id": name, "name": f"{name}（按模型名称）", "local": local})
+                options["models"].append({"id": name, "name": f"{name}（按模型名称）", **flags})
     return options
 
 
