@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import secrets
 import socket
@@ -66,11 +67,20 @@ def server(tmp_path_factory, request):
             with (site_dir / "config/app.config.js").open("a") as script:
                 script.write("\nwindow.JK_CONFIG.demoAccounts.forEach(a => a.password = " +
                              json.dumps(password) + ");\n")
-        from jkq.kb.importer.public_url import PublicPage, PublicURLReader
+        from jkq.kb.importer.public_url import PublicPage, PublicURLError, PublicURLReader
+
+        # 演示不出外网：接口验收用的虚构网址和知识库段的官网样例网址都由本地快照应答。
+        kb_config = (ROOT / "prototype/v4/apps/kb/config.js").read_text(encoding="utf-8")
+        sample_url = re.search(r"sampleUrl:\s*'([^']+)'", kb_config)[1]
+        pages = {
+            "https://example.invalid/demo-notice": ("演示导入通知", "第一条 演示材料已受理。"),
+            sample_url: ("数据券申报延期通知（演示快照）", "第一条 数据券申报期限延长，演示快照不访问外网。"),
+        }
 
         async def read_fixture(reader, url):
-            assert url == "https://example.invalid/demo-notice"
-            return PublicPage(url, "演示导入通知", "第一条 演示材料已受理。")
+            if url not in pages:
+                raise PublicURLError(502, "URL_FETCH_FAILED", "演示环境不访问外网，请改用粘贴正文")
+            return PublicPage(url, *pages[url])
 
         env.setattr(PublicURLReader, "read", read_fixture)
         app = create_app()
