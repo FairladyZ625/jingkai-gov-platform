@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from fastapi import Request
+from haiknow_core.aihub.gateway import allowed_outbound
 from haiknow_core.stability import AppUnavailable
 from haiknow_sdk import DataError, PermissionDenied
 from haiknow_sdk.ai import AIError
@@ -12,7 +13,7 @@ from starlette.responses import Response
 from jkq.kb.ask import BEIJING, ask, with_current_status
 from jkq.kb.docs import KbError
 from jkq.kb.search import search, tokens
-from jkq.kb.spaces import visible_spaces
+from jkq.kb.spaces import NAMES, visible_spaces
 
 from .spec import SkillError, invalid
 
@@ -25,6 +26,28 @@ MODEL_ERRORS = {
     "not_configured": (503, "NOT_CONFIGURED", "技能缺少已启用的真实模型"),
     "timeout": (504, "TIMEOUT", "技能模型调用超时"),
 }
+
+
+def editor_options(app, user):
+    spaces = ()
+    if "view" in app.state.platform.rbac.actions(user, "kb"):
+        spaces = visible_spaces(user)
+    # 原型将选项文字用作 value，已有规格同时使用展示名和空间 ID。
+    options = {"spaces": [NAMES[space] for space in spaces] + list(spaces), "models": []}
+    service = app.state.jkq_models
+    for model_id, item in service.items().items():
+        name = item["name"]
+        provider = service.providers.get(model_id)
+        if model_id == "auto":
+            options["models"].append({"id": model_id, "name": name, "local": False})
+        elif item["enabled"] and provider["kind"] != "mock":
+            local = allowed_outbound(provider, "confidential")
+            options["models"].append({"id": model_id, "name": name, "local": local})
+            # 模型名称别名必须能在现有双引号 value 属性中原样往返。
+            if (name not in service.models and service._sdk_model_id(name) == model_id
+                    and name.isprintable() and not any(char in name for char in '&"<>')):
+                options["models"].append({"id": name, "name": f"{name}（按模型名称）", "local": local})
+    return options
 
 
 def policy_match(ctx, args):
@@ -124,8 +147,9 @@ class SkillProvider:
         try:
             if service is None:
                 raise AIError("not_configured", "")
+            model_id = service._sdk_model_id(None if model == "auto" else model)
             result, _ = service.call(user, {"messages": messages, "classification": classification},
-                                     model=None if model == "auto" else model, app_id="skills")
+                                     model=model_id, app_id="skills")
             result_body = result["result"]
             if result_body["mock"]:
                 raise AIError("not_configured", "")

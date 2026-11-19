@@ -618,6 +618,97 @@ def test_instance_draft_consumes_verified_knowledge_and_validates_model_json(ins
     error(api.post(f"{ROOT}/draft", json={"text": "💡"}), 502, "INVALID_SKILL_DRAFT")
 
 
+def test_instance_editor_options_follow_kb_permissions(instance):
+    api, sign_in = instance
+    path = f"{ROOT}/meta/options"
+    error(api.get(path), 401, "UNAUTHENTICATED")
+    sign_in("hejun")
+    options = api.get(path).json()
+    assert set(options["spaces"]) == {"政策库", "policy"}
+    models = {item["id"]: item for item in options["models"]}
+    assert {"auto", "local", "acceptance-local"} <= models.keys()
+    assert models["local"]["local"] and not models["auto"]["local"]
+    assert "cloud" not in models
+    sign_in()
+    assert {"政策库", "policy", "会议纪要", "minutes", "企业档案", "enterprise"} <= set(api.get(path).json()["spaces"])
+    store = api.app.state.platform.store
+    with store._lock, store._db as db:
+        db.execute("delete from role_grants where role_id='member' and app_id='kb'")
+    assert api.get(path).json()["spaces"] == []
+
+
+@pytest.mark.parametrize(("space", "model"), [("政策库", "local"), ("policy", "acceptance-local")])
+def test_instance_draft_editor_save_and_trial_after_tool_swap(instance, space, model):
+    api, sign_in = instance
+    sign_in()
+    skill = {
+        "name": "政策与业务工具", "summary": "整理公开资料", "questions": [],
+        "spec": {"kb": [space], "model": model, "tools": ["meeting.list"],
+                 "inputs": [{"key": "ent", "label": "企业", "type": "enterprise", "required": True}],
+                 "steps": [{"type": "kb", "space": space, "query": PUBLIC_QUERY},
+                           {"type": "model"}, {"type": "tool", "tool": "meeting.list", "args": {}}]},
+    }
+    calls = model_transport(api, lambda payload: "公开政策与业务结果" if "prior" in payload else json.dumps(skill))
+    # 无有效检索词时，起草直接使用无知识库答复，试运行仍查公开材料。
+    response = api.post(f"{ROOT}/draft", json={"text": "💡"})
+    assert response.status_code == 200, response.text
+    drafted = response.json()["draft"]
+    assert "tools" not in drafted["spec"]
+    options = api.get(f"{ROOT}/meta/options").json()
+    spec = drafted["spec"]
+    # 编辑器以完全相同的 value 选中原值，再按向导的 autosave 和 trial 请求提交。
+    spec["steps"][0]["space"] = next(value for value in options["spaces"] if value == spec["steps"][0]["space"])
+    spec["kb"] = [value for value in options["spaces"] if value in spec["kb"]]
+    spec["model"] = next(option["id"] for option in options["models"] if option["id"] == spec["model"])
+    replacement = next(tool for tool in options["tools"] if tool["id"] == "policy.match")
+    spec["steps"][-1].update(tool=replacement["id"], label=replacement["label"], args={"entId": "{{ent}}"})
+    inputs = {"ent": "E002"}
+    sid = create(api, {key: drafted[key] for key in ("name", "summary", "icon", "base", "spec")})
+    saved = api.patch(f"{ROOT}/{sid}", json={key: drafted[key] for key in ("name", "summary", "icon", "spec")})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["item"]["spec"] == spec
+    before = api.get(ROOT).json()["items"]
+    for path, body in ((f"{ROOT}/{sid}/run", {"inputs": inputs}),
+                       (f"{ROOT}/trial", {"skill": {"name": drafted["name"], "spec": spec}, "inputs": inputs})):
+        accepted = api.post(path, json=body)
+        assert accepted.status_code == 202, accepted.text
+        job = poll(api, accepted.json()["job"]["id"])
+        assert [step["status"] for step in job["steps"]] == ["done", "done", "done"]
+        assert job["result"]["citations"][0]["id"] == PUBLIC_SOURCE
+        assert job["result"]["model"] == "acceptance-local"
+        assert replacement["label"] in job["result"]["markdown"]
+    assert api.get(ROOT).json()["items"] == before
+    assert len(calls) == 3
+
+    # 显式提交不一致名单仍受原约束，模型返回同样的失配也不能成为草稿。
+    inconsistent = {"name": drafted["name"], "spec": {**spec, "tools": ["meeting.list"]}}
+    error(api.post(f"{ROOT}/trial", json={"skill": inconsistent, "inputs": inputs}), 403, "TOOL_NOT_ALLOWED")
+    bad_sid = create(api, inconsistent)
+    error(api.post(f"{ROOT}/{bad_sid}/run", json={"inputs": inputs}), 403, "TOOL_NOT_ALLOWED")
+    assert len(calls) == 3
+    model_transport(api, lambda payload: json.dumps({**skill, "spec": inconsistent["spec"]}))
+    error(api.post(f"{ROOT}/draft", json={"text": "💡"}), 502, "INVALID_SKILL_DRAFT")
+
+
+@pytest.mark.parametrize("model", ["local", "acceptance-local", "auto", "unknown-acceptance"])
+def test_instance_resolves_existing_skill_model_for_run_and_trial(instance, model):
+    api, sign_in = instance
+    sign_in()
+    calls = model_transport(api, lambda payload: "模型路由回执")
+    skill = {"name": "模型选择", "spec": {"model": model, "steps": [{"type": "model"}]}}
+    sid = create(api, skill)
+    known = model != "unknown-acceptance"
+    for path, body in ((f"{ROOT}/{sid}/run", {}), (f"{ROOT}/trial", {"skill": skill})):
+        accepted = api.post(path, json=body)
+        assert accepted.status_code == 202, accepted.text
+        job = poll(api, accepted.json()["job"]["id"], expected="done" if known else "failed")
+        if known:
+            assert job["result"]["model"] == "acceptance-local"
+        else:
+            assert job["errorCode"] == "NOT_FOUND" and job["result"] is None
+    assert len(calls) == (2 if known else 0)
+
+
 def test_instance_permissions_skip_and_unavailable_are_distinct(instance):
     api, sign_in = instance
     sign_in("hejun")
@@ -733,7 +824,8 @@ def test_instance_confidential_kb_outside_enterprise_space_stays_confidential(in
 
 
 @pytest.mark.parametrize("instance", ["cloud"], indirect=True)
-def test_cloud_only_confidential_skill_paths_never_call_transport(instance):
+@pytest.mark.parametrize("model", ["auto", "acceptance-cloud"])
+def test_cloud_only_confidential_skill_paths_never_call_transport(instance, model):
     import httpx
 
     api, sign_in = instance
@@ -760,7 +852,7 @@ def test_cloud_only_confidential_skill_paths_never_call_transport(instance):
         "space": "minutes", "classification": "confidential",
     })
     assert imported.status_code == 200, imported.text
-    skill = {"name": "整理合成纪要", "spec": {"steps": [
+    skill = {"name": "整理合成纪要", "spec": {"model": model, "steps": [
         {"type": "kb", "space": "minutes", "query": marker}, {"type": "model"},
     ]}}
     for path, body in ((f"{ROOT}/{create(api, skill)}/run", {}), (f"{ROOT}/trial", {"skill": skill})):

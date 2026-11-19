@@ -29,6 +29,9 @@ def draft(provider, user, text):
     draft = provider.draft(user, DRAFT_PROMPT, text, answer)
     try:
         skill = prepare_skill(draft)
+        # 先校验模型的显式名单，再按编辑器使用的步骤声明格式返回。
+        if skill["spec"].pop("tools", None) is not None:
+            skill = prepare_skill(skill)
         summary, questions = draft.get("summary"), draft.get("questions")
         if not isinstance(summary, str) or not isinstance(questions, list) or not all(
             isinstance(question, str) for question in questions
