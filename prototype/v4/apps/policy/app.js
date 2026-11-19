@@ -132,7 +132,10 @@
       }
 
       /* ---------- 第 2 步：核对条件 ---------- */
-      function who() { const e = ent(); return S.mode === 'ent' && e ? e.short : `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`; }
+      function who() {
+        if (S.mode === 'ent') return ent()?.short || (S.entId ? `企业 ${S.entId}` : '未选择企业');
+        return `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`;
+      }
       function step1() {
         const r = S.match; if (!r) { $('#ps').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>'; foot(back(), ''); return; }
         const sm = r.summary; const L = C.levels;
@@ -376,8 +379,9 @@
       }
       async function copyNotice() { try { await navigator.clipboard.writeText(S.notice); } catch (e) { /* file:// 下可能无权限 */ } ui.toast('告知单已复制'); }
       function toDocument() {
-        const e = ent(); const ids = chosen().map((x) => x.id);
-        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: e ? e.id : '', policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
+        const entId = S.mode === 'ent' ? S.entId || '' : '';
+        const ids = chosen().map((x) => x.id);
+        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: entId, policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
       }
       async function logIssue() {
         const e = ent(); if (!e) return;

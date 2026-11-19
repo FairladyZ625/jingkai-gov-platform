@@ -221,6 +221,51 @@ test('首次恢复匹配失败后再次返回仍保留告知单和手填房租',
   await expect(total).toHaveText(/5000\s*元/);
 });
 
+async function failNextPolicyEnterpriseList(page) {
+  await page.evaluate(() => {
+    const list = JKApi.enterprise.list;
+    JKApi.enterprise.list = async (params) => {
+      if (params?.sort !== 'name') return list(params);
+      JKApi.enterprise.list = list;
+      throw new Error('企业台账暂不可用');
+    };
+  });
+}
+
+test('首次恢复时台账列表失败，仍能将绑定企业交给公文', async ({ page, context }) => {
+  await context.setOffline(true);
+  const { other, saved } = await openPolicyConversation(page);
+  await editRent(page);
+  await op(page, 'policy.to-notice').click();
+  await expect(page.locator('#pn')).toHaveValue(/5000\s*元/);
+  await other.click();
+  await failNextPolicyEnterpriseList(page);
+  await saved.click();
+  await expect(page.locator('#pn')).toHaveValue(/5000\s*元/);
+  await op(page, 'policy.step-1').click();
+  // 仍在第一次恢复：台账名未能载入，但已选企业不能退为泛称。
+  await expect(page.locator('#ps .q')).toContainText('E001');
+  await op(page, 'policy.next').click();
+  await op(page, 'policy.to-notice').click();
+  await op(page, 'policy.to-doc').click();
+  await expect(op(page, 'document.in-ent')).toHaveValue('E001');
+});
+
+test('从台账切为手动画像后转公文，企业字段保持未选择', async ({ page, context }) => {
+  await context.setOffline(true);
+  await openPolicyConversation(page);
+  await op(page, 'policy.step-0').click();
+  await op(page, 'policy.mode-manual').click();
+  await op(page, 'policy.mtag-实体书店').click();
+  await op(page, 'policy.go').click();
+  await editRent(page);
+  await op(page, 'policy.to-notice').click();
+  await op(page, 'policy.to-doc').click();
+  const enterprise = op(page, 'document.in-ent');
+  await expect(enterprise.locator('option[value="E001"]')).toHaveCount(1);
+  await expect(enterprise).toHaveValue('');
+});
+
 test('台账列表短暂失败后再次往返仍保留企业、草稿和房租', async ({ page, context }) => {
   await context.setOffline(true);
   const { other, saved } = await openPolicyConversation(page);
@@ -230,14 +275,7 @@ test('台账列表短暂失败后再次往返仍保留企业、草稿和房租',
   await expect(notice).toHaveValue(/5000\s*元/);
   const draft = (await notice.inputValue()) + '\n备注：房租已复核';
   await other.click();
-  await page.evaluate(() => {
-    const list = JKApi.enterprise.list;
-    JKApi.enterprise.list = async (params) => {
-      if (params?.sort !== 'name') return list(params);
-      JKApi.enterprise.list = list;
-      throw new Error('企业台账暂不可用');
-    };
-  });
+  await failNextPolicyEnterpriseList(page);
   await holdNextPolicyResponse(page, 'calc', 'PI-03');
   await saved.click();
   await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
