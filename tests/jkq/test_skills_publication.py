@@ -369,6 +369,7 @@ def test_concurrent_votes_keep_both_users(api):
 
 def test_create_app_inbox_keeps_zone_publish_review(isolated_platform, cheap_password_hash, monkeypatch):
     """经 jkq.app.create_app 的真实安装顺序：王敏发布全区技能后，李阳收件箱能看到并审签。"""
+    pytest.importorskip("fastapi")
     import secrets
     from pathlib import Path
 
