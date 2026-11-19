@@ -68,8 +68,20 @@ class MemoryReviewSink:
         return self.items.get(id)
 
 
+@pytest.fixture(scope="session")
+def generated_app(tmp_path_factory):
+    # 运行真实脚手架，保留 staff-tools 的清单和业务路由原样。
+    generated = tmp_path_factory.mktemp("generated")
+    shutil.copytree(ROOT / "apps/_template", generated / "apps/_template")
+    subprocess.run([
+        sys.executable, str(ROOT / "scripts/new_app.py"), "staff-tools", "样例应用",
+        "--owner", "fixture-owner", "--root", str(generated),
+    ], check=True, capture_output=True)
+    return generated / "apps/staff-tools"
+
+
 @pytest.fixture
-def api(make_client, isolated_platform):
+def api(make_client, isolated_platform, generated_app):
     config, apps = isolated_platform
     users_path = config / "users.yaml"
     users = json.loads(users_path.read_text(encoding="utf-8"))
@@ -77,21 +89,20 @@ def api(make_client, isolated_platform):
         "id": "partner", "name": "样例协作者", "roles": ["partner"], "projects": ["sample-project"],
     })
     users_path.write_text(json.dumps(users), encoding="utf-8")
-    for app_id in (APP, "staff-tools"):
-        target = apps / app_id
-        shutil.copytree(ROOT / "apps/_template", target, ignore=shutil.ignore_patterns("__pycache__"))
-        data = manifest(app_id)
-        if app_id == APP:
-            with (target / "api/router.py").open("a", encoding="utf-8") as router:
-                router.write(BUSINESS_ROUTES)
-            data["tools"][1]["endpoint"] = f"POST /api/apps/{APP}/tool-records"
-            data["defaultRoles"]["partner"] = ["view"]
-            data["tools"].append({
-                "name": f"{APP}.get_record", "description": "读取指定版本的记录",
-                "write": False, "input": {"rid": "string", "version": "integer?"},
-                "endpoint": f"GET /api/apps/{APP}/records/{{rid}}",
-            })
-        (target / "app.json").write_text(json.dumps(data), encoding="utf-8")
+    shutil.copytree(generated_app, apps / "staff-tools")
+    target = apps / APP
+    shutil.copytree(ROOT / "apps/_template", target, ignore=shutil.ignore_patterns("__pycache__"))
+    data = manifest(APP)
+    with (target / "api/router.py").open("a", encoding="utf-8") as router:
+        router.write(BUSINESS_ROUTES)
+    data["tools"][1]["endpoint"] = f"POST /api/apps/{APP}/tool-records"
+    data["defaultRoles"]["partner"] = ["view"]
+    data["tools"].append({
+        "name": f"{APP}.get_record", "description": "读取指定版本的记录",
+        "write": False, "input": {"rid": "string", "version": "integer?"},
+        "endpoint": f"GET /api/apps/{APP}/records/{{rid}}",
+    })
+    (target / "app.json").write_text(json.dumps(data), encoding="utf-8")
     embed = apps / "sample-embed"
     embed.mkdir()
     data = manifest(embed.name)
@@ -157,6 +168,49 @@ def test_catalog_and_details_use_real_partner_grants(api):
     assert {"staff-tools", APP}.issubset(entry["id"] for entry in catalog["items"])
     assert catalog["skills"] == [{"id": "sample-skill"}]
     assert any(tool["app"] == "staff-tools" for tool in client.get("/api/v1/tools").json()["items"])
+
+
+def test_generated_template_chat_write_previews_without_business_changes(api):
+    client, reviews = api
+    login(client, "sampleoperator")
+    records = "/api/apps/staff-tools/records"
+    chat = "/api/v1/chat-fixture/staff-tools/create_record"
+    before = client.get(records).json()
+    assert before["items"] == []
+    denied = {**ARGS, "project": "limited-project"}
+    assert_error(client.post(chat, json={"args": denied}), 404, "NOT_FOUND")
+    assert reviews.items == {}
+    response = client.post(chat, json={"args": ARGS})
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["status"] == "pending"
+    assert list(reviews.items) == [result["reviewId"]]
+    assert reviews.get_review(result["reviewId"])["status"] == "pending"
+    assert client.get(records).json() == before
+    ui = client.post("/api/v1/apps/staff-tools/tools/create_record", json={"args": ARGS})
+    assert ui.status_code == 200, ui.text
+    assert client.get(records).json()["items"] == [ui.json()["result"]]
+    assert len(reviews.items) == 1
+
+
+def test_openapi_exposes_standard_write_operations_with_unique_ids(api):
+    client, _ = api
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    document = response.json()
+    paths = document["paths"]
+    operations = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+    metadata = {"$ref", "summary", "description", "servers", "parameters"}
+    ids = []
+    for path, item in paths.items():
+        for key, value in item.items():
+            assert key in operations | metadata or key.startswith("x-"), (path, key)
+            if key in operations:
+                ids.append(value["operationId"])
+    assert len(ids) == len(set(ids))
+    write = paths["/api/apps/staff-tools/records"]["post"]
+    assert write["requestBody"]["content"]["application/json"]["schema"]
+    assert "201" in write["responses"]
 
 
 def test_read_tool_calls_same_business_route_and_audits_once_per_source(api):

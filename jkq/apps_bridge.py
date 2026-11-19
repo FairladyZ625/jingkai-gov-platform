@@ -276,6 +276,18 @@ def install(
     """启动前注册。业务写工具的预检负责同一请求人的入参和资源授权，全程只读。"""
     if app.middleware_stack is not None:
         raise RuntimeError("应用工具桥须在实例启动前注册")
+    # 兼容已在同一公开路由声明 CHECK 方法的应用。只投影公开文档，
+    # 保留 FastAPI 对请求体、依赖和响应的定义，以及原路由的鉴权顺序。
+    original_openapi = app.openapi
+
+    def public_openapi():
+        schema = original_openapi()
+        for item in schema["paths"].values():
+            for method in ("check-post", "check-put", "check-patch", "check-delete"):
+                item.pop(method, None)
+        return schema
+
+    app.openapi = public_openapi
     bridge = AppsBridge(app.state.platform, current_user, review_sink, list_skills)
     app.state.apps_bridge = bridge
     router = APIRouter(prefix="/api/v1")
