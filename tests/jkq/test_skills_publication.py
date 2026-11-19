@@ -17,7 +17,7 @@ def api(request):
     roles = config / "roles.yaml"
     grants = json.loads(roles.read_text())
     for role, actions in {"sampleoperator": ["view", "operate"], "sampleextra": ["view", "operate"],
-                          "sampleobserver": ["view"], "leader": ["view", "approve"]}.items():
+                          "sampleobserver": ["view"], "leader": ["view", "operate", "approve"]}.items():
         grants["roles"][role] = {"grants": {"skills": actions}}
     roles.write_text(json.dumps(grants))
     people = config / "users.yaml"
@@ -127,64 +127,120 @@ def test_self_and_stale(api):
 
 
 @pytest.mark.parametrize("operation", ["patch", "restore"])
-def test_approved_zone_changes_require_new_review(api, operation):
+@pytest.mark.parametrize("editor", ["sampleoperator", "sampleextra"])
+def test_approved_zone_changes_require_new_review(api, operation, editor):
     path = create(api)
-    approved = publish_zone(api, path, perm="edit")
+    first = publish_zone(api, path, perm="edit")
+    assert decide(api, path, first).status_code == 200
+    response = call(api, "PATCH", path, body={"spec": {"prompt": "已获批的第二版"}})
+    assert response.status_code == 200, response.text
+    approved, = review_queue(api)
     assert decide(api, path, approved).status_code == 200
-    assert listed(api, "sampleobserver", path)
-    assert call(api, "GET", path, "sampleobserver").json()["item"]["version"] == "0.1.0"
+    for user in ("sampleobserver", "sampleextra"):
+        assert listed(api, user, path)
+        public = call(api, "GET", path, user).json()["item"]
+        assert public["spec"]["prompt"] == "已获批的第二版"
+        assert public["canEdit"] == (user == "sampleextra")
 
     if operation == "patch":
-        response = call(api, "PATCH", path, "sampleextra", {"spec": {"prompt": "更新内容"}})
+        response = call(api, "PATCH", path, editor, {"spec": {"prompt": "更新内容"}})
     else:
-        response = call(api, "POST", path + "/restore", "sampleextra", {"v": "0.1.0"})
+        response = call(api, "POST", path + "/restore", editor, {"v": "0.1.0"})
     assert response.status_code == 200, response.text
     draft = response.json()["item"]
-    assert (draft["version"], draft["status"]) == ("0.2.0", "in_review")
+    assert draft["version"] == "0.3.0"
     assert draft["spec"]["prompt"] == ("更新内容" if operation == "patch" else "")
-    assert not listed(api, "sampleobserver", path)
-    error(call(api, "GET", path, "sampleobserver"), 403, "FORBIDDEN")
-    for user in ("sampleoperator", "sampleextra"):
-        assert listed(api, user, path)
-        assert call(api, "GET", path, user).json()["item"]["version"] == draft["version"]
+    for user in ("sampleobserver", "sampleextra"):
+        assert not listed(api, user, path)
+        error(call(api, "GET", path, user), 403, "FORBIDDEN")
+    for action, body in (("/fork", {}), ("/rate", {"useful": True}), ("/restore", {"v": "0.1.0"})):
+        error(call(api, "POST", path + action, "sampleextra", body), 403, "FORBIDDEN")
+    error(call(api, "PATCH", path, "sampleextra", {"name": "下一次修改"}), 403, "FORBIDDEN")
+    assert listed(api, "sampleoperator", path)
+    assert call(api, "GET", path).json()["item"]["spec"] == draft["spec"]
+    assert not listed(api, "samplereviewer", path)
+    assert call(api, "GET", path, "samplereviewer").json()["item"]["spec"] == draft["spec"]
+    error(call(api, "POST", path + "/fork", "samplereviewer", {}), 403, "FORBIDDEN")
 
+    reviews = "/api/v1/reviews"
     pending, = review_queue(api)
+    inbox, = review_queue(api, reviews)
     assert pending["id"] == path[1:] and pending["reviewId"] != approved["reviewId"]
     assert pending["version"] > approved["version"] and pending["spec"] == draft["spec"]
+    assert (inbox["reviewId"], inbox["version"]) == (pending["reviewId"], pending["version"])
+    assert review_queue(api, user="sampleextra") == review_queue(api, reviews, "sampleextra") == []
     error(decide(api, path, approved), 409, "STALE_VERSION")
-    assert decide(api, path, pending).status_code == 200
-    assert listed(api, "sampleobserver", path)
-    public = call(api, "GET", path, "sampleobserver").json()["item"]
-    assert (public["version"], public["spec"]) == (draft["version"], draft["spec"])
-    assert [snapshot["v"] for snapshot in public["versions"]] == ["0.1.0", "0.2.0"]
+    if operation == "patch":
+        response = decide(api, path, pending)
+    else:
+        response = api.post(f"{reviews}/{inbox['reviewId']}/decisions",
+                            headers={"x-test-user": "samplereviewer"},
+                            json={"decision": "approve", "version": inbox["version"]})
+    assert response.status_code == 200, response.text
+    assert review_queue(api) == review_queue(api, reviews) == []
+    for user in ("sampleobserver", "sampleextra"):
+        assert listed(api, user, path)
+        public = call(api, "GET", path, user).json()["item"]
+        assert (public["version"], public["spec"]) == (draft["version"], draft["spec"])
+        assert [snapshot["v"] for snapshot in public["versions"]] == ["0.1.0", "0.2.0", "0.3.0"]
 
 
-def test_zone_public_history_only_includes_approved_content(api):
+@pytest.mark.parametrize("perm", ["use", "edit"])
+def test_zone_public_history_only_includes_approved_content(api, perm):
     path = create(api)
     call(api, "PATCH", path, body={"spec": {"prompt": "首发前私有草稿"}})
     call(api, "PATCH", path, body={"spec": {"prompt": "首发公开版本"}})
-    assert decide(api, path, publish_zone(api, path)).status_code == 200
+    assert decide(api, path, publish_zone(api, path, perm)).status_code == 200
     call(api, "PATCH", path, body={"spec": {"prompt": "审核驳回内容"}})
     rejected, = review_queue(api)
     assert decide(api, path, rejected, "reject", reason="需要补充").status_code == 200
-    assert not listed(api, "sampleobserver", path)
+    for user in ("sampleobserver", "sampleextra", "samplereviewer"):
+        assert not listed(api, user, path)
+        error(call(api, "GET", path, user), 403, "FORBIDDEN")
     call(api, "PATCH", path, body={"spec": {"prompt": "再次获批的内容"}})
     pending, = review_queue(api)
     assert decide(api, path, pending).status_code == 200
 
-    public = call(api, "GET", path, "sampleobserver").json()["item"]
-    assert [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in public["versions"]] == [
-        ("0.3.0", "首发公开版本"), ("0.5.0", "再次获批的内容"),
-    ]
-    owner = call(api, "GET", path).json()["item"]
-    assert [snapshot["v"] for snapshot in owner["versions"]] == ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]
+    def versions(item):
+        return [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in item["versions"]]
+
+    approved_history = [("0.3.0", "首发公开版本"), ("0.5.0", "再次获批的内容")]
+    for user in ("sampleobserver", "sampleextra"):
+        detail = call(api, "GET", path, user)
+        assert detail.status_code == 200, detail.text
+        assert versions(detail.json()["item"]) == approved_history
+        rate = call(api, "POST", path + "/rate", user, {"useful": True})
+        assert rate.status_code == 200, rate.text
+        assert versions(rate.json()["item"]) == approved_history
+    for user in ("sampleoperator", "sampleadmin"):
+        assert versions(call(api, "GET", path, user).json()["item"]) == [
+            ("0.1.0", ""), ("0.2.0", "首发前私有草稿"), ("0.3.0", "首发公开版本"),
+            ("0.4.0", "审核驳回内容"), ("0.5.0", "再次获批的内容"),
+        ]
+
+    restore_error = (404, "NOT_FOUND") if perm == "edit" else (403, "FORBIDDEN")
     for version in ("0.2.0", "0.4.0"):
-        error(call(api, "POST", user="sampleextra", body={
-            "forkOf": {"id": path[1:], "version": version},
-        }), 404, "NOT_FOUND")
-    rate = call(api, "POST", path + "/rate", "sampleobserver", {"useful": True})
-    assert rate.status_code == 200
-    assert rate.json()["item"]["versions"] == public["versions"]
+        error(call(api, "POST", user="sampleextra", body={"forkOf": {"id": path[1:], "version": version}}),
+              404, "NOT_FOUND")
+        error(call(api, "POST", path + "/restore", "sampleextra", {"v": version}), *restore_error)
+    source = {"id": path[1:], "version": "0.3.0"}
+    copied = call(api, "POST", user="sampleextra", body={"forkOf": source})
+    assert copied.status_code == 200, copied.text
+    assert copied.json()["item"]["forkOf"] == source
+    direct = call(api, "POST", path + "/fork", "sampleextra", {})
+    assert direct.status_code == 200, direct.text
+    assert direct.json()["item"]["forkOf"] == {"id": path[1:], "version": "0.5.0"}
+    assert direct.json()["item"]["spec"]["prompt"] == "再次获批的内容"
+    restored = call(api, "POST", path + "/restore", "sampleextra", {"v": "0.3.0"})
+    if perm == "edit":
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["item"]["spec"]["prompt"] == "首发公开版本"
+        assert versions(restored.json()["item"]) == approved_history
+    else:
+        error(restored, 403, "FORBIDDEN")
+        restored = call(api, "POST", path + "/restore", body={"v": "0.2.0"})
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["item"]["spec"]["prompt"] == "首发前私有草稿"
 
 
 def test_queue_tracks_active_review_after_author_edit(api):
@@ -231,16 +287,29 @@ def test_legacy_zone_edit_is_hidden_without_approval(api):
     assert call(api, "GET", path).json()["item"]["version"] == "0.2.0"
 
 
-def test_withdrawing_zone_scope_revokes_previous_editor_grant(api):
+@pytest.mark.parametrize("perm", ["use", "edit"])
+def test_withdrawing_zone_scope_revokes_previous_grant(api, perm):
     path = create(api)
-    assert decide(api, path, publish_zone(api, path, perm="edit")).status_code == 200
-    assert call(api, "GET", path, "sampleextra").json()["item"]["canEdit"]
-    call(api, "POST", path + "/share", body={"scope": "private"})
-    pending = publish_zone(api, path, perm="edit")
+    assert decide(api, path, publish_zone(api, path, perm)).status_code == 200
+    assert call(api, "GET", path, "sampleextra").json()["item"]["canEdit"] == (perm == "edit")
+    withdrawn = call(api, "POST", path + "/share", body={"scope": "private"})
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert not listed(api, "sampleextra", path)
+    source = {"id": path[1:], "version": "0.1.0"}
+    error(call(api, "POST", user="sampleextra", body={"forkOf": source}), 403, "FORBIDDEN")
+    revised = call(api, "PATCH", path, body={"spec": {"prompt": "重新分享的内容"}})
+    assert revised.status_code == 200, revised.text
+    pending = publish_zone(api, path, perm)
+    assert not listed(api, "sampleextra", path)
     error(call(api, "GET", path, "sampleextra"), 403, "FORBIDDEN")
     error(call(api, "PATCH", path, "sampleextra", {"name": "无权修改"}), 403, "FORBIDDEN")
     assert decide(api, path, pending).status_code == 200
-    assert call(api, "GET", path, "sampleextra").json()["item"]["canEdit"]
+    public = call(api, "GET", path, "sampleextra").json()["item"]
+    assert public["canEdit"] == (perm == "edit")
+    assert [(snapshot["v"], snapshot["spec"]["prompt"]) for snapshot in public["versions"]] == [
+        ("0.2.0", "重新分享的内容"),
+    ]
+    error(call(api, "POST", user="sampleextra", body={"forkOf": source}), 404, "NOT_FOUND")
 
 
 def test_latest_vote(api):

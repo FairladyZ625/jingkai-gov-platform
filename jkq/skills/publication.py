@@ -99,17 +99,19 @@ class PublishedSkills(SkillCatalog):
         records = (json.loads(raw) for (raw,) in rows)
         return {record["data"]["version"]: record for record in records}
 
-    def zone_access(self, user, item, approvals):
+    def manages_zone(self, user, item):
+        return user.id == item["authorId"] or "admin" in self.platform.rbac.actions(user, "skills")
+
+    def zone_access(self, user, doc):
+        item = doc["data"]
         actions = self.platform.rbac.actions(user, "skills")
-        manager = user.id == item["authorId"] or "admin" in actions
-        latest = next(reversed(approvals.values()), None)
-        shared_edit = ("operate" in actions and item["share"]["perm"] == "edit" and latest is not None
-                       and latest["data"]["share"]["perm"] == "edit")
-        target = approvals.get(item["version"])
-        public = item["status"] == "published" and target is not None and all(
-            item[key] == target["data"][key] for key in (*CONTENT, "share")
-        )
-        return public, manager or shared_edit, "operate" in actions and (manager or shared_edit)
+        manager = self.manages_zone(user, item)
+        public = False
+        if item["status"] == "published":
+            target = self.approvals(doc).get(item["version"])
+            public = target is not None and all(item[key] == target["data"][key] for key in (*CONTENT, "share"))
+        editable = "operate" in actions and (manager or (public and item["share"]["perm"] == "edit"))
+        return public, manager, editable
 
     def pending_reviews(self, user, sid=None):
         if not can_review(self, user):
@@ -137,8 +139,8 @@ class PublishedSkills(SkillCatalog):
             return super().listed(user, doc, review=review)
         if user.id == item["authorId"]:
             return True
-        public, _, editable = self.zone_access(user, item, self.approvals(doc))
-        return public or (editable and "admin" not in self.platform.rbac.actions(user, "skills"))
+        public, _, _ = self.zone_access(user, doc)
+        return public
 
     def list_items(self, user, *, mine, review):
         if not review:
@@ -152,31 +154,29 @@ class PublishedSkills(SkillCatalog):
                               "version": pending["version"]})
         return items
 
-    def load(self, user, sid, *, edit=False, deleted=False):
+    def load(self, user, sid, *, edit=False, deleted=False, review_target=False):
         self.records.app(user, "skills", "operate" if edit else "view")
         doc = self.records.get_record(user, "skills", sid)
         item = doc["data"]
         if item["deleted"] and not deleted:
             raise SkillError(404, "NOT_FOUND", "技能不存在")
         if item["share"]["scope"] == "zone":
-            approvals = self.approvals(doc)
-            public, draft, editable = self.zone_access(user, item, approvals)
-            visible = public or draft or any(
+            public, manager, editable = self.zone_access(user, doc)
+            visible = public or manager or (review_target and any(
                 review["version"] == doc["version"] for review, _ in self.pending_reviews(user, sid)
-            )
-            if not draft:
-                doc["public_approvals"] = approvals
+            ))
         else:
             visible, editable = self.access(user, item)
         if not visible or (edit and not editable):
             raise SkillError(403, "FORBIDDEN", "没有该技能的访问权限", app="skills", need="edit" if edit else "view")
         return doc
 
-    def history(self, doc):
-        if "public_approvals" not in doc:
-            return super().history(doc)
+    def history(self, user, doc):
+        item = doc["data"]
+        if item["share"]["scope"] != "zone" or self.manages_zone(user, item):
+            return super().history(user, doc)
         versions = {}
-        for version, record in doc["public_approvals"].items():
+        for version, record in self.approvals(doc).items():
             item = record["data"]
             at = datetime.fromtimestamp(record["createdAt"], timezone(timedelta(hours=8)))
             versions[version] = {"v": version, "by": record["submitter"], "at": at.isoformat(),
@@ -184,14 +184,9 @@ class PublishedSkills(SkillCatalog):
         return versions
 
     def view(self, user, doc, *, history=True):
-        item = super().view(user, doc, history=False)
+        item = super().view(user, doc, history=history)
         if item["share"]["scope"] == "zone":
-            approvals = self.approvals(doc)
-            _, draft, item["canEdit"] = self.zone_access(user, item, approvals)
-            if not draft:
-                doc = {**doc, "public_approvals": approvals}
-        if history:
-            item["versions"] = list(self.history(doc).values())
+            _, _, item["canEdit"] = self.zone_access(user, doc)
         return item
 
     def revise(self, user, sid, body, restore=False):

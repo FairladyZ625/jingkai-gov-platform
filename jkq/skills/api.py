@@ -78,7 +78,7 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
 
     @router.get("/{sid}")
     def detail(sid: str, user=Depends(current_user), skills=Depends(get_skills)):
-        doc = skills.load(user, sid)
+        doc = skills.load(user, sid, review_target=True)
         return {"item": skills.view(user, doc), "runs": runs_for(user, sid) if runs_for else []}
 
     @router.post("")
@@ -89,7 +89,7 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
                 invalid("复制来源须包含技能标识和版本")
             doc = skills.load(user, source["id"])
             version = source.get("version")
-            if not isinstance(version, str) or version not in skills.history(doc):
+            if not isinstance(version, str) or version not in skills.history(user, doc):
                 raise SkillError(404, "NOT_FOUND", "来源技能版本不存在")
             source = {"id": doc["id"], "version": version}
         return {"item": skills.create(user, body, source)}
