@@ -32,29 +32,38 @@ class SkillRoute(APIRoute):
         return dispatch
 
 
-def install(app, current_user, *, editor_options=None, runs_for=None):
-    platform = app.state.platform
-    skills = Skills(platform)
-    app.state.skills = skills
-    router = APIRouter(prefix="/api/v1/skills", route_class=SkillRoute)
+class SkillCatalog(Skills):
+    def listed(self, user, doc, *, review):
+        item = doc["data"]
+        return self.access(user, item)[0] and (not review or item["status"] == "in_review")
 
-    @router.get("")
-    def listing(mine: bool = False, review: bool = False, user=Depends(current_user)):
-        docs = skills.records.list_records(user, "skills")["items"]
+    def list_items(self, user, *, mine, review):
+        docs = self.records.list_records(user, "skills")["items"]
         items = []
         for doc in docs:
             item = doc["data"]
-            if item["deleted"] or not skills.access(user, item)[0]:
+            if item["deleted"] or (mine and item["authorId"] != user.id) or not self.listed(user, doc, review=review):
                 continue
-            if mine and item["authorId"] != user.id or review and item["status"] != "in_review":
-                continue
-            items.append(skills.view(user, doc, history=False))
+            items.append(self.view(user, doc, history=False))
+        return items
+
+
+def install(app, current_user, *, editor_options=None, runs_for=None):
+    platform = app.state.platform
+    app.state.skills = SkillCatalog(platform)
+    router = APIRouter(prefix="/api/v1/skills", route_class=SkillRoute)
+
+    def get_skills():
+        return app.state.skills
+
+    @router.get("")
+    def listing(mine: bool = False, review: bool = False, user=Depends(current_user), skills=Depends(get_skills)):
         apps = [{"id": aid, "name": entry.manifest["name"]} for aid, entry in platform.apps.items()
                 if "view" in platform.rbac.actions(user, aid)]
-        return {"items": items, "apps": apps}
+        return {"items": skills.list_items(user, mine=mine, review=review), "apps": apps}
 
     @router.get("/meta/options")
-    def options(user=Depends(current_user)):
+    def options(user=Depends(current_user), skills=Depends(get_skills)):
         skills.records.app(user, "skills")
         departments = platform.directory.profile(user)["departments"]
         opts = {"models": [], "spaces": [], "computerTasks": [
@@ -68,12 +77,12 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
                 "myDept": "、".join(d["name"] for d in departments)}
 
     @router.get("/{sid}")
-    def detail(sid: str, user=Depends(current_user)):
+    def detail(sid: str, user=Depends(current_user), skills=Depends(get_skills)):
         doc = skills.load(user, sid)
         return {"item": skills.view(user, doc), "runs": runs_for(user, sid) if runs_for else []}
 
     @router.post("")
-    def create(body: dict, user=Depends(current_user)):
+    def create(body: dict, user=Depends(current_user), skills=Depends(get_skills)):
         source = body.get("forkOf")
         if source is not None:
             if not isinstance(source, dict) or not isinstance(source.get("id"), str):
@@ -86,26 +95,26 @@ def install(app, current_user, *, editor_options=None, runs_for=None):
         return {"item": skills.create(user, body, source)}
 
     @router.patch("/{sid}")
-    def patch(sid: str, body: dict, user=Depends(current_user)):
+    def patch(sid: str, body: dict, user=Depends(current_user), skills=Depends(get_skills)):
         return {"item": skills.revise(user, sid, body)}
 
     @router.post("/{sid}/fork")
-    def fork(sid: str, user=Depends(current_user)):
+    def fork(sid: str, user=Depends(current_user), skills=Depends(get_skills)):
         source = skills.load(user, sid)["data"]
         body = {k: source[k] for k in CONTENT}
         body["name"] += "（我的版本）"
         return {"item": skills.create(user, body, {"id": sid, "version": source["version"]})}
 
     @router.post("/{sid}/restore")
-    def restore(sid: str, body: dict, user=Depends(current_user)):
+    def restore(sid: str, body: dict, user=Depends(current_user), skills=Depends(get_skills)):
         return {"item": skills.revise(user, sid, body, restore=True)}
 
     @router.delete("/{sid}")
-    def remove(sid: str, user=Depends(current_user)):
+    def remove(sid: str, user=Depends(current_user), skills=Depends(get_skills)):
         return {"ok": True, "item": skills.set_deleted(user, sid, True)}
 
     @router.post("/{sid}/restore-deleted")
-    def undo(sid: str, user=Depends(current_user)):
+    def undo(sid: str, user=Depends(current_user), skills=Depends(get_skills)):
         return {"ok": True, "item": skills.set_deleted(user, sid, False)}
 
     app.include_router(router)
