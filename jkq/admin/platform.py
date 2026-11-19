@@ -243,7 +243,8 @@ def register(router, platform, admin):
         return dict(item=after, grants=grants)
 
     @router.get('/api/v1/apps')
-    def list_apps(user=Depends(current_user)):
+    def list_apps(request: Request, user=Depends(current_user)):
+        bridge = request.app.state.apps_bridge
         with store._lock, store._db as db:
             db.execute('BEGIN')
             is_admin = 'admin' in platform.rbac.actions(user, '*')
@@ -253,8 +254,12 @@ def register(router, platform, admin):
                 if 'view' in actions and admin_apps.visible(platform, app_id, user, is_admin):
                     row = admin_apps.registry(platform, app_id)
                     entry.enabled = store.app_enabled(app_id)
-                    items.append(_app_item(entry, row, _app_status(db, app_id, row), actions))
-        return {'items': items}
+                    item = _app_item(entry, row, _app_status(db, app_id, row), actions)
+                    public = bridge.catalog_fields(entry, actions, is_admin)
+                    if public.get('tools'):
+                        item['tools'] = public['tools']
+                    items.append(public | item)
+        return {'items': items, 'skills': bridge.list_skills(user)}
 
     @router.patch('/api/v1/admin/apps/{app_id}')
     def patch_app(app_id: str, body: AppPatch, request: Request, user=Depends(admin)):

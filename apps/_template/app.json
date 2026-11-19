@@ -15,5 +15,30 @@
     "sampleobserver": ["view"]
   },
   "needsExternalData": false,
-  "status": "prototype"
+  "status": "prototype",
+  "tools": [
+    {
+      "name": "__APP_ID__.list_records",
+      "description": "列出可见的样例记录，可按项目筛选",
+      "write": false,
+      "input": {"project": "string?"},
+      "endpoint": "GET /api/apps/__APP_ID__/records"
+    },
+    {
+      "name": "__APP_ID__.create_record",
+      "description": "保存一条样例记录",
+      "write": true,
+      "input": {"project": "string", "title": "string", "content": "string?"},
+      "endpoint": "POST /api/apps/__APP_ID__/records"
+    }
+  ],
+  "starters": ["帮我查一下项目里的样例记录"],
+  "chatCards": ["app-suggest"],
+  "deepLink": {"params": ["project", "recordId"]},
+  "dataClass": "internal",
+  "accepts": [{"kind": "样例记录", "ext": ["txt"], "match": "样例记录"}],
+  "intents": [
+    {"id": "__APP_ID__.list_records", "action": "list_records", "plan": ["打开样例应用", "查看记录列表"]}
+  ],
+  "routes": ["home"]
 }
