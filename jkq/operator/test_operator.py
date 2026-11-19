@@ -178,7 +178,18 @@ def test_rule_wins_over_matching_example_and_keeps_grounded_entity(instance):
     result = plan(client, "补填数据采购额 30 万", context={"entId": "E001"})
     assert result["intent"] == "policy.fill"
     assert result["slots"] == {"ent": "E001", "amount": 300000}
-    assert result["steps"][-1]["tool"] == "policy.match"
+    # 默认实例的 policy.match 只有旧版说明，计划仍能识别意图和金额，
+    # 但只能打开应用。只有桥目录中的可执行绑定才能生成调用步骤。
+    assert [(step["action"], step.get("target")) for step in result["steps"]] == [("open", "policy")]
+    assert all("tool" not in step for step in result["steps"])
+
+    manifest = platform.apps["policy"].manifest
+    manifest.update(starters=[], chatCards=[], deepLink={"params": []}, dataClass="public", tools=[{
+        "name": "policy.match", "description": "匹配政策", "write": False,
+        "input": {}, "endpoint": "GET /api/apps/policy/match",
+    }])
+    connected = plan(client, "补填数据采购额 30 万", context={"entId": "E001"})
+    assert connected["steps"][-1]["tool"] == "policy.match"
 
 
 def test_visit_honors_write_metadata_from_tools_bridge(instance, monkeypatch):
