@@ -940,3 +940,16 @@ def test_cloud_only_confidential_skill_paths_never_call_transport(instance, mode
         assert calls == []
     error(api.post(f"{ROOT}/draft", json={"text": marker}), 403, "OUTBOUND_DENIED")
     assert calls == []
+
+
+def test_instance_mounts_skill_share_and_publication_routes(instance):
+    api, sign_in = instance
+    paths = api.get("/openapi.json").json()["paths"]
+    for action in ("share", "publish", "review", "rate"):
+        assert f"/api/v1/skills/{{sid}}/{action}" in paths
+    sign_in()
+    created = api.post(ROOT, json={"name": "分享挂载核对", "spec": {}, "summary": "示例"})
+    assert created.status_code == 200, created.text
+    shared = api.post(f"{ROOT}/{created.json()['item']['id']}/share",
+                      json={"scope": "people", "people": ["u-liyang"], "perm": "use"})
+    assert shared.status_code == 200, shared.text
