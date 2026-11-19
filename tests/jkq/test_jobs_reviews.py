@@ -18,7 +18,7 @@ from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from haiknow_core.main import create_app
-from haiknow_sdk import DataError
+from haiknow_sdk import DataError, ModelError
 from jkq import jobs_api, reviews_api
 
 
@@ -282,18 +282,19 @@ def test_job_missing_and_queued(client):
     assert 'post' in schema[REVIEWS] and 'get' in schema[REVIEWS]
 
 
-@pytest.mark.parametrize(('code', 'expected'), [
-    ('invalid_request', 'INVALID_REQUEST'),
-    ('loan_period_invalid', 'loan_period_invalid'),
-])
 def test_sdk_job_failure_retains_flat_error_and_jingkai_view(
-    isolated_platform, jkq_accounts, monkeypatch, code, expected,
+    isolated_platform, jkq_accounts, monkeypatch,
 ):
-    def fail(_execution, _body):
-        raise DataError(code, '样例任务失败', retryable=True, fields=['period'])
+    def fail(_execution, body):
+        if body['model']:
+            raise ModelError(body['code'], '样例任务失败')
+        raise DataError(body['code'], '样例任务失败', retryable=True, fields=['period'])
 
     monkeypatch.setenv('HAIKNOW_SECRET', secrets.token_hex(16))
-    config, _ = isolated_platform
+    config, apps = isolated_platform
+    web = apps / 'sample-app' / 'web'
+    web.mkdir(exist_ok=True)
+    (web / 'errors.json').write_text(json.dumps({'bad_response': '样例任务失败'}), encoding='utf-8')
     (config / 'projects.yaml').write_bytes((ROOT / 'config/projects.yaml').read_bytes())
     (config / 'users.yaml').write_text(json.dumps({'users': [
         {'id': 'sampleoperator', 'name': '样例办理员', 'roles': ['sampleoperator'], 'projects': ['jkq']},
@@ -303,27 +304,36 @@ def test_sdk_job_failure_retains_flat_error_and_jingkai_view(
     app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
     with TestClient(app) as client:
         login(client, 'sampleoperator')
-        response = client.post(JOBS, json={
-            'appId': 'sample-app', 'project': 'jkq', 'operation': 'transcribe',
-            'input': {}, 'idempotencyKey': 'failure-example',
-        })
-        assert response.status_code == 202, response.text
-        path = f"{JOBS}/{response.json()['id']}"
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            sdk = client.get(f'{path}?app=sample-app')
-            assert sdk.status_code == 200, sdk.text
-            raw = sdk.json()
-            if raw['status'] == 'failed':
-                break
-            time.sleep(.02)
-        assert raw['status'] == 'failed' and raw['result'] is None
-        assert raw['error'] == {
-            'code': expected, 'message': '样例任务失败', 'retryable': True,
-            'fields': ['period'], 'jobId': raw['id'],
-        }
-        view = client.get(path).json()['job']
-        assert view['status'] == 'failed' and view['progress'] == 0
+        for code, model, expected in [
+            ('invalid_request', False, 'INVALID_REQUEST'),
+            ('loan_period_invalid', False, 'loan_period_invalid'),
+            ('bad_response', True, 'BAD_RESPONSE'),
+            ('bad_response', False, 'bad_response'),
+        ]:
+            response = client.post(JOBS, json={
+                'appId': 'sample-app', 'project': 'jkq', 'operation': 'transcribe',
+                'input': {'code': code, 'model': model}, 'idempotencyKey': f'failure-{expected}',
+            })
+            assert response.status_code == 202, response.text
+            submitted = response.json()
+            path = f"{JOBS}/{submitted['id']}"
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                sdk = client.get(f'{path}?app=sample-app')
+                assert sdk.status_code == 200, sdk.text
+                raw = sdk.json()
+                if raw['status'] == 'failed':
+                    break
+                time.sleep(.02)
+            assert raw['status'] == 'failed' and raw['result'] is None
+            assert set(raw) == set(submitted)
+            error = {'code': expected, 'message': '样例任务失败',
+                     'retryable': not model, 'jobId': submitted['id']}
+            if not model:
+                error['fields'] = ['period']
+            assert raw['error'] == error
+            view = client.get(path).json()['job']
+            assert view['status'] == 'failed' and view['progress'] == 0
 
 
 def test_progress_is_monotone_for_consecutive_checkpoints():

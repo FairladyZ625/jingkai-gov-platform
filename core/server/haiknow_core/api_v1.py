@@ -5,14 +5,15 @@ from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
+from starlette.routing import get_route_path
 
 from haiknow_sdk import DataError
 
 from .error_codes import public_error_code
 
 
-def data_error_response(error, *, status=None, headers=None):
-    payload = {**error.error, 'code': public_error_code(error.code)}
+def data_error_response(error, *, status=None, headers=None, app_dir=None):
+    payload = {**error.error, 'code': public_error_code(error.code, app_dir=app_dir)}
     return JSONResponse({'error': payload}, status_code=status or error.status, headers=headers)
 
 
@@ -22,6 +23,13 @@ def install(app, platform, current_user):
 
     @app.exception_handler(DataError)
     async def data_error(request, e):
+        # FastAPI 的 included route 可能只保留相对路径，挂载前缀取自匹配后的请求。
+        path = get_route_path(request.scope)
+        prefix = '/api/apps/'
+        if path.startswith(prefix) and request.scope.get('route') is not None:
+            entry = platform.apps.get(path[len(prefix):].partition('/')[0])
+            if entry and entry.has_api:
+                return data_error_response(e, app_dir=entry.dir)
         return data_error_response(e)
 
     @app.exception_handler(Exception)
