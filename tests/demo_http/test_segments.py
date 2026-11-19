@@ -70,10 +70,16 @@ def test_segment(server, title):
             base = "/api/apps/document"
             draft = data(c.post(base + "/drafts", json={"templateId": "T06", "inputs": {
                 "orig": "公开演示申报通知", "oldEnd": "2026-11-20", "newEnd": "2026-11-25",
+                "reason": "系统维护",
             }}))["item"]
             ref = draft["id"]
             path = base + "/drafts/" + ref
-            content = dict(draft["versions"][-1]["content"], title="关于延长示例材料受理期限的通知")
+            # 演示稿补齐主送、落款、日期、文号，并替换正文占位，满足 #122 送审核查门禁。
+            content = dict(draft["versions"][-1]["content"], title="关于延长示例材料受理期限的通知",
+                           to="各有关单位：", sign="公文演示工作组", date="2026年11月18日",
+                           docNo="演示〔2026〕2号")
+            content["paragraphs"] = [p.replace("【待补：调整原因】", "系统维护") for p in content["paragraphs"]]
+            assert not any("【待补" in p for p in content["paragraphs"])
             data(c.put(path, json={"content": content}))
             diff = data(c.post(base + "/compare", json={"a": {"id": ref, "v": 0}, "b": {"id": ref, "v": 1}}))
             assert diff["stats"]["add"] > 0
