@@ -656,6 +656,30 @@ def test_instance_match_and_deferred_routes(instance):
     error(api.post(f"{ROOT}/{sid}/promote", json={}), 501, "NOT_IMPLEMENTED")
 
 
+@pytest.mark.parametrize("metadata", [{}, {"classification": ""}, {"classification": "unknown"}])
+def test_unclassified_source_requires_confidential_route(instance, monkeypatch, metadata):
+    from jkq.skills.runtime_provider import SkillProvider
+
+    api, _ = instance
+    provider = SkillProvider(api.app)
+    monkeypatch.setattr(provider, "_documents", lambda user: [{"id": "sample", "space": "minutes", **metadata}])
+    assert provider._outbound(None, [{"id": "sample", "classification": "internal"}]) == "confidential"
+
+
+@pytest.mark.parametrize(("saved", "current", "expected"), [
+    ("confidential", "public", "confidential"),
+    ("public", "confidential", "confidential"),
+    ("public", "public", "internal"),
+])
+def test_outbound_uses_checkpoint_and_current_classification(instance, monkeypatch, saved, current, expected):
+    from jkq.skills.runtime_provider import SkillProvider
+
+    api, _ = instance
+    provider = SkillProvider(api.app)
+    monkeypatch.setattr(provider, "_documents", lambda user: [{"id": "sample", "classification": current}])
+    assert provider._outbound(None, [{"id": "sample", "classification": saved}]) == expected
+
+
 def test_instance_confidential_kb_outside_enterprise_space_stays_confidential(instance):
     """非企业空间但入库为 confidential 的资料，run/trial 与一句话起草都按文档密级出站。"""
     api, sign_in = instance
@@ -694,7 +718,8 @@ def test_instance_confidential_kb_outside_enterprise_space_stays_confidential(in
         accepted = api.post(path, json=body)
         assert accepted.status_code == 202, accepted.text
         job = poll(api, accepted.json()["job"]["id"])
-        assert job["result"]["citations"][0]["id"] == doc["id"]
+        citation = job["result"]["citations"][0]
+        assert citation["id"] == doc["id"] and citation["classification"] == "confidential"
     drafted = api.post(f"{ROOT}/draft", json={"text": marker})
     assert drafted.status_code == 200, drafted.text
     assert len(levels) == 4 and set(levels) == {"confidential"}

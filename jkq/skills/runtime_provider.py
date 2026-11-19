@@ -51,6 +51,16 @@ def meeting_list(ctx, args):
 # 与网关一致的密级顺序。无法确定的来源一律按 confidential 处理。
 CLASSIFICATIONS = ("public", "internal", "confidential")
 
+
+def _source_level(doc):
+    value = doc.get("classification")
+    return value if value in CLASSIFICATIONS and doc.get("space") != "enterprise" else "confidential"
+
+
+def _stamp_sources(hits, levels):
+    for hit in hits:
+        hit["classification"] = levels.get(hit["id"], "confidential")
+
 READ_TOOLS = {
     "policy.match": policy_match,
     "enterprise.get": enterprise_get,
@@ -74,18 +84,14 @@ class SkillProvider:
 
     def _outbound(self, user, sources, floor="internal"):
         """按服务端保存的文档密级取本次送模材料的最高密级，不依赖空间名推断。"""
-        identities = {source.get("id") for source in sources}
-        if not identities:
+        if not sources:
             return floor
-        docs = {doc["id"]: doc for doc in self._documents(user)}
+        current = {doc["id"]: _source_level(doc) for doc in self._documents(user)}
         level = floor
-        for identity in identities:
-            doc = docs.get(identity)
-            value = "confidential" if doc is None or doc.get("space") == "enterprise" else (
-                doc.get("classification") or "internal")
-            if value not in CLASSIFICATIONS:
-                value = "confidential"
-            level = max(level, value, key=CLASSIFICATIONS.index)
+        for source in sources:
+            # 命中内容来自检索时的快照，当前资料降级或缺失不能降低旧摘录的密级。
+            level = max(level, _source_level(source), current.get(source.get("id"), "confidential"),
+                        key=CLASSIFICATIONS.index)
         return level
 
     def search(self, user, params):
@@ -94,8 +100,10 @@ class SkillProvider:
         if not any(tokens(params["q"])):
             invalid("请输入有效的检索词")
         today = datetime.now(BEIJING).date()
-        return search([with_current_status(doc, today) for doc in docs], params["q"],
-                      filters={"space": space}, limit=params["limit"])
+        result = search([with_current_status(doc, today) for doc in docs], params["q"],
+                        filters={"space": space}, limit=params["limit"])
+        _stamp_sources(result["hits"], {doc["id"]: _source_level(doc) for doc in docs})
+        return result
 
     def require_sources(self, user, hits, tools=()):
         if not hits and not tools:
@@ -135,6 +143,8 @@ class SkillProvider:
             return ask(question, [], None)
         today = datetime.now(BEIJING).date()
         hits = search([with_current_status(doc, today) for doc in docs], question)["hits"]
+        levels = {doc["id"]: _source_level(doc) for doc in docs}
+        _stamp_sources(hits, levels)
         texts = {doc["id"]: doc["text"] for doc in docs}
         usable = [hit for hit in hits if hit["snippet"] in texts[hit["id"]]]
         errors = []
@@ -151,6 +161,7 @@ class SkillProvider:
         answer = ask(question, usable, complete)
         if errors:
             raise errors[0]
+        _stamp_sources(answer["citations"], levels)
         return answer
 
     def draft(self, user, prompt, text, knowledge):
