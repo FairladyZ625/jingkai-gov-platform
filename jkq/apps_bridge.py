@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.routing import Match
 
+from haiknow_core import admin_apps
 from haiknow_core.manifest_ext import bridge_tools, endpoint_parts, safe_segment, validate_extensions
 from haiknow_core.stability import AppIsolation, AppUnavailable
 from haiknow_sdk import DataError, User
@@ -187,11 +188,22 @@ class AppsBridge:
             raise _BridgeError(404, "NOT_FOUND", "应用不存在")
         return entry
 
+    def _can_view(self, user, app_id, actions):
+        return "view" in actions and admin_apps.visible(
+            self.platform, app_id, user, "admin" in self.platform.rbac.actions(user, "*")
+        )
+
     def _visible(self, user: User) -> Iterator[tuple[AppEntry, frozenset[str]]]:
         for app_id, entry in self.platform.apps.copy().items():
             actions = self.platform.rbac.actions(user, app_id)
-            if "view" in actions and not validate_extensions(entry.manifest):
+            if self._can_view(user, app_id, actions) and not validate_extensions(entry.manifest):
                 yield entry, actions
+
+    def catalog_fields(self, entry, actions, is_admin):
+        """补齐目录的公开扩展字段，存量应用的展示数据由管理目录保留。"""
+        if validate_extensions(entry.manifest):
+            return {}
+        return _public_manifest(entry, actions, is_admin)
 
     def apps(self, user: User) -> dict:
         is_admin = "admin" in self.platform.rbac.actions(user, "*")
@@ -203,7 +215,7 @@ class AppsBridge:
     def app(self, user: User, app_id: str) -> dict:
         entry = self._entry(app_id)
         actions = self.platform.rbac.actions(user, app_id)
-        if "view" not in actions:
+        if not self._can_view(user, app_id, actions):
             self.platform.store.audit(app_id, user.id, "app.view", {"need": "view", "outcome": "FORBIDDEN"})
             raise _BridgeError(403, "FORBIDDEN", "没有查看此应用的权限", app=app_id, need="view")
         _require_available(entry)
@@ -229,7 +241,7 @@ class AppsBridge:
         detail = {"tool": name, "via": via, "need": "view", "outcome": "internal_error"}
         try:
             actions = await run_in_threadpool(self.platform.rbac.actions, user, app_id)
-            if "view" not in actions:
+            if not await run_in_threadpool(self._can_view, user, app_id, actions):
                 raise _BridgeError(403, "FORBIDDEN", "没有查看此应用的权限", app=app_id, need="view")
             tool = next((item for item in bridge_tools(entry.manifest) if item["name"] == name), None)
             if tool is None:
@@ -273,6 +285,7 @@ def install(
     *,
     review_sink: ReviewSink | None = None,
     list_skills: Callable[[User], list[dict]] | None = None,
+    register_catalog: bool = True,
 ) -> AppsBridge:
     """启动前注册。业务写工具的预检负责同一请求人的入参和资源授权，全程只读。"""
     if app.middleware_stack is not None:
@@ -293,9 +306,10 @@ def install(
     app.state.apps_bridge = bridge
     router = APIRouter(prefix="/api/v1")
 
-    @router.get("/apps")
-    def apps(user: User = Depends(bridge.user)):
-        return bridge.apps(user)
+    if register_catalog:
+        @router.get("/apps")
+        def apps(user: User = Depends(bridge.user)):
+            return bridge.apps(user)
 
     @router.get("/apps/{app_id}")
     def app_detail(app_id: str, user: User = Depends(bridge.user)):

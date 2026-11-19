@@ -521,9 +521,11 @@ def test_template_and_generated_app_pass_manifest_cli(tmp_path):
 
 @pytest.mark.parametrize(("role", "username", "visible"), [
     ("admin", "admin", {"document", "enterprise", "meeting", "policy"}),
+    ("leader", "liyang", {"document", "enterprise", "meeting", "policy"}),
+    ("member", "wangmin", {"document", "enterprise", "meeting", "policy"}),
     ("partner", "hejun", {"enterprise", "policy"}),
 ])
-def test_instance_roles_can_open_existing_apps_after_bridge_install(role, username, visible, monkeypatch, tmp_path):
+def test_default_instance_catalog_skills_and_tool_permissions(role, username, visible, monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
     from jkq.app import create_app
 
@@ -538,21 +540,55 @@ def test_instance_roles_can_open_existing_apps_after_bridge_install(role, userna
         monkeypatch.setenv(f"JKQ_DEMO_{account.upper()}_PASSWORD", f"test-{account}")
 
     app = create_app()
-    install(app, current_user)
+
+    def catalog_routes(router):
+        for route in router.routes:
+            if nested := getattr(route, "original_router", None):
+                yield from catalog_routes(nested)
+            elif getattr(route, "path", None) == "/api/v1/apps" and "GET" in route.methods:
+                yield route
+
+    assert len(list(catalog_routes(app.router))) == 1
+    from jkq.skills.storage import Skills
+    platform = app.state.platform
+    skills = Skills(platform)
+    owner = platform.rbac.users["u-zhanglei"]
+    private = skills.create(owner, {"name": "目录测试的私有草稿"})
+
     with TestClient(app) as client:
         session = client.post("/api/v1/auth/login", json={"username": username, "password": f"test-{role}"})
         assert session.status_code == 200, session.text
         business_apps = {"document", "enterprise", "meeting", "policy"}
         catalog = client.get("/api/v1/apps")
         assert catalog.status_code == 200
+        assert set(catalog.json()) == {"items", "skills"}
+        assert [s["id"] for s in catalog.json()["skills"]] == ([private["id"]] if role == "admin" else [])
+        for item in catalog.json()["items"]:
+            assert {"status", "statusNote", "version", "enabled", "available", "actions"} <= item.keys()
         assert {item["id"] for item in catalog.json()["items"]} & business_apps == visible
         tools = client.get("/api/v1/tools")
         assert tools.status_code == 200
         assert all(item["app"] not in business_apps for item in tools.json()["items"])
         for app_id in business_apps:
             detail = client.get(f"/api/v1/apps/{app_id}")
+            legacy = platform.apps[app_id].manifest["tools"][0]["name"]
+            call = client.post(f"/api/v1/apps/{app_id}/tools/{legacy}", json={"args": {}})
             if app_id in visible:
+                assert_error(call, 404, "TOOL_NOT_FOUND")
                 assert detail.status_code == 200
                 assert detail.json()["id"] == app_id and detail.json()["tools"] == []
             else:
                 assert_error(detail, 403, "FORBIDDEN")
+                assert_error(call, 403, "FORBIDDEN")
+
+        # 已有 view 的用户仍受发布状态与灰度受众限制；管理员可管理草稿。
+        from haiknow_core import admin_apps
+        for state in ("draft", "gray"):
+            admin_apps.update(platform, "policy", owner, state, [{"type": "role", "id": "member"}])
+            allowed = role == "admin" or (state == "gray" and role == "member")
+            items = client.get("/api/v1/apps").json()["items"]
+            assert ("policy" in {item["id"] for item in items}) == allowed
+            detail = client.get("/api/v1/apps/policy")
+            assert detail.status_code == (200 if allowed else 403)
+            call = client.post("/api/v1/apps/policy/tools/search", json={"args": {}})
+            assert_error(call, 404 if allowed else 403, "TOOL_NOT_FOUND" if allowed else "FORBIDDEN")
