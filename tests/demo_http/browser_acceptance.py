@@ -1,3 +1,4 @@
+from tests.demo_http.password_ui import login, wait_segment
 """专用 CI 验收入口，缺浏览器或缺上游均失败。"""
 
 import re
@@ -47,7 +48,7 @@ def test_browser_walks_twelve_segments(server):
                 throw Error('HTTP 验收发现 mock 请求');
             };
         }""")
-        page.locator('[data-u="wangmin"]').click()
+        login(page, "wangmin", server.password)
         page.locator("#btn-demo").wait_for()
         assert page.evaluate("JKShell.S.me.username") == "wangmin"
         titles = page.evaluate("JK_DEMO_SCRIPT.map(s => s.title)")
@@ -90,7 +91,7 @@ def test_browser_walks_twelve_segments(server):
         }""")
         page.locator("#btn-demo").click()
         for index, (title, pattern) in enumerate(required):
-            page.wait_for_function("i => !JKDemo.state.on || JKDemo.state.i > i", arg=index, timeout=90000)
+            wait_segment(page, index, server.password)
             assert page.evaluate("JKDemo.state.i") > index, f"{title} 提前退出"
             if pattern:
                 paths = page.evaluate("i => demoNetwork.filter(r => r.segment === i).map(r => r.path)", index)

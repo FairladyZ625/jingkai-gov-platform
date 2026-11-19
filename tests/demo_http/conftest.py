@@ -64,9 +64,6 @@ def server(tmp_path_factory, request):
             env.setenv("JKQ_WEB_DIR", str(site_dir))
             env.setenv("JKQ_DEPLOY_RUNTIME", "1")
             use_same_origin_http(tmp)
-            with (site_dir / "config/app.config.js").open("a") as script:
-                script.write("\nwindow.JK_CONFIG.demoAccounts.forEach(a => a.password = " +
-                             json.dumps(password) + ");\n")
         from jkq.kb.importer.public_url import PublicPage, PublicURLError, PublicURLReader
 
         # 演示不出外网：接口验收用的虚构网址和知识库段的官网样例网址都由本地快照应答。

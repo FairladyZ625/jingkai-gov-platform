@@ -1,3 +1,4 @@
+from tests.demo_http.password_ui import login, wait_segment
 """外部协作者段：何军在真后端打开企业档案，前端按后端打码投影渲染（不要求后端多返回联系人或营收）。"""
 
 import re
@@ -18,7 +19,7 @@ def test_partner_opens_masked_profile_over_http(server):
                 if re.search(r"/api/apps/enterprise/companies/E020$", r.url) else None)
         page.goto(server.url)
         assert page.evaluate("JK_CONFIG.api.mode") == "http"
-        page.locator('[data-u="hejun"]').click()
+        login(page, "hejun", server.password)
         page.locator('[data-op="chat.input"]').fill("查一下知行应用")
         page.locator('[data-op="chat.send"]').click()
         page.locator("#chatcol .msg.ai .txt", has_text=re.compile("知行应用：|没能完成")).first.wait_for(timeout=30000)

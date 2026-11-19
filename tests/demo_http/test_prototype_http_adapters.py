@@ -1,3 +1,4 @@
+from tests.demo_http.password_ui import login, wait_segment
 """原型 HTTP 适配层对真后端的请求格式：用真实 Chromium 调用 JKApi，模拟后端不参与。"""
 
 import pytest
@@ -61,7 +62,7 @@ def test_review_inbox_marks_assignee_and_decides_with_version(server):
         try:
             page = browser.new_page()
             page.goto(server.url)
-            page.locator('[data-u="liyang"]').click()
+            login(page, "liyang", server.password)
             page.wait_for_function("JKShell.S.me && JKShell.S.me.username === 'liyang'")
             item = page.evaluate("id => JKApi.reviews.list().then(r => r.items.find(x => x.id === id))", review_id)
             assert item["approver"] is True and item["type"] == "review"
