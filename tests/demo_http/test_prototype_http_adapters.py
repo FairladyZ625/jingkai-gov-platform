@@ -33,3 +33,12 @@ def test_meeting_sample_upload_uses_multipart_demo_audio(server):
             assert uploaded["item"]["file"] == "a.webm" and uploaded["item"]["size"] == 4
         finally:
             browser.close()
+
+
+def test_computer_summary_guards_missing_enterprise():
+    # 真后端 apply 任务可带 ent=None；收尾文案不得直接读 r.ent.short。
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "prototype/v4/apps/computer/app.js").read_text(encoding="utf-8")
+    assert "${r.ent.short}" not in source
+    assert "(r && r.ent && r.ent.short) || '示例企业'" in source

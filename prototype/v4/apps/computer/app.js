@@ -337,8 +337,10 @@
         let last = -1; while (['running', 'paused', 'manual', 'waiting'].includes(me.status)) { const k = steps[Math.min(me.step, steps.length - 1)]; if (k !== last) { last = k; await run.step(k); } await sleepRaw(120); if (run.stopped) { me.stopped = true; break; } }
         if (run.stopped) run.check();
         const r = me.run;
-        if (me.status === 'done') run.done(task === 'apply' ? `已为${r.ent.short}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${r.ent.short}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? '存进知识库' : '下载好'}` : `${r.ent.short}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
-          task === 'apply' ? [{ label: '查办理进度', say: `查一下${r.ent.short}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
+        // 真后端的 apply 等任务可能不带企业（ent 为 null），收尾文案用占位名，不因空值中断演示。
+        const entShort = (r && r.ent && r.ent.short) || '示例企业';
+        if (me.status === 'done') run.done(task === 'apply' ? `已为${entShort}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${entShort}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? '存进知识库' : '下载好'}` : `${entShort}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
+          task === 'apply' ? [{ label: '查办理进度', say: `查一下${entShort}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
         else if (me.status === 'draft') run.done('已暂存在系统里，没有提交。需要时说“再填一次”');
         else run.done('已停止，做过的步骤保留了截图');
       }
