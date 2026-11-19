@@ -148,9 +148,12 @@ def test_existing_application_catalog_is_visible_without_executable_tools(make_c
     client = make_client(ROOT / "apps")
     install(client.app, current_user)
     login(client, "sampleadmin")
-    legacy_ids = {"document", "enterprise", "meeting", "policy"}
+    legacy_ids = {"document", "enterprise", "meeting"}
     catalog = {item["id"]: item for item in client.get("/api/v1/apps").json()["items"]}
-    assert legacy_ids <= catalog.keys()
+    assert legacy_ids | {"policy"} <= catalog.keys()
+    # 政策兑现已完整绑定工具桥，其余存量应用仍只展示目录。
+    assert {tool["name"] for tool in catalog["policy"]["tools"]} == {
+        "policy.match", "policy.calc", "policy.notice", "policy.search"}
     assert not any(tool["app"] in legacy_ids for tool in client.get("/api/v1/tools").json()["items"])
     for app_id in legacy_ids:
         details = client.get(f"/api/v1/apps/{app_id}")
@@ -160,10 +163,10 @@ def test_existing_application_catalog_is_visible_without_executable_tools(make_c
 
 
 def test_catalog_only_format_cannot_hide_an_incomplete_bridge_declaration():
-    data = json.loads((ROOT / "apps/policy/app.json").read_text(encoding="utf-8"))
+    data = json.loads((ROOT / "apps/enterprise/app.json").read_text(encoding="utf-8"))
     assert validate_extensions(data) == []
     assert validate_extensions(data, required=True)
-    data["tools"][0]["endpoint"] = "GET /api/apps/policy/records"
+    data["tools"][0]["endpoint"] = "GET /api/apps/enterprise/records"
     assert "缺少字段 tools[0].write" in validate_extensions(data)
 
 
@@ -568,8 +571,11 @@ def test_default_instance_catalog_skills_and_tool_permissions(role, username, vi
         assert {item["id"] for item in catalog.json()["items"]} & business_apps == visible
         tools = client.get("/api/v1/tools")
         assert tools.status_code == 200
-        assert all(item["app"] not in business_apps for item in tools.json()["items"])
-        for app_id in business_apps:
+        legacy_apps = business_apps - {"policy"}
+        assert all(item["app"] not in legacy_apps for item in tools.json()["items"])
+        assert {item["name"] for item in tools.json()["items"] if item["app"] == "policy"} == {
+            "policy.match", "policy.calc", "policy.notice", "policy.search"}
+        for app_id in legacy_apps:
             detail = client.get(f"/api/v1/apps/{app_id}")
             legacy = platform.apps[app_id].manifest["tools"][0]["name"]
             call = client.post(f"/api/v1/apps/{app_id}/tools/{legacy}", json={"args": {}})
@@ -591,4 +597,7 @@ def test_default_instance_catalog_skills_and_tool_permissions(role, username, vi
             detail = client.get("/api/v1/apps/policy")
             assert detail.status_code == (200 if allowed else 403)
             call = client.post("/api/v1/apps/policy/tools/search", json={"args": {}})
-            assert_error(call, 404 if allowed else 403, "TOOL_NOT_FOUND" if allowed else "FORBIDDEN")
+            if allowed:
+                assert call.status_code == 200 and "items" in call.json()["result"]
+            else:
+                assert_error(call, 403, "FORBIDDEN")

@@ -178,18 +178,41 @@ def test_rule_wins_over_matching_example_and_keeps_grounded_entity(instance):
     result = plan(client, "补填数据采购额 30 万", context={"entId": "E001"})
     assert result["intent"] == "policy.fill"
     assert result["slots"] == {"ent": "E001", "amount": 300000}
-    # 默认实例的 policy.match 只有旧版说明，计划仍能识别意图和金额，
-    # 但只能打开应用。只有桥目录中的可执行绑定才能生成调用步骤。
-    assert [(step["action"], step.get("target")) for step in result["steps"]] == [("open", "policy")]
-    assert all("tool" not in step for step in result["steps"])
+    # 默认实例的 policy.match 已有完整桥绑定，计划给出带企业与覆盖字段的真实调用步骤。
+    call = {"tool": "policy.match", "args": {"entId": "E001", "overrides": {"dataPurchase": 300000}}}
+    assert [(step["action"], step.get("tool"), step.get("args")) for step in result["steps"]] == [
+        ("open", None, None), ("call", call["tool"], call["args"]),
+    ]
 
-    manifest = platform.apps["policy"].manifest
-    manifest.update(starters=[], chatCards=[], deepLink={"params": []}, dataClass="public", tools=[{
-        "name": "policy.match", "description": "匹配政策", "write": False,
-        "input": {}, "endpoint": "GET /api/apps/policy/match",
-    }])
-    connected = plan(client, "补填数据采购额 30 万", context={"entId": "E001"})
-    assert connected["steps"][-1]["tool"] == "policy.match"
+
+def _purchase_checks(body):
+    return {row["id"]: [check["state"] for check in row["checks"] if check["condition"]["f"] == "dataPurchase"]
+            for row in body["results"] if row["id"] in ("RP-001", "RP-003")}
+
+
+def test_policy_fill_plan_executes_real_match_through_bridge(instance, monkeypatch):
+    # 业务路由需要应用模型句柄；本用例不调用模型。
+    monkeypatch.setattr(instance.state.platform.model, "for_app", lambda *args, **kwargs: None, raising=False)
+    client = login(instance, "member")
+    result = plan(client, "补填数据采购额 30 万", context={"entId": "E001"})
+    assert result["mode"] == "execute"
+    step = next(step for step in result["steps"] if step["action"] == "call")
+    app_id, tool = step["tool"].split(".")
+    baseline = client.post(f"/api/v1/apps/{app_id}/tools/{tool}", json={"args": {"entId": "E001"}})
+    executed = client.post(f"/api/v1/apps/{app_id}/tools/{tool}", json={"args": step["args"]})
+    assert baseline.status_code == executed.status_code == 200, executed.text
+    assert executed.json()["result"]["profile"]["dataPurchase"] == 300000
+    assert _purchase_checks(baseline.json()["result"]) == {"RP-001": ["unknown"], "RP-003": ["unknown"]}
+    assert _purchase_checks(executed.json()["result"]) == {"RP-001": ["ok"], "RP-003": ["ok"]}
+    calls = [item["detail"] for item in instance.state.platform.store.audit_list()
+             if item["action"] == "tool.call" and item["detail"]["tool"] == "policy.match"]
+    assert [detail["outcome"] for detail in calls] == ["ok", "ok"]
+    assert report(client, result["planId"], {"s1": "done", step["id"]: "done"}).json()["status"] == "done"
+
+    readonly = login(instance, "partner")
+    denied = plan(readonly, "补填数据采购额 30 万", context={"entId": "E001"})
+    step = next(step for step in denied["steps"] if step["action"] == "call")
+    codes(readonly.post("/api/v1/apps/policy/tools/match", json={"args": step["args"]}), 403, "FORBIDDEN")
 
 
 def test_visit_honors_write_metadata_from_tools_bridge(instance, monkeypatch):
