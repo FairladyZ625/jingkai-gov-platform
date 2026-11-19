@@ -402,7 +402,7 @@
 
       /* ---------- 对话快照 ---------- */
       function snapshotFlow() {
-        const params = S.mode === 'manual' ? { manual: structuredClone(S.manual) } : (ent() ? { entId: S.entId } : {});
+        const params = S.mode === 'manual' ? { manual: structuredClone(S.manual) } : (S.entId ? { entId: S.entId } : {});
         if (Object.keys(S.overrides).length) params.overrides = structuredClone(S.overrides);
         if (!S.match || S.step === 0) return { route: 'home', params };
 

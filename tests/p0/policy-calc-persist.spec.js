@@ -220,3 +220,37 @@ test('首次恢复匹配失败后再次返回仍保留告知单和手填房租',
   await expect(rent).toHaveValue('1');
   await expect(total).toHaveText(/5000\s*元/);
 });
+
+test('台账列表短暂失败后再次往返仍保留企业、草稿和房租', async ({ page, context }) => {
+  await context.setOffline(true);
+  const { other, saved } = await openPolicyConversation(page);
+  const { rent, total } = await editRent(page);
+  await op(page, 'policy.to-notice').click();
+  const notice = page.locator('#pn');
+  await expect(notice).toHaveValue(/5000\s*元/);
+  const draft = (await notice.inputValue()) + '\n备注：房租已复核';
+  await other.click();
+  await page.evaluate(() => {
+    const list = JKApi.enterprise.list;
+    JKApi.enterprise.list = async (params) => {
+      if (params?.sort !== 'name') return list(params);
+      JKApi.enterprise.list = list;
+      throw new Error('企业台账暂不可用');
+    };
+  });
+  await holdNextPolicyResponse(page, 'calc', 'PI-03');
+  await saved.click();
+  await expect.poll(() => page.evaluate(() => !!window.releasePolicyResponse)).toBe(true);
+  await notice.fill(draft);
+  await other.click();
+  await page.evaluate(() => window.releasePolicyResponse());
+  await saved.click();
+
+  await expect(notice).toHaveValue(draft);
+  await op(page, 'policy.step-1').click();
+  await expect(page.locator('#ps .q')).toContainText('书香里文化');
+  await expect(page.locator('[data-pick="PI-03"]')).toBeChecked();
+  await op(page, 'policy.next').click();
+  await expect(rent).toHaveValue('1');
+  await expect(total).toHaveText(/5000\s*元/);
+});
