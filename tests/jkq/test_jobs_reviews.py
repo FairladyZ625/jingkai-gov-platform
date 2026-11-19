@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -209,7 +210,7 @@ def test_sdk_review_lists_and_decisions_keep_core_contract(client, verb, status)
     assert moved.json()['decision']['decision'] == 'reassign'
     assert client.get(assigned).json() == {'items': []}
     denied = client.post(path, json={'decision': verb, 'version': 1})
-    assert denied.status_code == 403 and denied.json()['error']['code'] == 'forbidden'
+    assert denied.status_code == 403 and denied.json()['error']['code'] == 'FORBIDDEN'
 
     assert client.post('/api/auth/login', json={'user_id': 'sampleextra'}).status_code == 200
     item = client.get(assigned).json()['items'][0]
@@ -247,7 +248,7 @@ def test_jingkai_routes_normalize_auth_errors_and_preserve_challenge(client):
         assert_error(response, 401, 'UNAUTHENTICATED')
         assert response.headers['www-authenticate'] == 'Bearer'
     sdk_response = client.get(f'{JOBS}/missing?app=sample-app')
-    assert sdk_response.status_code == 401 and sdk_response.json()['error']['code'] == 'unauthenticated'
+    assert sdk_response.status_code == 401 and sdk_response.json()['error']['code'] == 'UNAUTHENTICATED'
 
 
 @pytest.mark.parametrize('body', ['{"decision":', '[]', '{"decision":"approve"}'])
@@ -281,15 +282,29 @@ def test_job_missing_and_queued(client):
     assert 'post' in schema[REVIEWS] and 'get' in schema[REVIEWS]
 
 
-def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
+@pytest.mark.parametrize(('code', 'expected'), [
+    ('invalid_request', 'INVALID_REQUEST'),
+    ('loan_period_invalid', 'loan_period_invalid'),
+])
+def test_sdk_job_failure_retains_flat_error_and_jingkai_view(
+    isolated_platform, jkq_accounts, monkeypatch, code, expected,
+):
     def fail(_execution, _body):
-        raise DataError('invalid_request', '样例任务失败')
+        raise DataError(code, '样例任务失败', retryable=True, fields=['period'])
 
-    client.app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
-    with client:
-        assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
+    monkeypatch.setenv('HAIKNOW_SECRET', secrets.token_hex(16))
+    config, _ = isolated_platform
+    (config / 'projects.yaml').write_bytes((ROOT / 'config/projects.yaml').read_bytes())
+    (config / 'users.yaml').write_text(json.dumps({'users': [
+        {'id': 'sampleoperator', 'name': '样例办理员', 'roles': ['sampleoperator'], 'projects': ['jkq']},
+    ]}), encoding='utf-8')
+    create, login = jkq_accounts
+    app = create()
+    app.state.platform.jobs.operations[('sample-app', 'transcribe')] = ('1', fail)
+    with TestClient(app) as client:
+        login(client, 'sampleoperator')
         response = client.post(JOBS, json={
-            'appId': 'sample-app', 'project': 'sample-project', 'operation': 'transcribe',
+            'appId': 'sample-app', 'project': 'jkq', 'operation': 'transcribe',
             'input': {}, 'idempotencyKey': 'failure-example',
         })
         assert response.status_code == 202, response.text
@@ -303,9 +318,11 @@ def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
                 break
             time.sleep(.02)
         assert raw['status'] == 'failed' and raw['result'] is None
-        assert raw['error']['code'] == 'invalid_request'
-        assert raw['error']['message'] == '样例任务失败'
-        view = client.get(path, headers=as_user('sampleoperator')).json()['job']
+        assert raw['error'] == {
+            'code': expected, 'message': '样例任务失败', 'retryable': True,
+            'fields': ['period'], 'jobId': raw['id'],
+        }
+        view = client.get(path).json()['job']
         assert view['status'] == 'failed' and view['progress'] == 0
 
 

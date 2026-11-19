@@ -16,6 +16,7 @@ pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-
 from fastapi import APIRouter, HTTPException
 from fastapi.testclient import TestClient
 
+from haiknow_sdk import DataError
 from jkq import routers
 from jkq.app import create_app
 from jkq.settings import REPO_ROOT, core_environment
@@ -218,6 +219,28 @@ def test_registered_route_preserves_http_error_status_details_and_headers(data_d
         assert_error(response, 503, "INTERNAL_ERROR")
         assert "测试内部诊断" not in response.text
         assert response.headers["retry-after"] == "60"
+
+
+@pytest.mark.parametrize(("code", "status", "expected"), [
+    ("loan_period_invalid", 400, "loan_period_invalid"),
+    ("LOAN_PERIOD_INVALID", 400, "LOAN_PERIOD_INVALID"),
+    ("version_conflict", 409, "VERSION_CONFLICT"),
+])
+def test_v1_error_normalization_preserves_custom_code(data_dir, monkeypatch, code, status, expected):
+    router = APIRouter(prefix="/api/v1")
+
+    @router.post("/test-loan")
+    def test_loan():
+        raise DataError(code, "请核对版本与借期", retryable=True, currentVersion=2)
+
+    monkeypatch.setattr(routers, "ROUTERS", (router,))
+    with TestClient(create_app()) as client:
+        response = client.post("/api/v1/test-loan")
+    assert response.status_code == status
+    assert response.json() == {"error": {
+        "code": expected, "message": "请核对版本与借期",
+        "details": {"currentVersion": 2, "retryable": True},
+    }}
 
 
 class PageAssets(HTMLParser):

@@ -44,8 +44,8 @@ assert.equal(calls.at(-1).path, '/api/v1/jobs/notifications?app=job-a');
 await jobs.readNotification(sdk.http, ctx.app.id, 'note/1');
 assert.equal(calls.at(-1).path, '/api/v1/jobs/notifications/note%2F1/read?app=job-a');
 globalThis.fetch = async () => ({ ok: false, status: 409, headers: { get: () => 'application/json' },
-  json: async () => ({ error: { code: 'invalid_state', message: '防重复编号冲突', retryable: false, jobId: 'old' } }) });
-await assert.rejects(() => jobs.submit(sdk.http, ctx.app.id, {}), e => e.status === 409 && e.code === 'invalid_state' && e.retryable === false && e.jobId === 'old');
+  json: async () => ({ error: { code: 'INVALID_STATE', message: '防重复编号冲突', retryable: false, jobId: 'old' } }) });
+await assert.rejects(() => jobs.submit(sdk.http, ctx.app.id, {}), e => e.status === 409 && e.code === 'INVALID_STATE' && e.retryable === false && e.jobId === 'old');
 console.log('任务 SDK：七类路由、应用绑定、URL 编码与错误字段通过');
 '''
     result = subprocess.run([node, '--input-type=module', '-e', script, str(ROOT / 'core/sdk/js/haiknow.js'),

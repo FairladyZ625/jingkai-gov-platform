@@ -122,7 +122,7 @@ def test_chat_outbound_limit_blocks_before_any_provider_request(tmp_path, monkey
     assert client.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 200
     response = client.get('/api/apps/sample-app/chat-boundary')
     assert response.status_code == 403
-    assert response.json()['error']['code'] == 'outbound_denied'
+    assert response.json()['error']['code'] == 'OUTBOUND_DENIED'
     client.post('/api/auth/logout')
     assert client.post('/api/auth/login', json={'user_id': 'sampleadmin'}).status_code == 200
     denials = [item for item in client.get('/api/audit').json()['items'] if item['action'] == 'ai.outbound_denied']
@@ -180,7 +180,7 @@ def test_request_validation_and_unauthorized_app(tmp_path, monkeypatch):
     assert client.post('/api/v1/ai/fetch', json={'appId': 'sample-app', 'url': 'https://example.test',
                                                  'classification': 'secret'}).status_code == 422
     missing = client.post('/api/v1/ai/parse', json={'appId': 'sample-app', 'fileId': 'no-such-file'})
-    assert missing.status_code == 404 and missing.json()['error']['code'] == 'not_found'
+    assert missing.status_code == 404 and missing.json()['error']['code'] == 'NOT_FOUND'
     assert client.post('/api/v1/ai/search', json={'appId': 'no-such-app', 'query': 'x'}).status_code == 404
 
 
@@ -189,7 +189,7 @@ def test_outbound_limit_blocks_confidential_and_public_provider(tmp_path, monkey
     mock_provider(client, 'open', allow_outbound='public')
     mock_routes(client, 'open', ('search',))
     denied = client.post('/api/v1/ai/search', json={'appId': 'sample-app', 'query': '虚构查询'})
-    assert denied.status_code == 403 and denied.json()['error']['code'] == 'outbound_denied'
+    assert denied.status_code == 403 and denied.json()['error']['code'] == 'OUTBOUND_DENIED'
     assert denied.json()['error']['retryable'] is False
     assert client.post('/api/v1/ai/search', json={'appId': 'sample-app', 'query': '虚构查询',
                                                  'classification': 'public'}).status_code == 200
@@ -198,7 +198,7 @@ def test_outbound_limit_blocks_confidential_and_public_provider(tmp_path, monkey
     mock_routes(client, 'plain', ('search',))
     assert client.post('/api/v1/ai/search', json={'appId': 'sample-app', 'query': '虚构查询'}).status_code == 200
     secret = client.post('/api/v1/ai/search', json={'appId': 'sample-app', 'query': '虚构查询', 'classification': 'confidential'})
-    assert secret.status_code == 403 and secret.json()['error']['code'] == 'outbound_denied'
+    assert secret.status_code == 403 and secret.json()['error']['code'] == 'OUTBOUND_DENIED'
     providers = {row['id']: row for row in client.get('/api/v1/admin/ai/providers').json()['items']}
     assert providers['plain']['allow_outbound'] == 'internal'
     assert providers['open']['allow_outbound'] == 'public'
@@ -221,7 +221,7 @@ def test_file_visibility_is_checked_for_parse_and_vision(tmp_path, monkeypatch):
         response = client.post(f'/api/v1/ai/{capability}', json={'appId': 'sample-app',
                                                                  'fileId': restricted['fileId'], **extra})
         assert response.status_code == 404
-        assert response.json()['error']['code'] == 'not_found'
+        assert response.json()['error']['code'] == 'NOT_FOUND'
 
 
 def test_preview_ai_tools_uses_platform_context(tmp_path, monkeypatch):
@@ -255,14 +255,14 @@ def test_fetch_rejects_malformed_ipv6_with_400(tmp_path, monkeypatch):
     assert client.put('/api/v1/admin/ai/routes/fetch', json={'provider': 'reader', 'model': 'reader-v1'}).status_code == 200
     response = client.post('/api/v1/ai/fetch', json={'appId': 'sample-app', 'url': 'http://[::1'})
     assert response.status_code == 400
-    assert response.json()['error']['code'] == 'bad_input'
+    assert response.json()['error']['code'] == 'BAD_INPUT'
 
 
 def test_provider_kinds_and_probe_endpoint(tmp_path, monkeypatch):
     client = login(tmp_path, monkeypatch)
     assert client.put('/api/v1/admin/ai/providers/reader', json={'kind': 'builtin', 'models': ['reader-v1']}).status_code == 200
     refused = client.put('/api/v1/admin/ai/providers/mineru', json={'kind': 'mineru', 'models': ['vlm']})
-    assert refused.status_code == 422 and refused.json()['error']['code'] == 'invalid_request'
+    assert refused.status_code == 422 and refused.json()['error']['code'] == 'INVALID_REQUEST'
     assert client.put('/api/v1/admin/ai/providers/mineru', json={
         'kind': 'mineru', 'base_url': 'https://mineru.net/api/v4', 'models': ['vlm'], 'allow_outbound': 'confidential'}).status_code == 200
     probed = client.post('/api/v1/admin/ai/providers/reader/probe')

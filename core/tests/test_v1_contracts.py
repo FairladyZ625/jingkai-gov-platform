@@ -72,7 +72,7 @@ def test_contract_examples(make_client, case):
 def test_conventions_match_runtime():
     from haiknow_sdk.resources import ERROR_STATUS
     spec = json.loads((ROOT / 'tests/fixtures/v1/conventions.json').read_text(encoding='utf-8'))
-    assert ERROR_STATUS == spec['errors']
+    assert {code.upper(): status for code, status in ERROR_STATUS.items()} == spec['errors']
 
     def statuses(value):
         if isinstance(value, dict):

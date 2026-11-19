@@ -8,7 +8,7 @@ from conftest import ROOT
 from test_platform import login
 
 
-@pytest.mark.parametrize('sdk', ['2', 2, '1.0', '', None, True])
+@pytest.mark.parametrize('sdk', ['3', 2, '1.0', '', None, True])
 def test_unsupported_sdk_is_unavailable(make_client, tmp_path, sdk):
     apps = tmp_path / 'apps'
     shutil.copytree(ROOT / 'tests/fixtures/platform-app', apps / 'sample-app')
@@ -34,12 +34,12 @@ def test_sdk_one_and_legacy_manifest():
 
     m = json.loads((ROOT / 'tests/fixtures/platform-app/app.json').read_text())
     legacy = {key: value for key, value in m.items() if key != 'sdk'}
-    assert SDK_VERSION == '1.0.0'
+    assert SDK_VERSION == '2.0.0'
     assert m['sdk'] == '1'
     assert manifest.validate(m) == []
     assert manifest.validate(legacy) == []
     assert manifest.sdk_error(legacy) == ''
-    assert manifest.sdk_error({**legacy, 'sdk': '2'}) != ''
+    assert manifest.sdk_error({**legacy, 'sdk': '2'}) == ''
 
 
 @pytest.mark.parametrize('value', [[], None, 'wrong', {'defaultRoles': ['bad']}, {'defaultRoles': {'sampleoperator': 2}}, {'actions': 2}])

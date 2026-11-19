@@ -407,10 +407,10 @@ def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatc
         assert client.post(path, json=body).status_code == 200
         disabled = client.post(path, json={**body, "model": "deepseek-configured-name"})
         assert disabled.status_code == 503
-        assert (disabled.json()["error"]["code"] if entry == "ai" else disabled.json()["kind"]) == "not_configured"
+        assert (disabled.json()["error"]["code"] if entry == "ai" else disabled.json()["kind"]) == ("NOT_CONFIGURED" if entry == "ai" else "not_configured")
         denied = client.post(path, json={**body, "model": "deepseek", "classification": "confidential"})
         assert denied.status_code == 403
-        assert (denied.json()["error"]["code"] if entry == "ai" else denied.json()["kind"]) == "outbound_denied"
+        assert (denied.json()["error"]["code"] if entry == "ai" else denied.json()["kind"]) == ("OUTBOUND_DENIED" if entry == "ai" else "outbound_denied")
 
         assert requests == [
             (f"{ident}.example.test", {"messages": messages, "temperature": 0.3, "max_tokens": 20,
@@ -477,7 +477,7 @@ def test_application_sdk_media_and_legacy_options_cannot_bypass_confidential_bou
             denied = client.post(f"{APP_CHAT}/{entry}", json={**body, "classification": "confidential"})
             assert denied.status_code == 400
             error = denied.json()
-            assert (error["error"]["code"] if entry == "ai" else error["kind"]) == "bad_input"
+            assert (error["error"]["code"] if entry == "ai" else error["kind"]) == ("BAD_INPUT" if entry == "ai" else "bad_input")
             stream = client.post(f"{APP_CHAT}/{entry}", json={**CHAT, "stream": True, "classification": "confidential"})
             assert stream.status_code == 400
         embedding = client.post("/api/apps/sample-app/sdk-embedding")
