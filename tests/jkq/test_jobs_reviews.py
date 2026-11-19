@@ -209,7 +209,7 @@ def test_sdk_review_lists_and_decisions_keep_core_contract(client, verb, status)
     assert moved.json()['decision']['decision'] == 'reassign'
     assert client.get(assigned).json() == {'items': []}
     denied = client.post(path, json={'decision': verb, 'version': 1})
-    assert denied.status_code == 403 and denied.json()['error']['code'] == 'forbidden'
+    assert denied.status_code == 403 and denied.json()['error']['code'] == 'FORBIDDEN'
 
     assert client.post('/api/auth/login', json={'user_id': 'sampleextra'}).status_code == 200
     item = client.get(assigned).json()['items'][0]
@@ -247,7 +247,7 @@ def test_jingkai_routes_normalize_auth_errors_and_preserve_challenge(client):
         assert_error(response, 401, 'UNAUTHENTICATED')
         assert response.headers['www-authenticate'] == 'Bearer'
     sdk_response = client.get(f'{JOBS}/missing?app=sample-app')
-    assert sdk_response.status_code == 401 and sdk_response.json()['error']['code'] == 'unauthenticated'
+    assert sdk_response.status_code == 401 and sdk_response.json()['error']['code'] == 'UNAUTHENTICATED'
 
 
 @pytest.mark.parametrize('body', ['{"decision":', '[]', '{"decision":"approve"}'])
@@ -303,7 +303,7 @@ def test_sdk_job_failure_retains_flat_error_and_jingkai_view(client):
                 break
             time.sleep(.02)
         assert raw['status'] == 'failed' and raw['result'] is None
-        assert raw['error']['code'] == 'invalid_request'
+        assert raw['error']['code'] == 'INVALID_REQUEST'
         assert raw['error']['message'] == '样例任务失败'
         view = client.get(path, headers=as_user('sampleoperator')).json()['job']
         assert view['status'] == 'failed' and view['progress'] == 0

@@ -91,7 +91,7 @@ def test_accepts_202_and_deduplicates_changed_input_conflicts(jobs_client):
     assert c.post('/api/v1/jobs', json=body()).json()['id'] == job['id']
     conflict = c.post('/api/v1/jobs', json=body(input={'value': 8}))
     assert conflict.status_code == 409
-    assert conflict.json()['error']['code'] == 'invalid_state'
+    assert conflict.json()['error']['code'] == 'INVALID_STATE'
     assert conflict.json()['error']['retryable'] is False
     assert conflict.json()['error']['jobId'] == job['id']
     assert len(c.get('/api/v1/jobs?app=job-a').json()['items']) == 1
@@ -120,7 +120,7 @@ def test_auth_scope_validation_and_sdk_app_binding(jobs_client):
     for invalid in ({'operation': 'missing'}, {'input': []}, {'idempotencyKey': ''}):
         r = c.post('/api/v1/jobs', json=body(**invalid))
         assert r.status_code == 422, r.text
-        assert r.json()['error']['code'] == 'invalid_request'
+        assert r.json()['error']['code'] == 'INVALID_REQUEST'
     job = c.post('/api/apps/job-a/submit', json={
         'operation': 'demo', 'project': 'sample-project', 'input': {}, 'idempotency_key': 'sdk',
     }).json()
@@ -227,7 +227,7 @@ def test_ai_queue_preserves_quota_error_and_can_be_retried_after_admin_change(jo
         jid = c.post('/api/v1/jobs', json=body(operation='ai-image')).json()['id']
         failed = wait_job(c, jid)
         assert failed['status'] == 'failed'
-        assert failed['error']['code'] == 'quota_exceeded' and not failed['error']['retryable']
+        assert failed['error']['code'] == 'QUOTA_EXCEEDED' and not failed['error']['retryable']
         assert failed['error']['jobId'] == jid
         assert failed['steps'][0]['status'] == 'failed'
         login(c, 'sampleadmin')
@@ -253,8 +253,8 @@ def test_queued_task_rechecks_operation_version_and_permissions(jobs_client):
     with c:
         a, b = wait_job(c, first), wait_job(c, second)
         assert a['status'] == b['status'] == 'failed'
-        assert a['error']['code'] == 'invalid_state'
-        assert b['error']['code'] == 'forbidden'
+        assert a['error']['code'] == 'INVALID_STATE'
+        assert b['error']['code'] == 'FORBIDDEN'
         assert a['steps'] == b['steps'] == []
         assert c.post('/api/v1/jobs/' + first + '/retry').status_code == 409
 
@@ -273,7 +273,7 @@ def test_failure_retry_skips_completed_steps_and_hides_internal_text(jobs_client
         login(c, 'sampleoperator')
         jid = c.post('/api/v1/jobs', json=body(operation='failure')).json()['id']
         failed = wait_job(c, jid)
-        assert failed['status'] == 'failed' and failed['error']['code'] == 'internal_error'
+        assert failed['status'] == 'failed' and failed['error']['code'] == 'INTERNAL_ERROR'
         assert '不应回显' not in json.dumps(failed, ensure_ascii=False)
         retry = c.post('/api/v1/jobs/' + jid + '/retry')
         assert retry.status_code == 202 and retry.json()['attempt'] == 2

@@ -38,7 +38,7 @@ def test_new_app_replaces_placeholders_and_registers_codeowner(tmp_path):
     app = root / "apps" / APP
     manifest = json.loads((app / "app.json").read_text(encoding="utf-8"))
     assert (manifest["id"], manifest["name"], manifest["owner"]) == (APP, "验收样本", "tester")
-    assert manifest["sdk"] == "1"
+    assert manifest["sdk"] == "2"
     readme = (app / "README.md").read_text(encoding="utf-8")
     assert "#17" in readme and "tester" in readme
     assert "../../core/README.md#启动" in readme

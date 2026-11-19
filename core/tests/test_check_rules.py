@@ -573,10 +573,44 @@ def test_err_registered_code_passes(tmp_path, monkeypatch):
     app = tmp_path / "apps" / "good-err"
     (app / "api").mkdir(parents=True)
     (app / "web").mkdir()
-    (app / "api" / "router.py").write_text('from haiknow_sdk import DataError\nraise DataError("xxx_failed", "导出失败")\n', encoding="utf-8")
-    (app / "web" / "errors.json").write_text('{"xxx_failed": "导出失败，请稍后重试"}\n', encoding="utf-8")
-    (app / "web" / "index.js").write_text("export async function mount(el, ctx) { try {} catch (e) { if (e.code === 'xxx_failed') ctx.toast(ctx.preview.errors.message(e), 'error'); } }\n", encoding="utf-8")
+    (app / "api" / "router.py").write_text('from haiknow_sdk import DataError\nraise DataError("XXX_FAILED", "导出失败")\n', encoding="utf-8")
+    (app / "web" / "errors.json").write_text('{"XXX_FAILED": "导出失败，请稍后重试"}\n', encoding="utf-8")
+    (app / "web" / "index.js").write_text("export async function mount(el, ctx) { try {} catch (e) { if (e.code === 'XXX_FAILED') ctx.toast(ctx.preview.errors.message(e), 'error'); } }\n", encoding="utf-8")
     assert run("errors", "good-err").errors == []
+
+
+def test_health_error_literal_must_be_uppercase(tmp_path, monkeypatch):
+    _fixture_app_root(tmp_path, monkeypatch, "bad-err-code")
+    router = tmp_path / "apps/bad-err-code/api/router.py"
+    for code, rejected in [("FORBIDDEN", False), ("forbidden", True)]:
+        router.write_text(f'body = {{"error": {{"code": "{code}"}}}}', encoding="utf-8")
+        errors = run("errors", "bad-err-code").errors
+        assert any("api/router.py" in error for error in errors) == rejected
+
+
+@pytest.mark.parametrize("sdk", ["1", "2"])
+def test_app_codes_preserve_registered_spelling(tmp_path, monkeypatch, sdk):
+    _fixture_app_root(tmp_path, monkeypatch, "bad-err-code")
+    app = tmp_path / "apps/bad-err-code"
+    (app / "app.json").write_text(json.dumps({"sdk": sdk}))
+    registry = app / "web/errors.json"
+    registry.write_text('{"xxx_failed":"导出失败"}')
+    ui = app / "web/index.js"
+    ui.write_text("if (err.code === 'xxx_failed') handle();")
+    router = app / "api/router.py"
+    with router.open("a") as f:
+        f.write('\nbody = {"error": {"code": "xxx_failed"}}\n')
+    assert run("errors", app.name).errors == []
+
+    ui.write_text("if (err.code === 'forbidden') handle();")
+    assert bool(run("errors", app.name).errors) == (sdk == "2")
+    ui.write_text("if (err.code === 'XXX_FAILED') handle();")
+    assert "XXX_FAILED" in message(run("errors", app.name), "CHK-ERR-03")
+    ui.write_text("")
+    registry.write_text('{"XXX_FAILED":"导出失败"}')
+    assert "xxx_failed" in message(run("errors", app.name), "CHK-ERR-03")
+    registry.write_text('{"Mixed_Case":"导出失败"}')
+    assert "Mixed_Case" in message(run("errors", app.name), "CHK-ERR-03")
 
 
 def _platform_root(tmp_path, monkeypatch, table: str, doc_codes=(), server_src: str = ""):
@@ -588,9 +622,9 @@ def _platform_root(tmp_path, monkeypatch, table: str, doc_codes=(), server_src: 
         "export const ISSUE_MESSAGES = {\n  required: '必填项缺失',\n};\n",
         encoding="utf-8",
     )
-    doc = tmp_path / "docs" / "specs" / "平台接口v1.md"
+    doc = tmp_path / check.PLATFORM_API_DOC
     doc.parent.mkdir(parents=True)
-    doc.write_text("| HTTP | code | 含义 |\n|---|---|---|\n" + "".join(f"| 403 | `{c}` | x |\n" for c in doc_codes), encoding="utf-8")
+    doc.write_text("| HTTP | code | 含义 |\n|---|---|---|\n" + "".join(f"`{c.upper()} 403`\n" for c in doc_codes), encoding="utf-8")
     srv = tmp_path / "core" / "server" / "haiknow_core" / "x.py"
     srv.parent.mkdir(parents=True)
     srv.write_text(server_src, encoding="utf-8")
@@ -602,9 +636,47 @@ def test_platform_table_must_cover_documented_and_server_codes(tmp_path, monkeyp
     report = run("errors")
     text = "\n".join(report.errors)
     assert codes(report) == {"CHK-ERR-04"}
-    assert "self_review" in text and "平台接口v1.md" in text
+    assert "self_review" in text and "接口规范.md" in text
     assert "brand_new" in text and "dup_user" in text
     assert len(report.errors) == 3
+
+
+def test_platform_gate_distinguishes_contract_from_examples(tmp_path, monkeypatch):
+    _platform_root(tmp_path, monkeypatch, "")
+    doc = tmp_path / check.PLATFORM_API_DOC
+    doc.write_text("""## 1. 通用约定
+
+常用错误码：`FORBIDDEN 403`。
+
+| 错误码 | HTTP | 含义 |
+|---|---|---|
+| `INVALID_REQUEST` | 400 / 422 | 请求格式有误 |
+| `INTERNAL_ERROR` | 5xx | 内部异常 |
+
+| 字段 | HTTP | 说明 |
+|---|---|---|
+| `EXAMPLE_FIELD` | 400 | 仅示例 |
+
+离线 mock 另有以下返回值。
+
+| 错误码 | HTTP | 含义 |
+|---|---|---|
+| `NO_ROUTE` | 404 | 离线路由未注册 |
+
+## 3. 接口
+
+错误密码 `401 BAD_CREDENTIALS`、停用 `403 ACCOUNT_DISABLED`、
+原密码错误 `400 BAD_PASSWORD`、弱密码 `400 WEAK_PASSWORD`。
+普通文本 404 UNRELATED、成功 `200 OK`、字段 `OTHER_FIELD`。
+""")
+    expected = {"forbidden", "invalid_request", "internal_error", "bad_credentials",
+                "account_disabled", "bad_password", "weak_password"}
+    report = run("errors")
+    assert codes(report) == {"CHK-ERR-04"}
+    assert len(report.errors) == len(expected)
+    assert all(any(f"错误码 {code}，" in error for error in report.errors) for code in expected)
+    shutil.copyfile(ROOT / check.PLATFORM_ERRORS_JS, tmp_path / check.PLATFORM_ERRORS_JS)
+    assert run("errors").errors == []
 
 
 def test_platform_table_values_must_be_chinese_without_code(tmp_path, monkeypatch):

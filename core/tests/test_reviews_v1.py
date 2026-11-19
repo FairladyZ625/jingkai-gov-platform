@@ -75,14 +75,14 @@ def test_self_review_and_no_approve(make_client):
     login(c, 'samplereviewer')
     own = record(c).json()
     assert submit(c, own).status_code == 403
-    assert submit(c, own).json()['error']['code'] == 'self_review'
+    assert submit(c, own).json()['error']['code'] == 'SELF_REVIEW'
     review = submit(c, own, None).json()
-    assert decide(c, review).json()['error']['code'] == 'self_review'
+    assert decide(c, review).json()['error']['code'] == 'SELF_REVIEW'
     login(c, 'sampleoperator')
     r = record(c).json()
     review = submit(c, r).json()
     denied = decide(c, review)
-    assert denied.status_code == 403 and denied.json()['error']['code'] == 'forbidden'
+    assert denied.status_code == 403 and denied.json()['error']['code'] == 'FORBIDDEN'
 
 
 def test_old_version_and_pending_review_are_not_confirmable(make_client):
@@ -97,7 +97,7 @@ def test_old_version_and_pending_review_are_not_confirmable(make_client):
     assert submitted[0]['status'] == 'recheck'
     login(c, 'samplereviewer')
     result = decide(c, review)
-    assert result.status_code == 409 and result.json()['error']['code'] == 'stale_version'
+    assert result.status_code == 409 and result.json()['error']['code'] == 'STALE_VERSION'
     assert c.get('/api/v1/reviews?assignee=me').json()['items'] == []
     assert c.get('/api/v1/artifacts').json()['items'] == []
 
@@ -243,7 +243,7 @@ def test_scope_and_permission_apply_to_every_resource(two_apps):
     assert submit(c, a, 'missing-user').status_code == 404
     review = submit(c, a).json()
     login(c, 'samplereviewer')
-    assert decide(c, review, version=2).json()['error']['code'] == 'stale_version'
+    assert decide(c, review, version=2).json()['error']['code'] == 'STALE_VERSION'
     assert decide(c, review).status_code == 200
     login(c, 'sampleoperator')
     b = c.post('/api/v1/apps/app-b/records', json={'project': 'limited-project', 'type': 'report', 'data': {}})
@@ -306,7 +306,7 @@ def test_invalidated_confirmation_is_not_a_new_shared_artifact(two_apps):
     historical = c.get(f"/api/v1/apps/app-b/records/{b['id']}/versions/1").json()
     assert historical['status'] == 'recheck' and historical['confirmedBy'] == 'samplereviewer'
     attempt = record(c, refs=[{'appId': 'app-b', 'recordId': b['id'], 'version': 1}])
-    assert attempt.status_code == 422 and attempt.json()['error']['code'] == 'invalid_reference'
+    assert attempt.status_code == 422 and attempt.json()['error']['code'] == 'INVALID_REFERENCE'
 
 
 @pytest.mark.parametrize('hidden_by', ['app', 'project'])
@@ -356,7 +356,7 @@ def test_artifact_files_filter_independent_visibility(two_apps, hidden_by):
     assert c.get(f"{bbase}/{target['id']}").status_code == 200
     for suffix in ['', '/content']:
         denied = c.get(f"/api/v1/files/{hidden['fileId']}" + suffix)
-        assert denied.status_code == 404 and denied.json()['error']['code'] == 'not_found'
+        assert denied.status_code == 404 and denied.json()['error']['code'] == 'NOT_FOUND'
     assert c.get(f"/api/v1/files/{visible['fileId']}").status_code == 200
     for query in ['', '?app=app-b', '?app=app-b&history=true']:
         result = c.get('/api/v1/artifacts' + query)
@@ -389,4 +389,4 @@ def test_artifact_file_errors_other_than_not_found_surface(make_client, monkeypa
         raise DataError(code, '演示文件读取失败')
     monkeypatch.setattr(c.app.state.platform.data, '_file', fail)
     response = c.get('/api/v1/artifacts')
-    assert response.status_code == status and response.json()['error']['code'] == code
+    assert response.status_code == status and response.json()['error']['code'] == code.upper()

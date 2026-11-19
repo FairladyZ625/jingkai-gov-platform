@@ -48,6 +48,6 @@ def test_frozen_sdk1_app(make_client, tmp_path):
     note = c.get(BASE + '/notifications').json()['items'][0]
     assert c.post(BASE + '/read/' + note['id']).json()['read'] is True
     conflict = c.post(BASE + '/save', json={'id': rec['id'], 'baseVersion': 1, 'data': {}})
-    assert conflict.status_code == 409 and conflict.json()['error']['code'] == 'version_conflict'
+    assert conflict.status_code == 409 and conflict.json()['error']['code'] == 'VERSION_CONFLICT'
     login(c, 'sampleadmin')
     assert 'sdk1.save' in {x['action'] for x in c.get('/api/audit?app_id=sdk1-app').json()['items']}

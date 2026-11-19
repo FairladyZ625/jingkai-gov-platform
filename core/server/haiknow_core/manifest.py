@@ -11,7 +11,7 @@ CONTRACT = 1
 KINDS = ("module", "embed")
 SECTORS = ("platform", "manufacturing", "marketing", "warehouse", "hr", "content", "other")
 STATUSES = ("idea", "prototype", "usable", "demo-ready")
-SUPPORTED_SDK = ("1",)
+SUPPORTED_SDK = ("1", "2")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
 # 版本会成为 data/app-versions/<id>/<version>/ 的目录名，校验放在清单元数据边界。
 VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")

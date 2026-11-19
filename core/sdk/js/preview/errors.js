@@ -1,10 +1,36 @@
 // 错误展示的唯一入口：错误对象 → 中文提示，界面不出现原始错误码。
 // 码表每条占一行（`  code: '中文',`），scripts/check.py 的 CHK-ERR-04 按这个格式解析并与
-// docs/specs/平台接口v1.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
+// prototype/v4/接口规范.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
 
 export const PLATFORM_ERROR_MESSAGES = {
   unauthenticated: '登录已失效，请重新登录',
+  bad_credentials: '账号或口令不正确',
+  account_disabled: '账号已停用，请联系管理员',
+  bad_password: '原密码不正确',
+  weak_password: '新密码至少需要 6 位',
+  invalid_query: '检索词缺少有效字符',
+  self_lock: '请保留管理员的管理权限',
+  skill_tool_not_allowed: '技能配置包含目录外的工具',
+  url_not_allowed: '请输入允许导入的公开网址',
+  tool_not_allowed: '技能未声明该工具',
+  already_decided: '该版本已有审签结果',
+  not_empty: '部门仍有成员、下级部门或岗位',
+  file_too_large: '附件总大小超出限制',
+  request_too_large: '导入请求过大，请减少导入内容',
+  payload_too_large: '录音文件超出上传限制',
+  unsupported_media_type: '不支持该导入格式',
+  transcribe_provider_error: '转写服务调用失败，请稍后重试',
+  url_fetch_failed: '读取网页失败，请检查网址',
+  transcribe_not_configured: '转写服务尚未就绪，请联系管理员',
+  url_fetch_timeout: '读取网页超时，请稍后重试',
+  transcribe_timeout: '转写超时，请稍后重试',
   invalid_credentials: '用户名或口令不正确',
+  invalid_box: '收件箱分类无效',
+  unsupported_type: '文件类型不受支持',
+  model_disabled: '该模型已停用',
+  tool_not_found: '工具不存在',
+  duplicate: '名称已存在，请换一个',
+  check_failed: '送审前核查未通过',
   locked: '登录失败次数过多，请稍后再试',
   forbidden: '没有执行此操作的权限',
   self_review: '提交人不能确认自己的记录',
@@ -123,8 +149,9 @@ export function issueMessage(code) {
 export function errorMessage(error, extra = null) {
   const code = error && error.code;
   const raw = error && typeof error.message === 'string' ? error.message.trim() : '';
-  if (raw && HAN.test(raw) && !(typeof code === 'string' && code && raw.includes(code))) return raw;
-  const mapped = ownKey(extra, code) || ownKey(PLATFORM_ERROR_MESSAGES, code);
+  const lowerCode = typeof code === 'string' ? code.toLowerCase() : '';
+  if (raw && HAN.test(raw) && !(lowerCode && raw.toLowerCase().includes(lowerCode))) return raw;
+  const mapped = ownKey(extra, code) || ownKey(extra, lowerCode) || ownKey(PLATFORM_ERROR_MESSAGES, lowerCode);
   if (mapped) return mapped;
   if (code && typeof console !== 'undefined') console.debug('[haiknow] 未登记的错误码：', code);
   if (error && !error.status && !code && /fetch|network|failed to load/i.test(raw)) return PLATFORM_ERROR_MESSAGES.network_error;

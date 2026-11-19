@@ -76,7 +76,7 @@ def test_app_router_returns_real_http_envelope(make_client, tmp_path):
     assert custom.status_code == 400
     assert custom.json() == {
         'error': {
-            'code': 'loan_period_invalid',
+            'code': 'LOAN_PERIOD_INVALID',
             'message': '借期需在 1–30 天',
             'retryable': False,
         }
@@ -88,4 +88,4 @@ def test_app_router_returns_real_http_envelope(make_client, tmp_path):
 
     platform = client.post(base + '/platform')
     assert platform.status_code == 404
-    assert platform.json()['error']['code'] == 'not_found'
+    assert platform.json()['error']['code'] == 'NOT_FOUND'

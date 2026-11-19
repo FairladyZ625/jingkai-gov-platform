@@ -2,7 +2,7 @@
 // 外壳调用应用的 mount(el, ctx)；ctx 由 createContext 生成。
 import { appErrorMessage, defineErrors, loadAppErrors } from './preview/errors.js';
 
-export const SDK_VERSION = '1.0.0';
+export const SDK_VERSION = '2.0.0';
 
 export async function http(path, opts = {}) {
   const init = { credentials: 'same-origin', ...opts, headers: { ...(opts.headers || {}) } };
