@@ -55,6 +55,16 @@
       "endpoint": "POST /api/apps/policy/calc"
     },
     {
+      "name": "policy.notice",
+      "description": "生成一次性告知单",
+      "write": false,
+      "input": {
+        "entId": "string",
+        "itemIds": "string[]"
+      },
+      "endpoint": "POST /api/apps/policy/notice"
+    },
+    {
       "name": "policy.search",
       "description": "按口语搜索兑现事项",
       "write": false,
