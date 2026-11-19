@@ -243,6 +243,25 @@ def test_web_preview_is_read_only_and_one_step_accepts_items_text_url():
     assert result.json()["docs"][2]["source"]["url"] == url
 
 
+@pytest.mark.parametrize("extra", [{"text": None, "title": None, "url": None}, {}])
+def test_one_step_treats_null_text_title_url_as_missing(extra):
+    client, repository = make_client()
+    result = client.post(PREFIX, json={
+        "items": [{"name": "条目文字", "text": "第一条 条目正文。"}],
+        "space": "policy", "from": "对话", **extra,
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["skipped"] == []
+    assert {d["text"] for d in documents(repository)} == {"第一条 条目正文。"}
+
+
+def test_null_in_other_fields_still_fails_closed():
+    client, _ = make_client()
+    response = client.post(PREFIX, json={"items": [{"name": "条目", "text": "第一条 正文。"}],
+                                         "space": None, "text": None})
+    assert response.status_code == 422 and response.json()["error"]["message"] == "未知知识库空间"
+
+
 @pytest.mark.parametrize("phase,status,expected", [
     ("forbidden", 400, "URL_NOT_ALLOWED"), ("redirect", 400, "URL_NOT_ALLOWED"),
     ("fetch", 502, "URL_FETCH_FAILED"), ("timeout", 504, "URL_FETCH_TIMEOUT"),

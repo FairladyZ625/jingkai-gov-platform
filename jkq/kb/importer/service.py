@@ -23,6 +23,7 @@ ITEM_FIELDS = {
     "file", "error",
 }
 BATCH_FIELDS = {"items", "space", "from", "classification"}
+OPTIONAL_TEXT_FIELDS = frozenset({"text", "title", "url"})
 META_FIELDS = {"title", "space", "kind", "docNo", "org", "date", "status", "url", "expire"}
 MAX_ITEMS = 32
 
@@ -251,6 +252,10 @@ class ImportService:
         return _Prepared(item, chunks, decision, expected)
 
     async def _prepare_batch(self, user, payload, access, files, *, one_step=False):
+        if isinstance(payload, dict):
+            # 原型适配层未填的 text/title/url 以 null 发送，与缺键同义；其他字段的 null 照常校验。
+            payload = {key: value for key, value in payload.items()
+                       if not (key in OPTIONAL_TEXT_FIELDS and value is None)}
         extra = {"text", "title", "url"} if one_step else set()
         _mapping(payload, BATCH_FIELDS | extra, "导入请求格式无效或包含未知字段")
         space = _space(access, payload["space"]) if "space" in payload else None
