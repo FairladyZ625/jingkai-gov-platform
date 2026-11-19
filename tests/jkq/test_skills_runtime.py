@@ -412,7 +412,7 @@ PUBLIC_SOURCE = "KB-P3950424"
 
 
 @pytest.fixture
-def instance(isolated_platform, cheap_password_hash, monkeypatch):
+def instance(isolated_platform, cheap_password_hash, monkeypatch, request):
     pytest.importorskip("fastapi")
     import os
     import secrets
@@ -427,16 +427,23 @@ def instance(isolated_platform, cheap_password_hash, monkeypatch):
     for name in ("HAIKNOW_ROOT", "JKQ_WEB_DIR", "JKQ_MOCK_GOV_URL", "JKQ_KB_VECTOR_SEARCH"):
         monkeypatch.delenv(name, raising=False)
     for name in tuple(os.environ):
-        if name.startswith(("JKQ_CLOUD_MODEL_", "JKQ_DEEPSEEK_MODEL_",
+        if name.startswith(("JKQ_CLOUD_MODEL_", "JKQ_DEEPSEEK_MODEL_", "JKQ_LOCAL_BACKUP_MODEL_",
                             "JKQ_LOCAL_MODEL_", "JKQ_OVERSEAS_MODEL_")):
             monkeypatch.delenv(name)
     for name in ("ADMIN", "LEADER", "MEMBER", "PARTNER"):
         monkeypatch.setenv(f"JKQ_DEMO_{name}_PASSWORD", password)
-    base = "http://127.0.0.1:18000/v1"
-    monkeypatch.setenv("JKQ_LOCAL_MODEL_BASE_URL", base)
-    monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", base)
-    monkeypatch.setenv("JKQ_LOCAL_MODEL_NAME", "acceptance-local")
-    monkeypatch.setenv("JKQ_MODEL_PROVIDER", "local")
+    provider = getattr(request, "param", "local")
+    if provider == "local":
+        base = "http://127.0.0.1:18000/v1"
+        monkeypatch.setenv("JKQ_LOCAL_MODEL_BASE_URL", base)
+        monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", base)
+        monkeypatch.setenv("JKQ_LOCAL_MODEL_NAME", "acceptance-local")
+    else:
+        assert provider == "cloud"
+        monkeypatch.setenv("JKQ_CLOUD_MODEL_BASE_URL", "https://skill-cloud.example.invalid/v1")
+        monkeypatch.setenv("JKQ_CLOUD_MODEL_NAME", "acceptance-cloud")
+        monkeypatch.setenv("JKQ_CLOUD_MODEL_API_KEY", "test-only")
+    monkeypatch.setenv("JKQ_MODEL_PROVIDER", provider)
     monkeypatch.setenv("JKQ_DEMO_MODE", "1")
     monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
     monkeypatch.setenv("HAIKNOW_SECRET", password)
@@ -723,3 +730,44 @@ def test_instance_confidential_kb_outside_enterprise_space_stays_confidential(in
     drafted = api.post(f"{ROOT}/draft", json={"text": marker})
     assert drafted.status_code == 200, drafted.text
     assert len(levels) == 4 and set(levels) == {"confidential"}
+
+
+@pytest.mark.parametrize("instance", ["cloud"], indirect=True)
+def test_cloud_only_confidential_skill_paths_never_call_transport(instance):
+    import httpx
+
+    api, sign_in = instance
+    sign_in()
+    service = api.app.state.jkq_models
+    # 内建 mock 没有上游地址；cloud 是唯一配置了传输的模型。
+    assert {name for name, config in service.providers.items() if config and config.get("base_url")} == {"cloud"}
+    calls = []
+
+    def count_only(request):
+        calls.append(request.url.host)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "合成测试回执"}}]})
+
+    service.transport = httpx.MockTransport(count_only)
+    # 正对照：同一运行实例可以发送普通消息，确保后续零调用不是配置缺失。
+    control = api.post("/api/v1/ai/chat", json={"messages": [{"role": "user", "content": "普通演练"}]})
+    assert control.status_code == 200, control.text
+    assert calls == ["skill-cloud.example.invalid"]
+    calls.clear()
+
+    marker = "合成机密纪要 测试甲项目节点"
+    imported = api.post("/api/v1/kb/import", json={
+        "title": "仅测试的会议纪要", "text": marker + "定于下月完成。",
+        "space": "minutes", "classification": "confidential",
+    })
+    assert imported.status_code == 200, imported.text
+    skill = {"name": "整理合成纪要", "spec": {"steps": [
+        {"type": "kb", "space": "minutes", "query": marker}, {"type": "model"},
+    ]}}
+    for path, body in ((f"{ROOT}/{create(api, skill)}/run", {}), (f"{ROOT}/trial", {"skill": skill})):
+        accepted = api.post(path, json=body)
+        assert accepted.status_code == 202, accepted.text
+        job = poll(api, accepted.json()["job"]["id"], expected="failed")
+        assert job["errorCode"] == "OUTBOUND_DENIED"
+        assert calls == []
+    error(api.post(f"{ROOT}/draft", json={"text": marker}), 403, "OUTBOUND_DENIED")
+    assert calls == []
