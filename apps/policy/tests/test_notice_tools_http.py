@@ -1,5 +1,6 @@
 """通过实例入口验证告知单、授权和对话编排。"""
 
+import json
 from shutil import copyfile
 
 import pytest
@@ -160,3 +161,56 @@ def test_view_only_role_does_not_receive_company_match_card(policy_client):
     reply = _send(policy_client("partner"), "书香里文化能申请哪些支持")
     assert reply["cards"] == []
     assert reply["toolCalls"][0]["status"] == "error"
+
+
+def test_policy_wiring_registers_one_messages_route(policy_client):
+    client = policy_client()
+
+    def message_routes(router):
+        for route in router.routes:
+            if nested := getattr(route, "original_router", None):
+                yield from message_routes(nested)
+            elif (getattr(route, "path", None) == "/api/v1/conversations/{cid}/messages"
+                  and "POST" in route.methods):
+                yield route
+
+    assert len(list(message_routes(client.app.router))) == 1
+
+
+def test_policy_gateway_preserves_other_gateway_and_stream_contract():
+    import asyncio
+    from apps.policy.instance import policy_gateway
+    from jkq.orchestrator.ports import ModelTurn
+
+    received = []
+    marker = ModelTurn(deltas=("原网关回复",))
+
+    async def fallback(request, **kwargs):
+        received.append((request, kwargs))
+        return marker
+
+    gateway = policy_gateway(fallback)
+    common = dict(tools=["policy.match"], model="offline-model", classification="internal", on_delta=None)
+    turn = asyncio.run(gateway(None, messages=[{"role": "user", "content": "看看纸鹿二号智驾能申请什么？"}], **common))
+    assert turn.calls[0].args == {"entId": "E002"} and received == []
+    turn = asyncio.run(gateway(None, messages=[{"role": "user", "content": "别的应用问题"}], **common))
+    assert turn is marker and received[-1][1]["on_delta"] is None
+    messages = [
+        {"role": "assistant", "tool_calls": [{"function": {"name": "enterprise.get"}}]},
+        {"role": "tool", "content": '{"text":"企业结果"}'},
+    ]
+    assert asyncio.run(gateway(None, messages=messages, **common)) is marker
+
+
+def test_policy_gateway_handles_streamed_request_via_common_route(policy_client):
+    client = policy_client()
+    cid = client.post("/api/v1/conversations", json={"title": "政策流式"}).json()["item"]["id"]
+    result = client.post(f"/api/v1/conversations/{cid}/messages", json={
+        "text": "看看书香里文化能申请什么", "stream": True,
+    })
+    assert result.status_code == 200
+    events = [block.split("\n", 1) for block in result.text.strip().split("\n\n")]
+    parsed = [(kind.removeprefix("event: "), json.loads(data.removeprefix("data: "))) for kind, data in events]
+    assert [kind for kind, _ in parsed] == ["meta", "tool", "delta", "card", "done"]
+    assert parsed[1][1] == {"tool": "policy.match", "args": {"entId": "E001"}, "status": "ok"}
+    assert parsed[3][1]["type"] == "policy-match" and len(parsed[3][1]["results"]) == 5
