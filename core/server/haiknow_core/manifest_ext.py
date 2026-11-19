@@ -9,6 +9,7 @@ _TOOL = re.compile(r"[a-z][a-z0-9_-]*")
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
 _DATA_CLASSES = ("public", "internal", "confidential")
 _FIELDS = ("tools", "starters", "chatCards", "deepLink", "dataClass", "accepts", "intents", "routes")
+_CATALOG_FIELDS = frozenset(("tools", "accepts", "intents", "routes"))
 
 
 def safe_segment(value: str) -> bool:
@@ -60,11 +61,25 @@ def _object_fields(value: object, fields: dict[str, str], path: str, errors: lis
     return len(errors) == before
 
 
+def _catalog_only(manifest: dict) -> bool:
+    """早期的清单只描述工具，不提供调用协议。混合或不完整的新格式不属于此契约。"""
+    tools = manifest.get("tools")
+    return (_CATALOG_FIELDS == manifest.keys() & _FIELDS
+            and isinstance(tools, list) and bool(tools)
+            and all(isinstance(item, dict) and item.keys() == {"name", "desc", "params"} for item in tools))
+
+
+def bridge_tools(manifest: dict) -> list:
+    """仅用于通过清单校验的应用；旧版工具描述不构成执行授权。"""
+    return [] if _catalog_only(manifest) else manifest.get("tools", [])
+
+
 def validate_extensions(manifest: dict, *, required: bool = False) -> list[str]:
     """扩展成组声明，数组可为空，声明后检查成员与必填子字段。"""
     if not required and not any(key in manifest for key in _FIELDS):
         return []
-    errors = [f"缺少字段 {key}" for key in _FIELDS if key not in manifest]
+    catalog_only = not required and _catalog_only(manifest)
+    errors = [f"缺少字段 {key}" for key in _FIELDS if key not in manifest and not catalog_only]
     for key in ("starters", "chatCards", "routes"):
         if key in manifest and not _strings(manifest[key]):
             errors.append(f"字段 {key} 类型应为字符串数组")
@@ -82,6 +97,11 @@ def validate_extensions(manifest: dict, *, required: bool = False) -> list[str]:
         items = manifest.get(key, [])
         if not isinstance(items, list):
             errors.append(f"字段 {key} 类型应为对象数组")
+            continue
+        if catalog_only and key == "tools":
+            for index, item in enumerate(items):
+                _object_fields(item, {"name": "非空字符串", "desc": "非空字符串", "params": "字符串值对象"},
+                               f"tools[{index}]", errors)
             continue
         names: set[str] = set()
         for index, item in enumerate(items):

@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.routing import Match
 
-from haiknow_core.manifest_ext import endpoint_parts, safe_segment, validate_extensions
+from haiknow_core.manifest_ext import bridge_tools, endpoint_parts, safe_segment, validate_extensions
 from haiknow_core.stability import AppIsolation, AppUnavailable
 from haiknow_sdk import DataError, User
 
@@ -83,7 +83,8 @@ def _public_manifest(entry: AppEntry, actions: frozenset[str], is_admin: bool) -
     result = {key: manifest[key] for key in _PUBLIC_FIELDS if key in manifest}
     for key, fields in _PUBLIC_LIST_FIELDS.items():
         if key in manifest:
-            result[key] = [{field: item[field] for field in fields} for item in manifest[key]]
+            items = bridge_tools(manifest) if key == "tools" else manifest[key]
+            result[key] = [{field: item[field] for field in fields} for item in items]
     if "deepLink" in manifest:
         result["deepLink"] = {"params": manifest["deepLink"]["params"]}
     reason = entry.unavailable_reason()
@@ -213,7 +214,7 @@ class AppsBridge:
             "items": [
                 {"name": tool["name"], "app": entry.manifest["id"], "write": tool["write"]}
                 for entry, _ in self._visible(user) if not entry.unavailable_reason()
-                for tool in entry.manifest.get("tools", [])
+                for tool in bridge_tools(entry.manifest)
             ]
         }
 
@@ -230,7 +231,7 @@ class AppsBridge:
             actions = await run_in_threadpool(self.platform.rbac.actions, user, app_id)
             if "view" not in actions:
                 raise _BridgeError(403, "FORBIDDEN", "没有查看此应用的权限", app=app_id, need="view")
-            tool = next((item for item in entry.manifest.get("tools", []) if item["name"] == name), None)
+            tool = next((item for item in bridge_tools(entry.manifest) if item["name"] == name), None)
             if tool is None:
                 raise _BridgeError(404, "TOOL_NOT_FOUND", "工具不存在")
             if tool["write"]:

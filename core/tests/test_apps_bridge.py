@@ -144,6 +144,29 @@ def assert_error(response, status, code):
     return error
 
 
+def test_existing_application_catalog_is_visible_without_executable_tools(make_client):
+    client = make_client(ROOT / "apps")
+    install(client.app, current_user)
+    login(client, "sampleadmin")
+    legacy_ids = {"document", "enterprise", "meeting", "policy"}
+    catalog = {item["id"]: item for item in client.get("/api/v1/apps").json()["items"]}
+    assert legacy_ids <= catalog.keys()
+    assert not any(tool["app"] in legacy_ids for tool in client.get("/api/v1/tools").json()["items"])
+    for app_id in legacy_ids:
+        details = client.get(f"/api/v1/apps/{app_id}")
+        assert details.status_code == 200 and details.json()["tools"] == catalog[app_id]["tools"] == []
+        tool = client.app.state.platform.apps[app_id].manifest["tools"][0]["name"]
+        assert_error(client.post(f"/api/v1/apps/{app_id}/tools/{tool}", json={"args": {}}), 404, "TOOL_NOT_FOUND")
+
+
+def test_catalog_only_format_cannot_hide_an_incomplete_bridge_declaration():
+    data = json.loads((ROOT / "apps/policy/app.json").read_text(encoding="utf-8"))
+    assert validate_extensions(data) == []
+    assert validate_extensions(data, required=True)
+    data["tools"][0]["endpoint"] = "GET /api/apps/policy/records"
+    assert "缺少字段 tools[0].write" in validate_extensions(data)
+
+
 def test_catalog_and_details_use_real_partner_grants(api):
     client, _ = api
     for path in ("/api/v1/apps", f"/api/v1/apps/{APP}", "/api/v1/tools"):
