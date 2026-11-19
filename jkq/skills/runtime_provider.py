@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import Request
 from haiknow_core.aihub.gateway import allowed_outbound
+from haiknow_core.aihub.providers.jkq_chat import ChatGateway, ProviderRejected
 from haiknow_core.stability import AppUnavailable
 from haiknow_sdk import DataError, PermissionDenied
 from haiknow_sdk.ai import AIError
@@ -28,6 +29,11 @@ MODEL_ERRORS = {
 }
 
 
+def _approved_local(model, provider):
+    return (model.group == "本地部署" and provider is not None and provider["kind"] != "mock"
+            and allowed_outbound(provider, "confidential"))
+
+
 def editor_options(app, user):
     spaces = ()
     if "view" in app.state.platform.rbac.actions(user, "kb"):
@@ -41,7 +47,7 @@ def editor_options(app, user):
         if model_id == "auto":
             options["models"].append({"id": model_id, "name": name, "local": False})
         elif item["enabled"] and provider["kind"] != "mock":
-            local = allowed_outbound(provider, "confidential")
+            local = _approved_local(service.models[model_id], provider)
             options["models"].append({"id": model_id, "name": name, "local": local})
             # 模型名称别名必须能在现有双引号 value 属性中原样往返。
             if (name not in service.models and service._sdk_model_id(name) == model_id
@@ -148,8 +154,12 @@ class SkillProvider:
             if service is None:
                 raise AIError("not_configured", "")
             model_id = service._sdk_model_id(None if model == "auto" else model)
-            result, _ = service.call(user, {"messages": messages, "classification": classification},
-                                     model=model_id, app_id="skills")
+            payload = {"messages": messages, "classification": classification}
+            definition = service.models.get(model_id)
+            if definition is not None and definition.group == "本地部署":
+                result = self._complete_local(service, user, model_id, payload)
+            else:
+                result, _ = service.call(user, payload, model=model_id, app_id="skills")
             result_body = result["result"]
             if result_body["mock"]:
                 raise AIError("not_configured", "")
@@ -159,6 +169,30 @@ class SkillProvider:
             )
             raise SkillError(status, code, message) from exc
         return result["model"], result_body["content"]
+
+    def _complete_local(self, service, user, model_id, payload):
+        items = service.items()
+        service._require_enabled(items, model_id)
+        provider = service.providers[model_id]
+        # 显式本地选择固定到获准端点。网关使用原始密级做出站检查、配额和结算。
+        candidates = ([(provider, items[model_id]["name"])]
+                      if _approved_local(service.models[model_id], provider) else [])
+        store = self.platform.store
+
+        def record_attempt(provider_id, model, status, usage):
+            store.audit("skills", user.id, "ai.chat", {
+                "provider": provider_id, "model": model, "status": status, "usage": usage,
+            })
+
+        def record_outbound(app_id, user_id, action, detail):
+            if action == "ai.outbound_denied":
+                store.audit(app_id, user_id, action, detail)
+
+        gateway = ChatGateway(service.settings, record_outbound, candidates, record_attempt, transport=service.transport)
+        try:
+            return gateway.call("skills", "chat", payload, principal=user)
+        except ProviderRejected:
+            raise AIError("provider_error", "") from None
 
     def ask(self, user, params):
         question = params["q"]

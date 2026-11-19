@@ -432,18 +432,19 @@ def instance(isolated_platform, cheap_password_hash, monkeypatch, request):
             monkeypatch.delenv(name)
     for name in ("ADMIN", "LEADER", "MEMBER", "PARTNER"):
         monkeypatch.setenv(f"JKQ_DEMO_{name}_PASSWORD", password)
-    provider = getattr(request, "param", "local")
-    if provider == "local":
+    deployment = getattr(request, "param", "local")
+    assert deployment in {"local", "cloud", "local-and-cloud", "unapproved-local-and-cloud"}
+    if deployment != "cloud":
         base = "http://127.0.0.1:18000/v1"
         monkeypatch.setenv("JKQ_LOCAL_MODEL_BASE_URL", base)
-        monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", base)
+        if deployment != "unapproved-local-and-cloud":
+            monkeypatch.setenv("JKQ_LOCAL_MODEL_CONFIDENTIAL_BASE_URL", base)
         monkeypatch.setenv("JKQ_LOCAL_MODEL_NAME", "acceptance-local")
-    else:
-        assert provider == "cloud"
+    if deployment != "local":
         monkeypatch.setenv("JKQ_CLOUD_MODEL_BASE_URL", "https://skill-cloud.example.invalid/v1")
         monkeypatch.setenv("JKQ_CLOUD_MODEL_NAME", "acceptance-cloud")
         monkeypatch.setenv("JKQ_CLOUD_MODEL_API_KEY", "test-only")
-    monkeypatch.setenv("JKQ_MODEL_PROVIDER", provider)
+    monkeypatch.setenv("JKQ_MODEL_PROVIDER", "cloud" if deployment == "cloud" else "local")
     monkeypatch.setenv("JKQ_DEMO_MODE", "1")
     monkeypatch.setenv("HAIKNOW_DEMO_LOGIN", "0")
     monkeypatch.setenv("HAIKNOW_SECRET", password)
@@ -707,6 +708,76 @@ def test_instance_resolves_existing_skill_model_for_run_and_trial(instance, mode
         else:
             assert job["errorCode"] == "NOT_FOUND" and job["result"] is None
     assert len(calls) == (2 if known else 0)
+
+
+@pytest.mark.parametrize("instance", ["local-and-cloud"], indirect=True)
+@pytest.mark.parametrize("operation", ["run", "trial"])
+@pytest.mark.parametrize("model", ["local", "acceptance-local", "auto"])
+def test_instance_skill_local_failure_routes_by_selection(instance, operation, model):
+    import httpx
+
+    api, sign_in = instance
+    sign_in()
+    options = {item["id"]: item for item in api.get(f"{ROOT}/meta/options").json()["models"]}
+    assert options["local"]["local"] and options["acceptance-local"]["local"]
+    assert not options["auto"]["local"] and not options["cloud"]["local"]
+    calls = []
+    marker = "合成技能输入，仅用于离线验证"
+
+    def upstream(request):
+        payload = json.loads(request.content)
+        assert json.loads(payload["messages"][-1]["content"])["inputs"] == {"note": marker}
+        calls.append((request.url.host, payload["model"]))
+        if request.url.host == "127.0.0.1":
+            return httpx.Response(503)
+        assert request.url.host == "skill-cloud.example.invalid"
+        return httpx.Response(200, json={"choices": [{"message": {"content": "离线云端回执"}}]})
+
+    api.app.state.jkq_models.transport = httpx.MockTransport(upstream)
+    skill = {"name": "离线路由", "spec": {"model": model, "steps": [{"type": "model"}],
+                                      "inputs": [{"key": "note", "required": True}]}}
+    body = {"inputs": {"note": marker}}
+    if operation == "run":
+        path = f"{ROOT}/{create(api, skill)}/run"
+    else:
+        path = f"{ROOT}/trial"
+        body["skill"] = skill
+    accepted = api.post(path, json=body)
+    assert accepted.status_code == 202, accepted.text
+    auto = model == "auto"
+    job = poll(api, accepted.json()["job"]["id"], expected="done" if auto else "failed")
+    expected_calls = [("127.0.0.1", "acceptance-local")]
+    if auto:
+        assert job["result"]["model"] == "acceptance-cloud"
+        expected_calls.append(("skill-cloud.example.invalid", "acceptance-cloud"))
+    else:
+        assert job["errorCode"] == "PROVIDER_ERROR" and job["result"] is None
+        assert job["steps"][0]["status"] == "failed"
+    assert calls == expected_calls
+
+
+@pytest.mark.parametrize("instance", ["unapproved-local-and-cloud"], indirect=True)
+def test_instance_explicit_unapproved_local_skill_has_no_transport(instance):
+    import httpx
+
+    api, sign_in = instance
+    sign_in()
+    options = {item["id"]: item for item in api.get(f"{ROOT}/meta/options").json()["models"]}
+    assert not options["local"]["local"]
+    calls = []
+
+    def record(request):
+        calls.append(request.url.host)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "合成测试回执"}}]})
+
+    api.app.state.jkq_models.transport = httpx.MockTransport(record)
+    for model in ("local", "acceptance-local"):
+        skill = {"name": "未获准的本地部署", "spec": {"model": model, "steps": [{"type": "model"}]}}
+        response = api.post(f"{ROOT}/trial", json={"skill": skill})
+        assert response.status_code == 202, response.text
+        job = poll(api, response.json()["job"]["id"], expected="failed")
+        assert job["errorCode"] == "OUTBOUND_DENIED" and job["result"] is None
+    assert calls == []
 
 
 def test_instance_permissions_skip_and_unavailable_are_distinct(instance):
