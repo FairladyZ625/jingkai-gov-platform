@@ -116,6 +116,78 @@ class KnowledgeSource:
             _kb_source.reset(token)
 
 
+# 演示配置下技能起草的预置草稿：模型被出站策略拒绝或未配置时使用，不放宽出站检查。
+SKILL_DRAFT_PATH = "/api/v1/skills/draft"
+SKILL_DRAFT_FALLBACK = frozenset({"OUTBOUND_DENIED", "NOT_CONFIGURED", "TIMEOUT", "INVALID_SKILL_DRAFT"})
+PRESET_SKILL_DRAFT = {
+    "name": "数据券申报材料核对",
+    "summary": "【预置结果】按政策库里的数据券申报要求，逐项核对企业材料是否齐全，缺项标为待确认。",
+    "spec": {
+        "cat": "知识",
+        "triggers": ["核对数据券申报材料", "数据券材料齐不齐"],
+        "inputs": [{"key": "ent", "label": "企业名称", "type": "text", "required": True, "sample": "知行大模型"}],
+        "steps": [{"type": "kb", "query": "数据券 申报材料", "space": "policy"}, {"type": "model"}],
+        "output": {"title": "数据券申报材料核对清单", "format": "清单"},
+        "prompt": "根据检索到的数据券申报要求，逐项列出{{ent}}的材料是否齐全，缺少依据的标为待确认。",
+    },
+    "questions": [],
+    "icon": "数",
+    "base": "kb",
+}
+
+
+def has_real_model(service):
+    return any(provider and provider.get("kind") != "mock" for provider in service.providers.values())
+
+
+class SkillDraftPreset:
+    """无真实模型时只接住 /api/v1/skills/draft 的模型拒绝类错误；权限、参数错误原样返回。
+
+    配置了真实模型时不介入，模型输出错误和出站拒绝照常返回。"""
+
+    def __init__(self, app, service):
+        self.app = app
+        self.service = service
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] != "http" or scope["path"] != SKILL_DRAFT_PATH or scope["method"] != "POST"
+                or has_real_model(self.service)):
+            return await self.app(scope, receive, send)
+        start = None
+        body = bytearray()
+
+        async def capture(message):
+            nonlocal start
+            if message["type"] == "http.response.start":
+                if message["status"] < 400:
+                    start = False
+                    return await send(message)
+                start = message
+                return None
+            if start is False:
+                return await send(message)
+            body.extend(message.get("body", b""))
+            if message.get("more_body"):
+                return None
+            try:
+                code = json.loads(body)["error"]["code"]
+            except (ValueError, KeyError, TypeError):
+                code = None
+            if code in SKILL_DRAFT_FALLBACK:
+                from jkq.skills.runtime import prepare_skill
+
+                # 与模型草稿同样按编辑器规格补齐默认字段（kb、model 等）。
+                draft = {**PRESET_SKILL_DRAFT, **prepare_skill(PRESET_SKILL_DRAFT)}
+                output = JSONResponse({"draft": draft, "source": "preset", "routeNote": "预置结果"})
+                await send({"type": "http.response.start", "status": 200,
+                            "headers": [(k, v) for k, v in output.raw_headers]})
+                return await send({"type": "http.response.body", "body": output.body})
+            await send(start)
+            await send({**message, "body": bytes(body)})
+
+        await self.app(scope, receive, capture)
+
+
 def bind_demo_models(service, platform, options):
     normal_call = service.call
     # 沿用配置里的模拟 provider、启用状态、密级校验、配额与审计。
@@ -183,6 +255,8 @@ def install(app):
     socket_path = os.environ.get("JKQ_DEMO_RESET_SOCKET")
 
     app.add_middleware(KnowledgeSource)
+    if options.preset_on_failure:
+        app.add_middleware(SkillDraftPreset, service=app.state.jkq_models)
     reset_key = os.environ.get("JKQ_DEMO_RESET_KEY", "").encode()
 
     @app.post("/api/v1/demo/reset", status_code=202, response_model=ResetReceipt,

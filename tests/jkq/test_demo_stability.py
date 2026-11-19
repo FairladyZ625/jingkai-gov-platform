@@ -142,3 +142,57 @@ def test_unconfigured_operator_key_denies_even_admin(instance, monkeypatch):
     demo.install(app)
     response = TestClient(app).post("/api/v1/demo/reset")
     assert response.status_code == 403 and events[-1][2] == "demo.reset.denied"
+
+
+def _draft_route(app, reply):
+    from fastapi.responses import JSONResponse
+
+    @app.post("/api/v1/skills/draft")
+    def draft(body: dict):
+        status, code = reply[0]
+        return JSONResponse({"error": {"code": code, "message": "示例", "details": {}}}, status_code=status)
+
+
+@pytest.mark.parametrize("status,code", [(403, "OUTBOUND_DENIED"), (503, "NOT_CONFIGURED"), (502, "INVALID_SKILL_DRAFT")])
+def test_demo_skill_draft_falls_back_to_preset(instance, status, code):
+    from jkq.skills.runtime import prepare_skill
+
+    app, _ = instance
+    reply = [(status, code)]
+    _draft_route(app, reply)
+    demo.install(app)
+    response = TestClient(app).post("/api/v1/skills/draft", json={"text": "核对数据券申报材料齐不齐"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "preset" and body["routeNote"] == "预置结果"
+    assert body["draft"]["summary"].startswith("【预置结果】")
+    assert prepare_skill(body["draft"])["name"] == body["draft"]["name"]
+    assert body["draft"]["spec"] == prepare_skill(body["draft"])["spec"] and body["draft"]["spec"]["kb"] == []
+    # 一键演示用样例直接试运行，必填输入需带样例值。
+    assert all(field.get("sample") for field in body["draft"]["spec"]["inputs"] if field.get("required"))
+
+
+def test_demo_skill_draft_keeps_access_errors(instance):
+    app, _ = instance
+    _draft_route(app, [(403, "FORBIDDEN")])
+    demo.install(app)
+    response = TestClient(app).post("/api/v1/skills/draft", json={"text": "示例"})
+    assert response.status_code == 403 and response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_formal_skill_draft_keeps_outbound_denied(instance, monkeypatch):
+    app, _ = instance
+    monkeypatch.delenv("JKQ_DEMO_MODE")
+    _draft_route(app, [(403, "OUTBOUND_DENIED")])
+    demo.install(app)
+    response = TestClient(app).post("/api/v1/skills/draft", json={"text": "示例"})
+    assert response.status_code == 403 and response.json()["error"]["code"] == "OUTBOUND_DENIED"
+
+
+def test_demo_skill_draft_with_real_model_keeps_errors(instance):
+    app, _ = instance
+    app.state.jkq_models.providers = {"local": {"kind": "openai"}}
+    _draft_route(app, [(403, "OUTBOUND_DENIED")])
+    demo.install(app)
+    response = TestClient(app).post("/api/v1/skills/draft", json={"text": "示例"})
+    assert response.status_code == 403 and response.json()["error"]["code"] == "OUTBOUND_DENIED"
