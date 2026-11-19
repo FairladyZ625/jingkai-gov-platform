@@ -100,7 +100,7 @@
         const r = S.prof; if (!r) { $('#es').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel" style="height:120px"></div></div>'; foot(back(), ''); return; }
         const e = r.item; const openIssues = r.issues.filter((i) => i.status !== '已办结'); const lastV = r.visits[0];
         const q0 = (e.qualifications || [])[0];
-        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)} · ${esc(e.creditCode)}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${e.tags.slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
+        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)}${e.creditCode ? ' · ' + esc(e.creditCode) : ''}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${(e.tags || []).slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
           <div class="card ent-brief" data-op="enterprise.brief"><div class="card-h"><span class="t-3">${icon('sparkles')}</span><span class="ttl">30 秒速览</span><span class="sp"></span><span class="meta">走访前看这里</span></div>
             <div class="ent-kv4">
               <div><div class="meta">做什么</div><div>${esc(e.products || e.industry)}</div></div>
@@ -113,13 +113,16 @@
           <div class="card" id="eptab">${profileTab(r)}</div>`;
         foot(back(), `<button class="btn" data-act="toPolicy" data-op="enterprise.to-policy">能申请哪些政策</button>${canOp ? `<button class="btn primary" data-act="toVisit" data-op="enterprise.to-visit">${icon('edit')}记一次走访</button>` : ''}`);
       }
+      // 外部协作者拿到的是后端打码投影：未返回的字段不渲染原值，联系人、营收按无权查看显示。
+      const dash = (v) => (v == null || v === '' ? '<span class="meta">—</span>' : esc(v));
+      const NO_ACCESS = '<span class="mask">已打码 · 无权查看</span>';
       const kv = (k, v, verify) => `<div class="ent-kv"><span class="meta">${esc(k)}</span><span>${v}</span>${verify ? tag(verify, 'verify', { cls: 'plain' }) : '<span></span>'}</div>`;
       function profileTab(r) {
         const e = r.item; const fs = e.fieldStatus || {};
-        if (S.ptab === 'base') return kv('主体类型', esc(e.subjectType)) + kv('成立日期', esc(e.established)) + kv('入区经营', `<span class="num">${e.yearsInZone}</span> 年`) + kv('规模 / 人数', `${esc(e.scale)} · <span class="num">${e.employees}</span> 人`, fs.employees) + kv('注册地址', esc(e.regAddr)) + ((e.formerNames || []).length ? kv('曾用名', esc(e.formerNames.join('、'))) : '') +
-          kv('联系人', (e.contacts || []).map((c) => `${esc(c.name)}<span class="meta">（${esc(c.title)}）</span> <span class="num ${e.masked ? 'mask' : ''}">${esc(c.phone)}</span>`).join('<br>')) + kv('服务专员', esc(e.servicer));
+        if (S.ptab === 'base') return kv('主体类型', dash(e.subjectType)) + kv('成立日期', dash(e.established)) + kv('入区经营', e.yearsInZone == null ? dash() : `<span class="num">${e.yearsInZone}</span> 年`) + kv('规模 / 人数', `${dash(e.scale)} · <span class="num">${dash(e.employees)}</span> 人`, fs.employees) + kv('注册地址', dash(e.regAddr)) + ((e.formerNames || []).length ? kv('曾用名', esc(e.formerNames.join('、'))) : '') +
+          kv('联系人', !Array.isArray(e.contacts) ? NO_ACCESS : e.contacts.map((c) => `${esc(c.name)}<span class="meta">（${esc(c.title)}）</span> <span class="num ${e.masked ? 'mask' : ''}">${esc(c.phone)}</span>`).join('<br>')) + kv('服务专员', esc(e.servicer));
         if (S.ptab === 'biz') { const rv = e.revenue || {}; const am = e.amounts || {};
-          return kv('营业收入', e.masked ? '<span class="mask">受限字段</span>' : `<b class="num">${esc(rv.value)}</b> ${esc(rv.unit)} <span class="meta">${esc(rv.period)} · ${esc(rv.source)}</span>`, e.masked ? '' : rv.verify) +
+          return kv('营业收入', e.masked || !e.revenue ? '<span class="mask">受限字段</span>' : `<b class="num">${esc(rv.value)}</b> ${esc(rv.unit)} <span class="meta">${esc(rv.period)} · ${esc(rv.source)}</span>`, e.masked || !e.revenue ? '' : rv.verify) +
             (am.rent != null ? kv('年房租', `<span class="num">${ui.fmtMoney(am.rent)}</span>`, fs.amounts) : '') + (am.area != null ? kv('经营面积', `<span class="num">${am.area}</span> ㎡`, fs.amounts) : '') +
             Object.entries(am).filter(([k]) => !['rent', 'area'].includes(k)).map(([k, v]) => kv({ dataPurchase: '数据采购额', computePurchase: '算力采购额', renovation: '改造投入', digitalInvest: '数字化投入', sceneInvest: '场景投入', datasetInvest: '数据集投入', firstSale: '首台套合同额' }[k] || k, `<span class="num">${ui.fmtMoney(v)}</span>`, fs.amounts)).join('') +
             (e.qualifications || []).map((q) => kv('资质', `${esc(q.name)} <span class="meta">有效期至 ${esc(q.validTo)}</span>`, q.verify)).join('') + (e.license || []).filter((l) => !(e.qualifications || []).some((q) => q.name === l)).map((l) => kv('许可', esc(l))).join(''); }
@@ -192,7 +195,7 @@
             <select class="select sm" style="width:120px;height:28px" id="lsort"><option value="lastVisit" ${S.lsort === 'lastVisit' ? 'selected' : ''}>最久未走访</option><option value="revenue" ${S.lsort === 'revenue' ? 'selected' : ''}>营收</option><option value="name" ${S.lsort === 'name' ? 'selected' : ''}>名称</option></select>
             ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
           ${r.items.length ? `<div class="card flat ent-tbl scroll"><table class="tbl"><thead><tr><th style="width:32px"><input type="checkbox" class="pol-ck" data-selall></th><th>企业</th><th>行业</th><th class="r">人数</th><th class="r">营收(万元)</th><th>服务专员</th><th class="r">最近走访</th></tr></thead><tbody>
-            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked ? 'mask' : ''}">${esc(e.revenue.value)}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
+            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked || !e.revenue ? 'mask' : ''}">${e.revenue ? esc(e.revenue.value) : '***'}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
         $('#lsort') && ($('#lsort').onchange = (ev) => { S.lsort = ev.target.value; renderTable(); });
       }
 
@@ -285,7 +288,7 @@
       async function opOpen(id, run) {
         gotoTab('flow'); if (S.step !== 0) { S.step = 0; S.q = ''; body(); }
         const e = entOf(id);
-        if (run) { await run.fill('[data-op="enterprise.q"]', e.short); await run.wait(`[data-op="enterprise.ent-${id}"]`); await run.click(`[data-op="enterprise.ent-${id}"]`); await run.wait(() => S.prof && S.prof.item.id === id && el.querySelector('[data-op="enterprise.brief"]')); }
+        if (run) { await run.fill('[data-op="enterprise.q"]', e.short); await run.wait(`[data-op="enterprise.ent-${id}"]`); await run.click(`[data-op="enterprise.ent-${id}"]`); if (S.entId !== id) await openProfile(id); await run.wait(() => S.prof && S.prof.item.id === id && el.querySelector('[data-op="enterprise.brief"]')); }
         else await openProfile(id);
       }
       const actions = {
