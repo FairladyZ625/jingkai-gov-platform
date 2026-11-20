@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from uuid import uuid4
 
-from jkq.conversations.store import ConversationStore, encode, now
+from jkq.conversations.store import ConversationNotFound, ConversationStore, encode, now
 
 from .classification import strictest
 
@@ -54,22 +54,13 @@ def start_turn(
         return PendingTurn(user, assistant, inserted.lastrowid, history)
 
 
-def completed_reply(store: ConversationStore, owner: str, cid: str, turn: PendingTurn, fields: dict) -> dict:
+def finish_turn(store: ConversationStore, owner: str, cid: str, turn: PendingTurn, fields: dict) -> dict:
+    """提交待完成回复和审计后，返回与历史一致的完整消息。"""
     message = {**turn.assistant, **fields, "incomplete": False}
     if message["toolCalls"]:
         message["classification"] = "confidential"
-    with store.transaction():
-        conversation = store._owned(owner, cid)
-    return {"conversation": {**conversation, "updated": now()}, "user": turn.user, "reply": message}
-
-
-def finish_turn(
-    store: ConversationStore, owner: str, cid: str, turn: PendingTurn, payload: dict,
-) -> None:
-    """补全当前请求的占位回复，完整正文、卡片和引用一次提交。"""
     with store.transaction(write=True):
         store._owned(owner, cid)
-        message = payload["reply"]
         changed = store.db.execute(
             """update jkq_messages set document=?
                where seq=? and conversation_id=? and json_extract(document, '$.id')=?
@@ -77,7 +68,9 @@ def finish_turn(
             (encode(message), turn.assistant_seq, cid, message["id"]),
         )
         if changed.rowcount != 1:
-            raise RuntimeError("待完成的会话回复不存在")
+            raise ConversationNotFound()
         store.db.execute("update jkq_conversations set updated=max(updated, ?) where id=?",
-                         (payload["conversation"]["updated"], cid))
+                         (now(), cid))
         store._audit(owner, cid, "message.complete", messageId=message["id"], model=message["model"])
+        conversation = store._owned(owner, cid)
+    return {"conversation": conversation, "user": turn.user, "reply": message}
