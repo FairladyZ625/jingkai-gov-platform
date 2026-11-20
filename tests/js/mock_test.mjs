@@ -1,5 +1,6 @@
 // 浏览器假数据服务的场景测试；由 js-tests 作业直接调起，本机 node tests/js/mock_test.mjs。
 import assert from 'node:assert/strict';
+import { createContext, http } from '../../core/sdk/js/haiknow.js';
 import { installMock, toCsv } from '../../core/sdk/js/mock/index.js';
 
 const BASE = 'http://mock.local';
@@ -115,7 +116,7 @@ await withMock('forbidden', async () => {
 await withMock('failure', async () => {
   const failed = await post('/records', { project: 'sample-project', title: '会失败' });
   assert.equal(failed.status, 500);
-  assert.equal((await failed.json()).error.code, 'internal_error');
+  assert.equal((await failed.json()).error.code, 'INTERNAL_ERROR');
 });
 
 await withMock('conflict', async () => {
@@ -123,7 +124,7 @@ await withMock('conflict', async () => {
   const conflict = await put(`/records/${record.id}`, { baseVersion: 1, title: '并发修改' });
   assert.equal(conflict.status, 409);
   const body = await conflict.json();
-  assert.equal(body.error.code, 'version_conflict');
+  assert.equal(body.error.code, 'VERSION_CONFLICT');
   assert.equal(body.error.currentVersion, 2);
 
   const latest = await (await call(`/records/${record.id}`)).json();
@@ -131,6 +132,20 @@ await withMock('conflict', async () => {
   const retry = await put(`/records/${record.id}`, { baseVersion: 2, title: '重新保存' });
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).version, 3);
+});
+
+await withMock('conflict', async () => {
+  const record = await create();
+  const path = `/records/${record.id}`;
+  const options = { method: 'PUT', json: { baseVersion: 1, title: '并发修改' } };
+  const legacy = createContext({ id: 'demo-flow', sdk: '1' }, {}, () => {});
+  const implicit = createContext({ id: 'demo-flow' }, {}, () => {});
+  const current = createContext({ id: 'demo-flow', sdk: '2' }, {}, () => {});
+  await assert.rejects(legacy.api(path, options),
+    error => error.code === 'version_conflict' && error.status === 409 && error.currentVersion === 2);
+  await assert.rejects(implicit.api(path, options), { code: 'version_conflict' });
+  await assert.rejects(current.api(path, options), { code: 'VERSION_CONFLICT' });
+  await assert.rejects(http(app(path), options), { code: 'VERSION_CONFLICT' });
 });
 
 await withMock('slow', async () => {
@@ -144,7 +159,7 @@ await withMock('normal', async () => {
   const review = await (await post(`/records/${record.id}/submit`)).json();
   const self = await post(`/reviews/${review.id}/decisions`, { version: 1, decision: 'confirm' });
   assert.equal(self.status, 403);
-  assert.equal((await self.json()).error.code, 'self_review');
+  assert.equal((await self.json()).error.code, 'SELF_REVIEW');
 });
 
 // 新外壳把应用放在 iframe 里；切换账号会重建 iframe，父窗口状态要保留。
@@ -183,4 +198,4 @@ assert.equal(
   '\ufeff字段,内容\nworkpiece,W-1\nundercut,0.2\n状态,confirmed\n提交人,sampleoperator\n确认人,samplereviewer\n',
 );
 
-console.log('mock ok: normal / custom fields / forbidden / failure / conflict / slow / self_review / shared-state / csv');
+console.log('mock ok: normal / custom fields / forbidden / failure / conflict / SDK 1 and 2 / slow / self_review / shared-state / csv');

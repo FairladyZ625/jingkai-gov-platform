@@ -554,7 +554,7 @@ def test_err_unregistered_backend_code_fails_with_fix(tmp_path, monkeypatch):
     _fixture_app_root(tmp_path, monkeypatch, "bad-err-code")
     report = run("errors", "bad-err-code")
     assert codes(report) == {"CHK-ERR-03"}
-    assert any("xxx_failed" in e and "errors.json" in e for e in report.errors)
+    assert any("XXX_FAILED" in e and "errors.json" in e for e in report.errors)
     assert any("typo_failed" in e for e in report.errors)
     assert not any("not_found" in e for e in report.errors), "平台码无需登记"
     assert "apps/<id>/web/errors.json" in message(report, "CHK-ERR-03")
@@ -573,10 +573,19 @@ def test_err_registered_code_passes(tmp_path, monkeypatch):
     app = tmp_path / "apps" / "good-err"
     (app / "api").mkdir(parents=True)
     (app / "web").mkdir()
-    (app / "api" / "router.py").write_text('from haiknow_sdk import DataError\nraise DataError("xxx_failed", "导出失败")\n', encoding="utf-8")
-    (app / "web" / "errors.json").write_text('{"xxx_failed": "导出失败，请稍后重试"}\n', encoding="utf-8")
-    (app / "web" / "index.js").write_text("export async function mount(el, ctx) { try {} catch (e) { if (e.code === 'xxx_failed') ctx.toast(ctx.preview.errors.message(e), 'error'); } }\n", encoding="utf-8")
+    (app / "api" / "router.py").write_text('from haiknow_sdk import DataError\nraise DataError("XXX_FAILED", "导出失败")\n', encoding="utf-8")
+    (app / "web" / "errors.json").write_text('{"XXX_FAILED": "导出失败，请稍后重试"}\n', encoding="utf-8")
+    (app / "web" / "index.js").write_text("export async function mount(el, ctx) { try {} catch (e) { if (e.code === 'XXX_FAILED') ctx.toast(ctx.preview.errors.message(e), 'error'); } }\n", encoding="utf-8")
     assert run("errors", "good-err").errors == []
+
+
+def test_health_error_literal_must_be_uppercase(tmp_path, monkeypatch):
+    _fixture_app_root(tmp_path, monkeypatch, "bad-err-code")
+    router = tmp_path / "apps/bad-err-code/api/router.py"
+    for code, rejected in [("FORBIDDEN", False), ("forbidden", True)]:
+        router.write_text(f'body = {{"error": {{"code": "{code}"}}}}', encoding="utf-8")
+        errors = run("errors", "bad-err-code").errors
+        assert any("api/router.py" in error for error in errors) == rejected
 
 
 def _platform_root(tmp_path, monkeypatch, table: str, doc_codes=(), server_src: str = ""):
@@ -588,9 +597,9 @@ def _platform_root(tmp_path, monkeypatch, table: str, doc_codes=(), server_src: 
         "export const ISSUE_MESSAGES = {\n  required: '必填项缺失',\n};\n",
         encoding="utf-8",
     )
-    doc = tmp_path / "docs" / "specs" / "平台接口v1.md"
+    doc = tmp_path / check.PLATFORM_API_DOC
     doc.parent.mkdir(parents=True)
-    doc.write_text("| HTTP | code | 含义 |\n|---|---|---|\n" + "".join(f"| 403 | `{c}` | x |\n" for c in doc_codes), encoding="utf-8")
+    doc.write_text("| HTTP | code | 含义 |\n|---|---|---|\n" + "".join(f"`{c.upper()} 403`\n" for c in doc_codes), encoding="utf-8")
     srv = tmp_path / "core" / "server" / "haiknow_core" / "x.py"
     srv.parent.mkdir(parents=True)
     srv.write_text(server_src, encoding="utf-8")
@@ -602,7 +611,7 @@ def test_platform_table_must_cover_documented_and_server_codes(tmp_path, monkeyp
     report = run("errors")
     text = "\n".join(report.errors)
     assert codes(report) == {"CHK-ERR-04"}
-    assert "self_review" in text and "平台接口v1.md" in text
+    assert "self_review" in text and "接口规范.md" in text
     assert "brand_new" in text and "dup_user" in text
     assert len(report.errors) == 3
 

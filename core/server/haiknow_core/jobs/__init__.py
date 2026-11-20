@@ -4,7 +4,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends
 
+from ..error_codes import public_error_code
 from .service import JobService, SubmitBody
+
+
+def _job_response(job):
+    # 旧任务的快照在 HTTP 读出时规范平台码，持久化文档保留原值。
+    error = job.get('error')
+    if error:
+        return {**job, 'error': {**error, 'code': public_error_code(error['code'])}}
+    return job
 
 
 def install(app, platform, current_user):
@@ -14,11 +23,12 @@ def install(app, platform, current_user):
 
     @router.post('', status_code=202)
     def submit(body: SubmitBody, user=Depends(current_user)):
-        return service.submit(user, body.model_dump())
+        return _job_response(service.submit(user, body.model_dump()))
 
     @router.get('')
     def jobs(app: str | None = None, project: str | None = None, status: str | None = None, user=Depends(current_user)):
-        return service.list(user, app_id=app, project=project, status=status)
+        result = service.list(user, app_id=app, project=project, status=status)
+        return {**result, 'items': [_job_response(job) for job in result['items']]}
 
     @router.get('/notifications')
     def notifications(app: str | None = None, user=Depends(current_user)):
@@ -30,15 +40,15 @@ def install(app, platform, current_user):
 
     @router.get('/{jid}')
     def get(jid: str, app: str | None = None, user=Depends(current_user)):
-        return service.get(user, jid, app_id=app)
+        return _job_response(service.get(user, jid, app_id=app))
 
     @router.post('/{jid}/cancel')
     def cancel(jid: str, app: str | None = None, user=Depends(current_user)):
-        return service.cancel(user, jid, app_id=app)
+        return _job_response(service.cancel(user, jid, app_id=app))
 
     @router.post('/{jid}/retry', status_code=202)
     def retry(jid: str, app: str | None = None, user=Depends(current_user)):
-        return service.retry(user, jid, app_id=app)
+        return _job_response(service.retry(user, jid, app_id=app))
 
     previous = app.router.lifespan_context
 
