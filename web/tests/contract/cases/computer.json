@@ -1,0 +1,36 @@
+{
+  "routes": [
+    { "method": "GET", "path": "/api/apps/computer/tasks",
+      "response": {"items": ["@computerTask"], "systems": ["@computerSystem"]} },
+    { "method": "PATCH", "path": "/api/apps/computer/systems/{id}",
+      "response": {"item": "@computerSystem"},
+      "body": {"allowed": true},
+      "params": {"id": "sso"} },
+    { "method": "POST", "path": "/api/apps/computer/match",
+      "response": {"task": "?@computerTask", "entId": "?string"},
+      "body": {"text": "zzz-无匹配契约测试-zzz"} },
+    { "method": "GET", "path": "/api/apps/computer/runs",
+      "response": {"items": ["@computerRun"]} },
+    { "method": "POST", "path": "/api/apps/computer/runs",
+      "response": {"item": "@computerRun"},
+      "body": {"task": "apply", "ent": "{{fixture.enterpriseId}}", "from": "契约测试"},
+      "save": "run" },
+    { "method": "GET", "path": "/api/apps/computer/runs/{id}",
+      "response": {"item": "@computerRun"},
+      "params": {"id": "{{run.item.id}}"} },
+    { "method": "PATCH", "path": "/api/apps/computer/runs/{id}",
+      "response": {"item": "@computerRun"},
+      "body": {"step": 1, "status": "waiting", "log": "模拟确认点"},
+      "params": {"id": "{{run.item.id}}"} },
+    { "method": "POST", "path": "/api/apps/computer/runs/{id}/confirm",
+      "response": {"item": "@computerRun"},
+      "body": {"decision": "decline", "kind": "submit"},
+      "params": {"id": "{{run.item.id}}"} }
+  ],
+  "errors": [
+    { "method": "GET", "path": "/api/apps/computer/runs/{id}",
+      "params": {"id": "CU-contract-missing"},
+      "status": 404,
+      "error": "NOT_FOUND" }
+  ]
+}

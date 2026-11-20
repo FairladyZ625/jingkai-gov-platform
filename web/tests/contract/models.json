@@ -1,0 +1,804 @@
+{
+  "user": {
+    "id": "string",
+    "name": "string",
+    "username": "string",
+    "role": "string",
+    "status": "string",
+    "deptId": "?string",
+    "dept": "string",
+    "title": "string",
+    "lastLogin": "?string"
+  },
+  "role": {
+    "id": "string",
+    "name": "string",
+    "desc": "string",
+    "mask": "boolean"
+  },
+  "org": {
+    "id": "string",
+    "name": "string",
+    "seats": "number",
+    "used": "number"
+  },
+  "conversation": {
+    "id": "string",
+    "title": "string",
+    "updated": "string",
+    "app?": "?string",
+    "panel?": {
+      "app": "string",
+      "route": "string",
+      "params": "object"
+    }
+  },
+  "message": {
+    "id": "string",
+    "role": "string",
+    "content": "string",
+    "at": "string",
+    "files?": [
+      "@attachment"
+    ]
+  },
+  "reply": {
+    "id": "string",
+    "role": "string",
+    "content": "string",
+    "cards": [
+      {
+        "type": "string"
+      }
+    ],
+    "citations": [
+      {
+        "fileId": "string",
+        "name": "string",
+        "snippet": "string"
+      }
+    ],
+    "toolCalls": [
+      {
+        "tool": "string",
+        "args": "object"
+      }
+    ],
+    "at": "string",
+    "model?": "?string",
+    "routeNote?": "?string",
+    "intent?": "?string"
+  },
+  "model": {
+    "id": "string",
+    "name": "string",
+    "kind": "string",
+    "enabled": "boolean",
+    "tags": [
+      "string"
+    ],
+    "provider": "string",
+    "group": "string",
+    "desc": "string",
+    "ctx?": "?string"
+  },
+  "review": {
+    "id": "string",
+    "title": "string",
+    "app": "string",
+    "ref": "string",
+    "status": "string",
+    "type": "string",
+    "meta": "string",
+    "approver?": "boolean|string|null",
+    "assignee?": "?string"
+  },
+  "todo": {
+    "id": "string",
+    "task": "string",
+    "owner": "string",
+    "due": "string",
+    "app": "string",
+    "done": "boolean",
+    "from": "string"
+  },
+  "department": {
+    "id": "string",
+    "name": "string",
+    "parent": "?string"
+  },
+  "space": {
+    "id": "string",
+    "name": "string",
+    "icon": "string",
+    "desc": "string",
+    "roles": [
+      "string"
+    ],
+    "visible": "boolean",
+    "count": "number",
+    "expiring": "number",
+    "sensitive?": "boolean"
+  },
+  "kbDoc": {
+    "id": "string",
+    "title": "string",
+    "space": "string",
+    "spaceName": "string",
+    "kind": "string",
+    "status": "string",
+    "tags": [
+      "string"
+    ],
+    "real": "boolean",
+    "example": "boolean",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "version": "number",
+    "chunks": "number",
+    "expire": "string",
+    "from": "string"
+  },
+  "hit": {
+    "id": "string",
+    "title": "string",
+    "space": "string",
+    "spaceName": "string",
+    "kind": "string",
+    "status": "string",
+    "tags": [
+      "string"
+    ],
+    "real": "boolean",
+    "example": "boolean",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "version": "number",
+    "chunks": "number",
+    "expire": "string",
+    "from": "string",
+    "snippet": "string",
+    "chunk": "number",
+    "score": "number"
+  },
+  "importItem": {
+    "key": "string",
+    "name": "string",
+    "ok": "boolean",
+    "stages": {
+      "parse": "string",
+      "chunk": "string",
+      "tag": "string"
+    },
+    "from": "string",
+    "text?": "string",
+    "tags?": [
+      "string"
+    ],
+    "chunks?": "number",
+    "chunkPreview?": [
+      {
+        "head": "string",
+        "text": "string"
+      }
+    ],
+    "ext?": "string",
+    "size?": "number",
+    "parse?": "string"
+  },
+  "policyItem": {
+    "id": "string",
+    "title": "string",
+    "doc": "string",
+    "clause": "string",
+    "object": "string",
+    "docNo": "string",
+    "docTitle": "string",
+    "docState": "string",
+    "conditions": [
+      {
+        "f": "string",
+        "op": "string",
+        "v": "number|string|boolean|string[]",
+        "label": "string"
+      }
+    ],
+    "pending": [
+      "string"
+    ],
+    "rule": {
+      "text": "string",
+      "base?": "?string",
+      "ratio?": "?number",
+      "cap?": "?number",
+      "fixed?": "?number"
+    },
+    "times": {
+      "valid": "string",
+      "occur": "string",
+      "window": "string",
+      "open": "?boolean"
+    },
+    "materials": [
+      "string"
+    ],
+    "original": "string",
+    "keywords": [
+      "string"
+    ],
+    "status": "string",
+    "verifiedAt": "string",
+    "sub?": "string",
+    "action?": "string",
+    "versionNote?": "?string"
+  },
+  "matchResult": {
+    "id": "string",
+    "title": "string",
+    "level": "string",
+    "checks": [
+      {
+        "label": "string",
+        "state": "string"
+      }
+    ],
+    "pending": [
+      "string"
+    ],
+    "open": "?boolean",
+    "ended": "boolean",
+    "window": "string",
+    "doc": "string",
+    "clause": "string",
+    "calc": "?@calc",
+    "rule": "string"
+  },
+  "enterprise": {
+    "id": "string",
+    "name": "string",
+    "short": "string",
+    "creditCode": "string",
+    "industry": "string",
+    "tags": [
+      "string"
+    ],
+    "employees": "number",
+    "regInZone": "boolean",
+    "contacts": [
+      {
+        "name": "string",
+        "phone": "string",
+        "title": "string",
+        "main?": "?boolean"
+      }
+    ],
+    "amounts": {
+      "$values": "number|string|null"
+    },
+    "scale": "string",
+    "formerNames": [
+      "string"
+    ],
+    "license": [
+      "string"
+    ],
+    "subjectType": "string",
+    "established": "string",
+    "yearsInZone": "number",
+    "revenue": {
+      "value": "number|string",
+      "unit": "string",
+      "period": "string",
+      "source": "string",
+      "verify": "string"
+    },
+    "regAddr": "string",
+    "opAddr": "string",
+    "servicer": "string",
+    "lastVisit": "string",
+    "lastVisitDays": "number",
+    "qualifications": [
+      {
+        "name": "string",
+        "validTo": "string",
+        "verify": "string"
+      }
+    ],
+    "products": "string",
+    "fieldStatus": {
+      "$values": "string"
+    },
+    "masked?": "boolean",
+    "history?": [
+      "@change"
+    ]
+  },
+  "enterpriseIssue": {
+    "id": "string",
+    "title": "string",
+    "entId": "string",
+    "owner": "string",
+    "status": "string",
+    "due": "string",
+    "next": "string",
+    "steps": [
+      [
+        "string",
+        "string"
+      ]
+    ],
+    "created": "string",
+    "from": "string"
+  },
+  "proposal": {
+    "id": "string",
+    "entId": "string",
+    "field": "string",
+    "label": "string",
+    "source": "string",
+    "status": "string",
+    "old": "json",
+    "new": "json"
+  },
+  "meeting": {
+    "id": "string",
+    "title": "string",
+    "type": "string",
+    "date": "string",
+    "duration": "string",
+    "participants": [
+      "string"
+    ],
+    "status": "string",
+    "place": "string",
+    "host": "string",
+    "file": "string",
+    "size": "string",
+    "source": "string",
+    "scope?": "?string",
+    "jobId?": "?string"
+  },
+  "meetingJob": {
+    "id": "string",
+    "kind": "string",
+    "ref": "string",
+    "status": "string",
+    "progress": "number",
+    "step": "number",
+    "steps": [
+      "string"
+    ],
+    "stepName": "string"
+  },
+  "minutes": {
+    "title": "string",
+    "meta": "string",
+    "attendees": "string",
+    "template": "string",
+    "body": [
+      {
+        "h": "string",
+        "p": "string",
+        "refs": [
+          "string"
+        ]
+      }
+    ],
+    "todos": [
+      "@meetingTodo"
+    ]
+  },
+  "docContent": {
+    "title": "string",
+    "docNo": "string",
+    "to": "string",
+    "paragraphs": [
+      "string"
+    ],
+    "sign": "string",
+    "date": "string"
+  },
+  "draft": {
+    "id": "string",
+    "title": "string",
+    "templateId": "string",
+    "status": "string",
+    "author": "string",
+    "versions": [
+      {
+        "v": "number",
+        "at": "string",
+        "by": "string",
+        "content": "@docContent"
+      }
+    ],
+    "comments": [
+      "@comment"
+    ],
+    "refs": [
+      "object"
+    ],
+    "policyId?": "?string"
+  },
+  "comment": {
+    "id": "string",
+    "para": "number",
+    "by": "string",
+    "at": "string",
+    "text": "string",
+    "replies": [
+      {
+        "by": "string",
+        "text": "string"
+      }
+    ],
+    "resolved": "boolean"
+  },
+  "checkIssue": {
+    "id": "string",
+    "level": "string",
+    "kind": "string",
+    "text": "string",
+    "para?": "?number",
+    "fix?": "?string"
+  },
+  "diffPart": {
+    "op": "string",
+    "t": "string"
+  },
+  "skill": {
+    "id": "string",
+    "name": "string",
+    "version": "string",
+    "status": "string",
+    "summary": "string",
+    "share": {
+      "scope": "string",
+      "people": [
+        "string"
+      ],
+      "perm": "string"
+    },
+    "spec": "@skillSpec",
+    "icon": "string",
+    "kind": "string",
+    "author": "string",
+    "authorId": "string",
+    "uses": "number",
+    "rating": "number",
+    "base": "string",
+    "source?": "?string",
+    "visibility?": "string"
+  },
+  "skillJob": {
+    "id": "string",
+    "status": "string",
+    "steps": [
+      {
+        "label": "string",
+        "type": "string",
+        "status": "string"
+      }
+    ],
+    "result": "?@skillResult"
+  },
+  "computerTask": {
+    "id": "string",
+    "title": "string",
+    "system": "string",
+    "desc": "string",
+    "icon": "string",
+    "keywords": [
+      "string"
+    ],
+    "needsEnt": "boolean",
+    "stop": "string"
+  },
+  "computerSystem": {
+    "id": "string",
+    "name": "string",
+    "allowed": "boolean",
+    "url": "string",
+    "kind": "string"
+  },
+  "computerRun": {
+    "id": "string",
+    "title": "string",
+    "task": "string",
+    "status": "string",
+    "system": {
+      "name": "string",
+      "url": "string"
+    },
+    "steps": [
+      {
+        "title": "string",
+        "page": "string",
+        "ops": [
+          {
+            "op": "string",
+            "sel?": "string",
+            "note?": "string",
+            "mask?": "?string",
+            "value?": "?string",
+            "kind?": "string"
+          }
+        ],
+        "url?": "string",
+        "human?": "string"
+      }
+    ],
+    "log": [
+      {
+        "at": "string",
+        "text": "string",
+        "who": "string"
+      }
+    ],
+    "ent": "?@computerEnterprise",
+    "step": "number",
+    "fields": [
+      ["?string"]
+    ],
+    "result": "?object",
+    "shots?": [
+      "string"
+    ]
+  },
+  "calc": {
+    "amount": "number",
+    "text": "string",
+    "capped": "boolean",
+    "base?": "?number"
+  },
+  "kbDetail": {
+    "id": "string",
+    "title": "string",
+    "space": "string",
+    "spaceName": "string",
+    "kind": "string",
+    "status": "string",
+    "tags": [
+      "string"
+    ],
+    "real": "boolean",
+    "example": "boolean",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "version": "number",
+    "chunks": "number",
+    "text": "string",
+    "chunkList": [
+      {
+        "i": "number",
+        "start": "number",
+        "end": "number",
+        "head": "string"
+      }
+    ],
+    "versions": [
+      {
+        "id": "string",
+        "version": "number",
+        "date": "string",
+        "addedAt?": "?string"
+      }
+    ],
+    "expire": "string",
+    "from": "string"
+  },
+  "attachment": {
+    "id": "string",
+    "name": "string",
+    "kind": "string",
+    "mime?": "?string",
+    "size?": "?number",
+    "url?": "?string"
+  },
+  "kbFacet": {
+    "k": "string",
+    "n": "number"
+  },
+  "kbFacets": {
+    "space": [
+      "@kbFacet"
+    ],
+    "status": [
+      "@kbFacet"
+    ],
+    "kind": [
+      "@kbFacet"
+    ],
+    "org": [
+      "@kbFacet"
+    ],
+    "year": [
+      "@kbFacet"
+    ]
+  },
+  "kbCitation": {
+    "n": "number",
+    "id": "string",
+    "title": "string",
+    "snippet": "string",
+    "chunk": "number",
+    "source": {
+      "org": "string",
+      "date": "string",
+      "url": "string",
+      "docNo": "string"
+    },
+    "status": "string"
+  },
+  "visit": {
+    "id": "string",
+    "entId": "string",
+    "date": "string",
+    "staff": "string",
+    "type": "string",
+    "notes": "string",
+    "followups": [
+      "string"
+    ]
+  },
+  "change": {
+    "at": "string",
+    "by": "string",
+    "field": "string",
+    "old": "json",
+    "new": "json",
+    "source": "string"
+  },
+  "meetingDetail": {
+    "id": "string",
+    "title": "string",
+    "type": "string",
+    "date": "string",
+    "duration": "string",
+    "participants": [
+      "string"
+    ],
+    "status": "string",
+    "place": "string",
+    "host": "string",
+    "file": "string",
+    "size": "string",
+    "source": "string",
+    "scope?": "?string",
+    "jobId?": "?string",
+    "transcript?": [
+      [
+        "string",
+        "string",
+        "string"
+      ]
+    ],
+    "topics?": [
+      {
+        "t": "string",
+        "bg": "string",
+        "views": [
+          "string"
+        ],
+        "decision": "string",
+        "refs": [
+          "string"
+        ]
+      }
+    ],
+    "todos?": [
+      "@meetingTodo"
+    ]
+  },
+  "meetingTodo": {
+    "id": "string",
+    "task": "string",
+    "owner": "string",
+    "due": "string",
+    "deliverable": "string",
+    "ref": "string",
+    "status": "string",
+    "certain": "boolean"
+  },
+  "appManifest": {
+    "id": "string",
+    "name": "string",
+    "short": "string",
+    "icon": "string",
+    "color": "string",
+    "kind": "string",
+    "version": "string",
+    "owner": "string",
+    "summary": "string",
+    "tools": [
+      "string"
+    ],
+    "uses": "number",
+    "rating": "number",
+    "starters": [
+      "string"
+    ]
+  },
+  "grantSet": {
+    "$values": [
+      "string"
+    ]
+  },
+  "grantMatrix": {
+    "$values": "@grantSet"
+  },
+  "skillSpec": {
+    "triggers": [
+      "string"
+    ],
+    "inputs": [
+      {
+        "key": "string",
+        "label": "string",
+        "required": "boolean",
+        "sample?": "string",
+        "type": "string"
+      }
+    ],
+    "steps": [
+      {
+        "label": "string",
+        "type": "string",
+        "tool?": "string",
+        "args?": "object",
+        "query?": "string",
+        "space?": "string",
+        "task?": "string"
+      }
+    ]
+  },
+  "skillResult": {
+    "title": "string",
+    "markdown": "string",
+    "citations": [
+      {
+        "id": "string",
+        "title": "string",
+        "snippet": "string"
+      }
+    ],
+    "missing": [
+      "string"
+    ],
+    "model": "string",
+    "computer": "?object"
+  },
+  "computerEnterprise": {
+    "id": "string",
+    "short": "string"
+  },
+  "meetingListItem": {
+    "id": "string",
+    "title": "string",
+    "type": "string",
+    "date": "string",
+    "duration": "string",
+    "participants": [
+      "string"
+    ],
+    "status": "string",
+    "file": "string",
+    "size": "string",
+    "source": "string",
+    "scope?": "?string",
+    "jobId?": "?string",
+    "todoCount": "number"
+  }
+}

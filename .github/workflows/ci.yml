@@ -103,3 +103,35 @@ jobs:
           npm test
           npx --no-install playwright install --with-deps chromium
           npm run test:browser
+
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test web/tests/contract/*.test.cjs
+      - run: npm --prefix web run contract
+      - name: Chromium 混合会话
+        run: |
+          if test -f web/index.html; then
+            contract_web="$PWD/web"
+          else
+            # #4 合入前，使用固定的 Web 迁移提交跑实际登录入口。
+            git fetch --depth=1 origin 956437fa7a879d981118b4a21e97e6ce88aabbbd
+            contract_root="$(mktemp -d)"
+            trap 'rm -rf "$contract_root"' EXIT
+            git archive FETCH_HEAD web | tar -x -C "$contract_root"
+            contract_web="$contract_root/web"
+            cp web/api/http.js "$contract_web/api/http.js"
+            cp web/config/app.config.js "$contract_web/config/app.config.js"
+            mkdir -p "$contract_web/tests/contract"
+            cp web/tests/contract/browser.cjs "$contract_web/tests/contract/"
+          fi
+          npm --prefix "$contract_web" ci
+          cd "$contract_web"
+          npx --no-install playwright install --with-deps chromium
+          node --test tests/contract/browser.cjs
