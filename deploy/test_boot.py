@@ -134,7 +134,9 @@ def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monke
         assert client.post("/api/v1/auth/bootstrap", json={}).status_code == 404
         assert client.post("/api/auth/bootstrap", json={}).status_code == 404
         assert client.get("/api/apps").status_code == 401
-        assert client.get("/api/v1/admin/apps").status_code == 401
+        response = client.get("/api/v1/admin/apps")
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHENTICATED"
         assert client.get("/api/auth/users").status_code == 404
         login = client.post("/api/v1/auth/login", json={
             "username": "admin", "password": PASSWORDS["JKQ_DEMO_ADMIN_PASSWORD"],

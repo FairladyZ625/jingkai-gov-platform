@@ -74,7 +74,7 @@ def test_lock_persists_across_restart_and_expires(make_client, monkeypatch):
         assert r.status_code == (423 if attempt == 4 else 401)
     restarted = make_client()
     locked = restarted.post('/api/auth/login', json={'username': 'sampleoperator', 'password': 'demo1234'})
-    assert locked.status_code == 423 and locked.json()['error']['code'] == 'locked'
+    assert locked.status_code == 423 and locked.json()['error']['code'] == 'LOCKED'
     assert restarted.post('/api/auth/login', json={'user_id': 'sampleoperator'}).status_code == 423
     monkeypatch.setattr(auth.time, 'time', lambda: now + 301)
     assert restarted.post('/api/auth/login', json={'username': 'sampleoperator', 'password': 'demo1234'}).status_code == 200
@@ -105,7 +105,7 @@ def test_demo_list_and_strict_login_body(make_client, monkeypatch):
     assert {app['id'] for app in reviewer['approveApps']} == {'sample-app', 'sample-library'}
     assert client.post('/api/auth/login', json={'username': 'sampleoperator'}).status_code == 400
     assert client.post('/api/auth/login', json={'user_id': 'sampleadmin', 'username': 'sampleoperator', 'password': 'demo1234'}).status_code == 400
-    assert client.post('/api/auth/login', json={'username': 'missing', 'password': 'unknown'}).json()['error']['code'] == 'invalid_credentials'
+    assert client.post('/api/auth/login', json={'username': 'missing', 'password': 'unknown'}).json()['error']['code'] == 'INVALID_CREDENTIALS'
     assert client.post('/api/auth/login', json={'username': 'sampleoperator', 'password': 'demo1234'}).status_code == 200
     monkeypatch.delenv('HAIKNOW_DEMO_LOGIN')
     restarted = make_client()
@@ -132,7 +132,7 @@ def test_demo_identities_cannot_authenticate_after_restart(make_client, monkeypa
     for login in ({'user_id': 'sampleadmin'}, {'username': 'sampleadmin', 'password': 'demo1234'}):
         response = restarted.post('/api/auth/login', json=login)
         assert response.status_code == 401
-        assert response.json()['error']['code'] == 'invalid_credentials'
+        assert response.json()['error']['code'] == 'INVALID_CREDENTIALS'
 
     worker = TestClient(restarted.app)
     worker.cookies.update(regular_client.cookies)
@@ -142,4 +142,4 @@ def test_demo_identities_cannot_authenticate_after_restart(make_client, monkeypa
     uid = restarted.get('/api/me').json()['id']
     disabled = restarted.patch(f'/api/admin/users/{uid}', json={'status': 'disabled'})
     assert disabled.status_code == 409
-    assert disabled.json()['error']['code'] == 'last_admin'
+    assert disabled.json()['error']['code'] == 'LAST_ADMIN'

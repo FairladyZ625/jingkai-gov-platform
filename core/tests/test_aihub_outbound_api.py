@@ -35,7 +35,7 @@ def test_embedding_stable_preview_and_http_use_same_policy(tmp_path, monkeypatch
     for response in [client.get('/api/apps/sample-app/stable-embedding'),
                      client.post('/api/v1/ai/embedding', json=body)]:
         assert response.status_code == 403
-        assert response.json()['error']['code'] == 'outbound_denied'
+        assert response.json()['error']['code'] == 'OUTBOUND_DENIED'
         assert '虚构合同原文' not in response.text and 'provider.test' not in response.text
     assert requests == []
     assert client.get('/api/apps/sample-app/preview-embedding').json()['result'] == [{'embedding': [0.1]}]
@@ -84,7 +84,7 @@ def test_fetch_authorized_hosts_reach_reader_from_http_and_python(tmp_path, monk
     body = {'appId': 'sample-app', 'url': 'https://example.test/start', 'allowed_hosts': ['example.test']}
     for response in [client.post('/api/v1/ai/fetch', json=body),
                      client.get('/api/apps/sample-app/limited-fetch')]:
-        assert response.status_code == 403 and response.json()['error']['code'] == 'outbound_denied'
+        assert response.status_code == 403 and response.json()['error']['code'] == 'OUTBOUND_DENIED'
         assert 'other.test' not in response.text and 'private-path' not in response.text
     assert hosts == ['example.test', 'example.test']
     assert client.post('/api/v1/ai/fetch', json={**body, 'allowed_hosts': ['example.test', 'other.test']}).status_code == 200
@@ -102,7 +102,7 @@ def test_fetch_http_rejects_invalid_hosts_without_request(tmp_path, monkeypatch,
     response = client.post('/api/v1/ai/fetch', json={
         'appId': 'sample-app', 'url': 'https://example.test/', 'allowed_hosts': allowed_hosts})
     assert response.status_code in (400, 422)
-    assert response.json()['error']['code'] in ('bad_input', 'invalid_request')
+    assert response.json()['error']['code'] in ('BAD_INPUT', 'INVALID_REQUEST')
     assert requests == []
 
 

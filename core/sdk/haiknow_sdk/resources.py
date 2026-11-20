@@ -15,7 +15,7 @@ class DataError(Exception):
     def __init__(self, code: str, message: str, **details: Any):
         super().__init__(message)
         self.code = code
-        self.status = ERROR_STATUS.get(code, 400)
+        self.status = ERROR_STATUS.get(code.lower(), 400)
         self.error = {'code': code, 'message': message, 'retryable': False, **details}
 
 

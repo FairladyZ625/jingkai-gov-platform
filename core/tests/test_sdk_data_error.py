@@ -1,6 +1,8 @@
 """DataError 契约：应用自定义码默认 400、平台码映射不变、details 原样进信封（Refs #51）。"""
 import json
 
+import pytest
+
 from haiknow_sdk.resources import ERROR_STATUS, DataError
 from test_platform import login
 
@@ -48,6 +50,10 @@ router = APIRouter()
 def custom():
     raise DataError('loan_period_invalid', '借期需在 1–30 天')
 
+@router.post('/custom-upper')
+def custom_upper():
+    raise DataError('LOAN_PERIOD_INVALID', '借期需在 1–30 天')
+
 
 @router.post('/custom-detail')
 def custom_detail():
@@ -60,23 +66,29 @@ def platform():
 '''
 
 
-def test_app_router_returns_real_http_envelope(make_client, tmp_path):
+@pytest.mark.parametrize(('path', 'code'), [
+    ('/custom', 'loan_period_invalid'),
+    ('/custom-upper', 'LOAN_PERIOD_INVALID'),
+])
+def test_app_router_returns_real_http_envelope(make_client, tmp_path, path, code):
     apps = tmp_path / 'apps'
     app = apps / 'sdk-dataerror'
     (app / 'api').mkdir(parents=True)
     manifest = json.loads((ROOT / 'tests/fixtures/platform-app/app.json').read_text(encoding='utf-8'))
     (app / 'app.json').write_text(json.dumps({**manifest, 'id': 'sdk-dataerror'}), encoding='utf-8')
     (app / 'api/router.py').write_text(ROUTER, encoding='utf-8')
+    (app / 'web').mkdir()
+    (app / 'web/errors.json').write_text(json.dumps({code: '借期需在 1–30 天'}), encoding='utf-8')
 
     client = make_client(apps)
     login(client, 'sampleoperator')
     base = '/api/apps/sdk-dataerror'
 
-    custom = client.post(base + '/custom')
+    custom = client.post(base + path)
     assert custom.status_code == 400
     assert custom.json() == {
         'error': {
-            'code': 'loan_period_invalid',
+            'code': code,
             'message': '借期需在 1–30 天',
             'retryable': False,
         }
@@ -88,4 +100,4 @@ def test_app_router_returns_real_http_envelope(make_client, tmp_path):
 
     platform = client.post(base + '/platform')
     assert platform.status_code == 404
-    assert platform.json()['error']['code'] == 'not_found'
+    assert platform.json()['error']['code'] == 'NOT_FOUND'

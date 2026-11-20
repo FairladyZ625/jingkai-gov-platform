@@ -182,7 +182,7 @@
         "status": 403,
         "expect": {
           "error": {
-            "code": "forbidden",
+            "code": "FORBIDDEN",
             "message": "没有执行此操作的权限",
             "retryable": false,
             "action": "approve"
@@ -311,7 +311,7 @@
         "status": 409,
         "expect": {
           "error": {
-            "code": "version_conflict",
+            "code": "VERSION_CONFLICT",
             "message": "记录已有新版本，请重新读取后保存",
             "retryable": false,
             "currentVersion": 2
@@ -329,7 +329,7 @@
         "status": 409,
         "expect": {
           "error": {
-            "code": "stale_version",
+            "code": "STALE_VERSION",
             "message": "记录已有新版本，不能确认旧版本",
             "retryable": false,
             "currentVersion": 2
@@ -390,7 +390,7 @@
         "status": 403,
         "expect": {
           "error": {
-            "code": "self_review",
+            "code": "SELF_REVIEW",
             "message": "提交人不能确认自己的记录",
             "retryable": false
           }
@@ -402,7 +402,7 @@
         "status": 404,
         "expect": {
           "error": {
-            "code": "not_found",
+            "code": "NOT_FOUND",
             "message": "项目或资源不存在",
             "retryable": false
           }
