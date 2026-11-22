@@ -22,11 +22,12 @@ function injectFaults() {
   }
   if (innerWidth === 1440 && theme === 'light') {
     const switchUser = JKShell.switchUser;
-    JKShell.switchUser = async function (user) {
-      await switchUser.call(this, user);
+    JKShell.switchUser = async function (user, ...rest) {
+      const switched = await switchUser.call(this, user, ...rest);
       if (user === 'hejun' && state.i === 9) {
         queueMicrotask(() => { throw new Error('第 10 段执行中的异常'); });
       }
+      return switched;
     };
   }
   if (innerWidth === 1280 && theme === 'dark') {

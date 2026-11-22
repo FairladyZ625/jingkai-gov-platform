@@ -32,5 +32,5 @@ window.JK_PLATFORM_INTENTS = [
   { id: 'demo', title: '一键演示', examples: ['演示一遍', '一键演示', '给我演示所有功能'], keywords: ['演示'], plan: ['准备演示'],
     run: async (s, run, hk) => { run.done('好，开始一键演示。'); setTimeout(() => hk.startDemo(), 300); } },
   { id: 'reset', title: '重置演示数据', examples: ['重置演示数据', '恢复初始数据'], keywords: ['重置', '恢复初始'], plan: ['等你确认', '重置数据'],
-    run: async (s, run, hk) => { const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
+    run: async (s, run, hk) => { if (window.JKHttp.mode() !== 'mock') return run.fail('部署实例不能从网页重置，请联系宿主管理员'); const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
 ];

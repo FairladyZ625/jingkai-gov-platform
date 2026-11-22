@@ -21,13 +21,13 @@
       ],
       accepts: [{ kind: '政策文件', ext: ['pdf', 'doc', 'docx', 'txt', 'wps'], match: /政策|办法|细则|措施|若干|实施意见|申报指南/ }],
       intents: [
-        { id: 'policy.match', action: 'match', examples: [`帮我查一下${seedShort('E002')}能申报哪些政策`, `${seedShort('E001')}能申请哪些支持？`], keywords: ['政策', '申报', '补贴', '兑现', '能报', '支持', '奖励'], slots: { ent: 'enterprise' }, plan: ['打开政策兑现', '选择企业', '逐条核对事项', '汇总结论'] },
-        { id: 'policy.fill', action: 'fill', examples: ['补填数据采购额 30 万', '数据采购额是 30 万'], keywords: ['补填', '补充', '采购额', '重算'], slots: { amount: 'amount' }, plan: ['找到待确认项', '填入数值', '重新核对'] },
+        { id: 'policy.match', requires: 'operate', action: 'match', examples: [`帮我查一下${seedShort('E002')}能申报哪些政策`, `${seedShort('E001')}能申请哪些支持？`], keywords: ['政策', '申报', '补贴', '兑现', '能报', '支持', '奖励'], slots: { ent: 'enterprise' }, plan: ['打开政策兑现', '选择企业', '逐条核对事项', '汇总结论'] },
+        { id: 'policy.fill', requires: 'operate', action: 'fill', examples: ['补填数据采购额 30 万', '数据采购额是 30 万'], keywords: ['补填', '补充', '采购额', '重算'], slots: { amount: 'amount' }, plan: ['找到待确认项', '填入数值', '重新核对'] },
         { id: 'policy.calc', action: 'calc', examples: ['数据采购 200 万能补多少', '书店年房租 42 万能补多少', '算一下算力采购 680 万的补贴'], keywords: ['能补多少', '试算', '算一下', '额度'], slots: { amount: 'amount', policy: 'policy' }, plan: ['打开试算', '选择事项', '填入金额', '给出额度'] },
-        { id: 'policy.notice', action: 'notice', examples: [`给${seedShort('E002')}生成政策告知单`, '生成一次性告知单'], keywords: ['告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成告知单', '等你确认'] },
+        { id: 'policy.notice', requires: 'operate', action: 'notice', examples: [`给${seedShort('E002')}生成政策告知单`, '生成一次性告知单'], keywords: ['告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成告知单', '等你确认'] },
         { id: 'policy.detail', action: 'detail', examples: ['实体书店房租补贴的条件是什么', '数据券的申报条件'], keywords: ['条件是什么', '什么条件', '怎么申请', '要求'], slots: { policy: 'policy' }, plan: ['打开事项库', '找到事项', '展示条件与原文'] },
         { id: 'policy.items', action: 'items', examples: ['看看面向个人的政策', '打开政策事项库'], keywords: ['事项库', '有哪些政策', '个人政策'], plan: ['打开事项库', '筛选'] },
-        { id: 'policy.toDocument', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
+        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
       starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
       // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。

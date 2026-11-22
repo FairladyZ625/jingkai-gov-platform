@@ -43,7 +43,7 @@
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
-    renderShell(); Op.loadDict(); refreshInbox();
+    renderShell(); Op.loadDict(); await refreshInbox();
   }
 
   /* ---------------- 登录 ---------------- */
@@ -74,9 +74,10 @@
     }));
   }
   // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
-  function passwordLogin(account) {
+  function passwordLogin(account, signal) {
     return new Promise((resolve) => {
       let accepted = false, busy = false;
+      const abort = () => { if (!busy) modal.close(); };
       const holdClose = (event) => {
         if (busy && (event.key === 'Escape' || event.target.closest?.('[data-cancel],[data-x],.mask-bg'))) {
           event.preventDefault(); event.stopImmediatePropagation();
@@ -87,8 +88,12 @@
         body: `<form autocomplete="off"><label>请输入 ${esc(account.username)} 的口令<input class="input" type="password" autocomplete="off" data-op="switch.password"></label><div role="alert" data-op="switch.error"></div></form>`,
         ok: async (dialog) => {
           if (busy) return false;
-          busy = true;
           const input = dialog.querySelector('[data-op="switch.password"]');
+          if (!input.value) {
+            dialog.querySelector('[data-op="switch.error"]').textContent = '请输入口令，或取消以保留当前身份';
+            input.focus(); return false;
+          }
+          busy = true;
           const request = { username: account.username, password: input.value }; input.value = '';
           try {
             await API.auth.login(request); accepted = true;
@@ -101,22 +106,23 @@
           dialog.querySelector('form').onsubmit = (event) => { event.preventDefault(); dialog.querySelector('[data-ok]').click(); };
           dialog.querySelector('input').focus();
         },
+        onClose() {
+          modal.el.querySelector('input').value = '';
+          document.removeEventListener('click', holdClose, true);
+          document.removeEventListener('keydown', holdClose, true);
+          signal?.removeEventListener('abort', abort);
+          resolve(accepted);
+        },
       });
-      const observer = new MutationObserver(() => {
-        if (!modal.el.isConnected) {
-          modal.el.querySelector('input').value = ''; observer.disconnect(); document.removeEventListener('click', holdClose, true); document.removeEventListener('keydown', holdClose, true); resolve(accepted);
-        }
-      });
-      observer.observe(document.body, { childList: true });
+      signal?.addEventListener('abort', abort, { once: true });
     });
   }
-  async function switchUser(username, run) {
-    const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a) return;
-    if (switchingAccount) return;
+  async function switchUser(username, run, signal) {
+    const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a || switchingAccount) return false;
     switchingAccount = true;
     try {
       if (window.JKHttp.mode() === 'http') {
-        if (!(await passwordLogin(a))) { if (run) run.fail('已取消切号，当前会话已保留'); return; }
+        if (!(await passwordLogin(a, signal))) { if (run) run.fail('已取消切号，当前会话已保留'); return false; }
       } else {
         await API.auth.logout().catch(() => {});
         await API.auth.login({ username: a.username, password: a.password });
@@ -126,6 +132,7 @@
       // 登录和权限刷新都成功才完成原任务。
       await afterLogin(() => { if (run) run.done(); });
       toast(`已切换为 ${a.name}（${a.role}）`);
+      return true;
     } finally {
       switchingAccount = false;
     }
@@ -141,7 +148,7 @@
         <div class="side-sc" id="side-sc"></div>
         <div class="side-foot">
           ${CFG.showDevPlan === true ? `<a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>` : ''}
-          <button class="nav-i" id="btn-demo" data-op="shell.demo" title="把每个功能自动走一遍"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">约 3 分钟</span></button>
+          <button class="nav-i" id="btn-demo" data-op="shell.demo" title="播放中可暂停阅读或前往下一段"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">可暂停</span></button>
           <div class="me" id="btn-me" data-op="shell.me"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><div class="nm clip">${esc(S.me.name)}</div><div class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</div></span><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
         </div>
       </aside>
@@ -189,9 +196,9 @@
       if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
       const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
       if (b.dataset.conv) return openConv(b.dataset.conv);
-      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(); else if (n) openBuiltin(n);
+      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(b); else if (n) openBuiltin(n);
     };
-    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(); if (n) openBuiltin(n); };
+    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(b); if (n) openBuiltin(n); };
     $('#btn-side').onclick = () => { const s = $('.shell'); s.classList.toggle('side-min'); localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : ''); };
     $('#btn-theme').onclick = (e) => { e.stopPropagation(); setTheme(theme() === 'dark' ? 'light' : 'dark'); };
     $('#btn-me').onclick = (e) => { if (e.target.closest('#btn-theme')) return; meMenu($('#btn-me')); };
@@ -212,10 +219,19 @@
     const items = [{ head: `${S.me.name} · ${roleName()}` }, { v: 'settings', icon: 'user', label: '个人设置' }];
     if (isAdmin()) items.push({ v: 'admin', icon: 'shield', label: '管理后台' });
     items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
-    items.push({ sep: true }, { v: 'reset', icon: 'refresh', label: '重置演示数据' }, { v: 'logout', icon: 'logout', label: '退出登录' });
+    items.push({ sep: true });
+    // 部署实例的恢复还需要宿主授权，浏览器（包括管理员会话）不持有该授权。
+    if (H.mode() === 'mock') items.push({ v: 'reset', icon: 'refresh', label: '重置演示数据' });
+    items.push({ v: 'logout', icon: 'logout', label: '退出登录' });
     menu(anchor, items, async (v) => { if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
   }
-  async function reset() { await API.demo.reset(); localStorage.removeItem(storeKey()); try { await API.auth.login({ username: S.me.username, password: (CFG.demoAccounts.find((a) => a.username === S.me.username) || { password: 'jk123456' }).password }); } catch (e) { return renderLogin(); } JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置'); }
+  async function reset() {
+    if (H.mode() !== 'mock') throw Error('部署实例不能从网页重置，请联系宿主管理员');
+    await API.demo.reset(); localStorage.removeItem(storeKey());
+    const account = CFG.demoAccounts.find(a => a.username === S.me.username);
+    try { await API.auth.login({ username: account.username, password: account.password }); } catch { return renderLogin(); }
+    JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置');
+  }
 
   /* ---------------- 布局与面板 ---------------- */
   const shellRoutedApps = ['policy', 'enterprise', 'meeting', 'document'];
@@ -322,7 +338,7 @@
     await sleep(fresh ? 160 : 30);
     return slot;
   }
-  function openBuiltin(id, tab) {
+  async function openBuiltin(id, tab) {
     if (id === 'admin' && !isAdmin()) { toast('需要管理员权限', { type: 'err' }); return; }
     snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
@@ -330,13 +346,13 @@
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
     let slot = S.mounted[id];
     if (!slot) { const view = h(`<div class="pview" data-view="${id}"><div class="app-root pad"></div></div>`); $('#pbody').appendChild(view); slot = S.mounted[id] = { view, el: view.firstElementChild, builtin: true, ctl: {} }; }
-    slot.tab = tab || slot.tab; renderBuiltin(id);
+    slot.tab = tab || slot.tab; const rendered = renderBuiltin(id);
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
-    return sleep(30);
+    return rendered;
   }
-  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
+  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') return window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
   function activate(id) {
     S.active = id; $$('.pview').forEach((v) => v.classList.toggle('on', v.dataset.view === id));
     $('#ptabs').innerHTML = S.open.map((x) => `<button class="ptab ${x === id ? 'on' : ''}" data-id="${x}">${appIcon(x, 'sm')}<span>${esc(mf(x).short || mf(x).name)}</span><span class="x" title="关闭">${icon('x')}</span></button>`).join('');
@@ -849,23 +865,36 @@
   }
 
   /* ---------------- ⌘K ---------------- */
-  function cmdk() {
-    if ($('.cmdk')) return;
-    const x = JK.modal({ title: '', body: `<div class="cmdk-in">${icon('search')}<input placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>` });
+  function cmdk(opener = document.activeElement) {
+    if ($('[role="dialog"]')) return;
+    const x = JK.modal({ title: '搜索与命令', body: `<div class="cmdk-in">${icon('search')}<input aria-label="搜索与命令" placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>`,
+      onClose() {
+        const original = opener?.isConnected && opener !== document.body ? opener : opener?.dataset.op && $(`[data-op="${CSS.escape(opener.dataset.op)}"]`);
+        (original || $('[data-op="rail.cmdk"]'))?.focus({ preventScroll: true });
+      } });
+    x.el.setAttribute('aria-label', '搜索与命令');
+    x.el.setAttribute('aria-modal', 'true');
+    const closeButton = x.el.querySelector('[data-x]');
+    x.el.querySelector('.cmdk-in').append(closeButton);
     x.el.classList.add('cmdk'); const inp = x.el.querySelector('input'); const list = x.el.querySelector('.cmdk-list'); let items = [], sel = 0;
     const draw = async () => {
       const q = inp.value.trim(); items = [];
       if (q) items.push({ g: '交给 AI', label: `“${q}”`, d: 'AI 理解后替你操作', icon: 'sparkles', fn: () => send(q) });
       [...appsVisible('work'), ...appsVisible('platform')].forEach((a) => { const m = mf(a.id); if (!q || (m.name + m.summary).includes(q)) items.push({ g: '打开应用', label: m.name, d: m.summary, app: a.id, fn: () => openApp(a.id) }); });
       [['inbox', '收件箱', '待我审签 / 确认'], ...(isAdmin() ? [['admin', '管理后台', '账号、权限、模型、审计']] : [])].forEach(([id, n, d]) => { if (!q || n.includes(q)) items.push({ g: '平台', label: n, d, app: id, fn: () => openBuiltin(id) }); });
-      Op.allIntents().filter((it) => !it.platform && JK.registry[it.app] && can(it.app, 'view')).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
+      Op.allIntents().filter((it) => !it.platform && JK.registry[it.app] && can(it.app, 'view') && (!it.requires || can(it.app, it.requires))).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
       S.convs.filter((c) => q && c.title.includes(q)).slice(0, 4).forEach((c) => items.push({ g: '最近对话', label: c.title, icon: 'history', fn: () => openConv(c.id) }));
       items = items.slice(0, 14); sel = 0; render();
     };
     const render = () => { let g = ''; list.innerHTML = items.map((it, i) => `${it.g !== g ? `<div class="mh">${esc((g = it.g))}</div>` : ''}<div class="mi ${i === sel ? 'on' : ''}" data-i="${i}">${it.app ? appIcon(it.app, 'sm') : icon(it.icon || 'arrow-right')}<span class="ck-t">${esc(it.label)}</span>${it.d ? `<span class="ck-d">${esc(it.d)}</span>` : ''}${i === sel ? '<span class="ck-k">↵</span>' : ''}</div>`).join('') || JK.empty({ icon: 'search', title: '没有匹配的结果' }); };
     list.onclick = (e) => { const it = e.target.closest('[data-i]'); if (!it) return; x.close(); items[+it.dataset.i].fn(); };
     inp.oninput = draw; inp.onkeydown = (e) => { if (e.key === 'ArrowDown') { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); } if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); render(); e.preventDefault(); } if (e.key === 'Enter' && items[sel]) { x.close(); items[sel].fn(); } };
-    draw(); setTimeout(() => inp.focus(), 20);
+    x.el.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      (document.activeElement === inp ? closeButton : inp).focus();
+    });
+    draw(); inp.focus();
   }
 
   /* ---------------- 收件箱 ---------------- */
@@ -885,7 +914,15 @@
       <div class="tabs" style="margin-bottom:8px"><button class="tab ${tab === 'mine' ? 'on' : ''}" data-t="mine">待我处理 ${list.length ? `<span class="count muted">${list.length}</span>` : ''}</button><button class="tab ${tab === 'todo' ? 'on' : ''}" data-t="todo">我的待办 ${todos.length ? `<span class="count muted">${todos.length}</span>` : ''}</button></div>
       <div class="list">${tab === 'mine' ? (list.map((r) => { const app = r.app === 'market' ? 'skills' : r.app; return `<div class="inb-i">${appIcon(app, 'sm')}<div class="grow"><div class="row"><span class="ttl">${esc(r.title)}</span>${tag(TYPE_LABEL[r.type] || '待处理')}</div><div class="meta">${esc(r.meta || '')}</div></div><div class="row">${r.approver && can(app, 'approve') ? `<button class="btn sm" data-dec="reject" data-id="${r.id}" data-op="inbox.reject.${r.id}">退回</button><button class="btn sm soft" data-dec="approve" data-id="${r.id}" data-op="inbox.approve.${r.id}">通过</button>` : ''}<button class="btn sm ghost" data-open="${app}" data-ref="${esc(r.ref || '')}" data-type="${r.type}">查看 ${icon('chevron-right')}</button></div></div>`; }).join('') || JK.empty({ icon: 'check', title: '全部处理完了', desc: '新的审签、确认会出现在这里' })) : (todos.map((t) => `<div class="inb-i"><input type="checkbox" class="check" data-todo="${t.id}" style="margin-top:4px;accent-color:var(--accent)"><div class="grow"><div class="ttl">${esc(t.title || t.text)}</div><div class="meta">${esc([t.from, t.due && '截止 ' + t.due].filter(Boolean).join(' · '))}</div></div>${t.due ? tag(t.status || '待办') : ''}</div>`).join('') || JK.empty({ icon: 'check', title: '没有待办', desc: '会议纪要派发给你的待办会出现在这里' }))}</div>`;
     el.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { el.dataset.tab = b.dataset.t; renderInbox(el); }));
-    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => { const dec = b.dataset.dec; let comment = ''; if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; } try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
+    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => {
+      if (b.disabled) return;
+      const dec = b.dataset.dec; let comment = '';
+      if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; }
+      b.disabled = true; b.setAttribute('aria-busy', 'true'); delete b.dataset.failed;
+      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); await refreshInbox(); }
+      catch (e) { b.dataset.failed = '1'; toast(e.message, { type: 'err' }); }
+      finally { b.removeAttribute('aria-busy'); b.disabled = false; }
+    }));
     el.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { const a = b.dataset.open; const ref = b.dataset.ref; const R = !ref ? null : a === 'document' ? ['detail', { id: ref }] : a === 'enterprise' ? ['profile', { entId: ref }] : a === 'meeting' ? ['detail', { id: ref, meetingId: ref }] : a === 'skills' ? ['detail', { skillId: ref, review: true }] : null; Promise.resolve(openApp(a)).then(() => { const sl = S.mounted[a]; if (R && sl && sl.ctl && sl.ctl.go) { sl.ctx.params = R[1]; try { sl.ctl.go(R[0], R[1]); } catch (e) { console.error(e); } } }); }));
     el.querySelectorAll('[data-todo]').forEach((c) => (c.onchange = async () => { try { await API.todos.patch(c.dataset.todo, { status: '已完成' }); toast('已完成'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
   }

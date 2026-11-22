@@ -47,3 +47,22 @@ def test_http_switch_password_success_error_and_cancel(server):
         assert server.password not in page.content()
         assert server.password not in page.evaluate("JSON.stringify({...localStorage,...sessionStorage})")
         assert not any(server.password in text for text in console)
+
+
+@pytest.mark.parametrize('server', [()], indirect=True)
+def test_cancel_demo_start_preserves_http_session(server):
+    """用临时 HTTP 账号走原始开场，不依赖 JS 伪造登录成功。"""
+    with sync_playwright() as engine, engine.chromium.launch() as browser:
+        page = browser.new_page()
+        page.goto(server.url)
+        login(page, 'hejun', server.password)
+        calls = []
+        page.on('request', lambda r: calls.append(r.url) if r.method == 'POST' else None)
+        await_dialog = page.locator('[role="dialog"]').filter(has=page.locator('[data-op="switch.password"]'))
+        page.locator('#btn-demo').click()
+        await_dialog.wait_for()
+        await_dialog.locator('[data-x]').click()
+        page.wait_for_function('!JKDemo.state.on && !document.querySelector("[role=dialog]")')
+        assert page.evaluate('[JKDemo.state.i, JKShell.S.me.username, JKShell.S.convs.length]') == [0, 'hejun', 0]
+        assert page.request.get(server.url + '/api/v1/me').json()['user']['username'] == 'hejun'
+        assert not calls

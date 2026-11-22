@@ -25,6 +25,7 @@ window.JK_CONFIG = {
   /* AI 操作速度：正常演示 1，一键演示时用 demoSpeed */
   operatorSpeed: 1,
   demoSpeed: 1.6,
+  demoReadMs: 2400,                // 未单独编排的结果页沿用片尾字幕的停留；可调整，播放中可随时暂停阅读
   // mock 模式下只选择展示与审计使用的模型，不发网络请求。
   modelRouting: {
     defaultChannel: 'cloud', // 公开请求的自动路由，可切换为 local
