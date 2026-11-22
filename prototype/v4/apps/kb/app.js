@@ -14,7 +14,12 @@
   /* ===================== 对外服务（契约 §8） ===================== */
   const service = {
     async search(q, opts) { opts = opts || {}; return API().search({ q, space: opts.space, limit: opts.limit || 8, filters: opts.filters, sort: opts.sort }); },
-    async ask(q, opts) { opts = opts || {}; return API().ask({ q, space: opts.space, filters: opts.filters, appId: opts.appId }); },
+    async ask(q, opts) {
+      opts = opts || {};
+      if (opts.fromChat && current) return current.chatAsk(q);
+      return API().ask({ q, space: opts.space, filters: opts.filters, appId: opts.appId, scope: opts.scope });
+    },
+    followScope(q) { return current && current.followScope(q); },
     async open(id, opts) {
       opts = opts || {};
       const p = { id, highlight: opts.highlight, chunk: opts.chunk };
@@ -73,7 +78,27 @@
       const S = { tab: 'home', q: '', hits: null, total: 0, terms: [], answer: null, asking: false, filters: {}, showFilters: false, sort: 'rel', space: 'all', spaces: [], stats: null,
         lib: { status: '', space: 'all', list: null, facets: null }, doc: null, docTab: 'text', hl: null, hlChunk: null, back: 'home',
         imp: { step: 0, src: 'file', files: [], text: '', title: '', url: '', items: [], busy: false, result: null } };
-      let seq = 0;
+      let seq = 0, askSeq = 0, reference = null, timer;
+      function followScope(q) {
+        if (!reference || /起草|撰写|生成公文|打开原文|导入|发起审签|提交审签/.test(q)) return undefined;
+        const title = q.match(/《([^》]+)》/);
+        if (title && !reference.title.includes(title[1])) return undefined;
+        const named = q.match(/(?:这项|这份|该项|上述)([^，。；？、的]{1,16}?)政策/);
+        if (named && !reference.subject.includes(named[1])) return undefined;
+        const fieldOnly = /^(?:那|请问)?(?:申报期限|申报条件|适用对象|审签材料|申报时间|什么时候截止)(?:呢|是什么|有哪些|是哪些|到哪天)?[？?。]?$/;
+        return named || /(?:这项|这份|该|上述)(?:政策|文件|办法|措施)|上文|上一[份轮]/.test(q) || fieldOnly.test(q) ? reference.key : undefined;
+      }
+      function renderScope() {
+        const box = body.querySelector('#kb-scope');
+        if (!box) return;
+        box.innerHTML = reference ? `<span>追问范围：《${esc(reference.title)}》 · v${esc(reference.version)}（换题会重新检索）</span> <button class="btn ghost sm" data-op="kb.scope-clear">清除范围</button>` : '';
+        if (reference) box.querySelector('button').onclick = () => {
+          clearScope(); renderAnswer(); runSearch(); body.querySelector('[data-op="kb.q"]').focus();
+        };
+      }
+      function clearScope() {
+        ++askSeq; reference = null; S.asking = false; S.answer = null; renderScope();
+      }
 
       /* ---------- 骨架 ---------- */
       el.innerHTML = `<div class="ap"><div class="ap-h">${ui.appIcon('kb', 'lg')}<div class="grow"><h2>${esc(C.name)}</h2><div class="ap-sum">${esc(C.summary)}</div></div>
@@ -87,7 +112,7 @@
       async function loadMeta() { try { const [sp, st] = await Promise.all([K().spaces(), K().stats()]); S.spaces = sp.items.filter((s) => s.visible); S.stats = st; } catch (e) { S.metaErr = e; } }
       function go(route, params) {
         params = params || {};
-        if (route === 'doc') { if (S.tab !== 'doc') S.back = S.tab; S.tab = 'doc'; S.hl = params.highlight || null; S.hlChunk = params.chunk != null ? params.chunk : null; S.docTab = 'text'; openDoc(params.id); return; }
+        if (route === 'doc') { if (reference && params.id !== reference.id) clearScope(); if (S.tab !== 'doc') S.back = S.tab; S.tab = 'doc'; S.hl = params.highlight || null; S.hlChunk = params.chunk != null ? params.chunk : null; S.docTab = 'text'; openDoc(params.id); return; }
         if (route === 'search') route = 'home';
         S.tab = ['home', 'library', 'import'].includes(route) ? route : 'home';
         if (route === 'search') { route = 'home'; params.ask = params.ask !== false; }
@@ -107,6 +132,7 @@
         body.innerHTML = `
           <div class="kb-q">
             <div class="kb-box"><span class="kb-ico">${icon('search')}</span><input class="kb-input" data-op="kb.q" placeholder="${esc(C.placeholder)}" value="${esc(S.q)}" autocomplete="off"><button class="btn primary" data-op="kb.ask">${icon('sparkles')}问 AI</button></div>
+            <div id="kb-scope" class="meta" aria-live="polite"></div>
             <div class="row wrap kb-chips" id="kb-sp">
               <button class="chip-btn ${S.space === 'all' ? 'on' : ''}" data-sp="all">全部 <span class="n">${st.docs ?? ''}</span></button>
               ${S.spaces.map((s) => `<button class="chip-btn ${S.space === s.id ? 'on' : ''}" data-sp="${s.id}" data-op="kb.space-${s.id}">${esc(s.name)} <span class="n">${s.count}</span></button>`).join('')}
@@ -117,10 +143,11 @@
           </div>
           <div id="kb-ans"></div><div id="kb-res"></div>`;
         const inp = body.querySelector('[data-op="kb.q"]');
-        let t; inp.oninput = () => { S.q = inp.value; clearTimeout(t); t = setTimeout(() => { S.answer = null; renderAnswer(); runSearch(); }, 140); };
+        renderScope();
+        inp.oninput = () => { S.q = inp.value; ++askSeq; ++seq; S.asking = false; S.answer = null; renderAnswer(); clearTimeout(timer); timer = setTimeout(runSearch, 140); };
         inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); S.q = inp.value; runSearch(); if (S.q.trim()) runAsk(); } };
         body.querySelector('[data-op="kb.ask"]').onclick = () => { S.q = inp.value; runSearch(); runAsk(); };
-        body.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = () => { S.space = b.dataset.sp; body.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); S.answer = null; renderAnswer(); runSearch(); }));
+        body.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = () => { clearScope(); S.space = b.dataset.sp; body.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); renderAnswer(); runSearch(); }));
         body.querySelector('[data-op="kb.filters"]').onclick = () => { S.showFilters = !S.showFilters; body.querySelector('#kb-filt').classList.toggle('hide', !S.showFilters); if (S.showFilters) renderFilters(); };
         if (S.showFilters) renderFilters();
         renderAnswer(); renderResults();
@@ -135,29 +162,47 @@
         box.querySelector('input[data-f]').onchange = (e) => { S.filters.validOnly = e.target.checked; afterFilter(); };
         const cl = box.querySelector('[data-op="kb.f-clear"]'); if (cl) cl.onclick = () => { S.filters = {}; afterFilter(); };
       }
-      function afterFilter() { S.answer = null; renderAnswer(); runSearch(); renderFilters(); const b = body.querySelector('[data-op="kb.filters"]'); const n = Object.values(S.filters).filter(Boolean).length; if (b) b.innerHTML = `${icon('filter')}筛选${n ? ' · ' + n : ''}`; }
+      function afterFilter() { clearScope(); renderAnswer(); runSearch(); renderFilters(); const b = body.querySelector('[data-op="kb.filters"]'); const n = Object.values(S.filters).filter(Boolean).length; if (b) b.innerHTML = `${icon('filter')}筛选${n ? ' · ' + n : ''}`; }
       const curFilters = () => { const f = {}; Object.entries(S.filters).forEach(([k, v]) => { if (v) f[k] = v; }); if (S.space !== 'all') f.space = S.space; return f; };
       async function runSearch() {
         const my = ++seq; const q = S.q.trim();
         if (S.answer && !S.asking && S.answer.q !== q) { S.answer = null; renderAnswer(); }
         if (!q) { S.hits = null; renderResults(); return; }
-        try { const r = await K().search({ q, limit: 30, filters: curFilters(), sort: S.sort }); if (my !== seq) return; S.hits = r.hits; S.total = r.total; S.terms = r.terms || []; S.facets = r.facets; renderResults(); } catch (e) { if (my === seq) { S.hits = []; renderResults(e); } }
+        try { const r = await K().search({ q, scope: followScope(q), limit: 30, filters: curFilters(), sort: S.sort }); if (my !== seq) return; S.hits = r.hits; S.total = r.total; S.terms = r.terms || []; S.facets = r.facets; renderResults(); } catch (e) { if (my === seq) { S.hits = []; renderResults(e); } }
       }
       async function runAsk() {
-        const q = S.q.trim(); if (!q) return; S.asking = true; S.answer = null; S.showWeak = false; renderAnswer();
-        try { S.answer = await K().ask({ q, filters: curFilters() }); S.answer.q = q; } catch (e) { S.answer = { error: e.message || '出错了' }; }
-        S.asking = false; renderAnswer();
+        const q = S.q.trim(); if (!q) return;
+        clearTimeout(timer);
+        const my = ++askSeq, scope = followScope(q);
+        if (!scope) { reference = null; renderScope(); }
+        S.asking = true; S.answer = null; S.showWeak = false; renderAnswer();
+        try {
+          const a = await K().ask({ q, filters: curFilters(), scope });
+          if (my !== askSeq) return;
+          S.answer = { ...a, q };
+          const c = a.citations && a.citations[0];
+          if (c && !scope) reference = { id: c.id, key: c.citationId || c.id + '@v' + (c.version || 1), version: c.version || 1, title: c.title, subject: q + ' ' + c.title + ' ' + c.snippet };
+        } catch (e) { if (my !== askSeq) return; S.answer = { error: e.message || '出错了' }; }
+        S.asking = false; renderScope(); renderAnswer(); renderResults();
+        return S.answer;
       }
       const mark = (s) => { let out = esc(s); (S.terms || []).filter((t) => t.length > 1).sort((a, b) => b.length - a.length).slice(0, 8).forEach((t) => { out = out.split(esc(t)).join('<mark>' + esc(t) + '</mark>'); }); return out.replace(/<\/mark><mark>/g, ''); };
       const statusTag = (s) => (s ? tag(s, 'kbStatus') : '');
       const srcLine = (h) => [h.source && h.source.docNo, (h.source && h.source.org || '').replace(/^北京经济技术开发区/, '经开区'), h.source && h.source.date].filter(Boolean).map(esc).join(' · ');
       function resultRow(h) {
+        const more = (h.relatedPassages || []).map(p => `<button class="btn ghost sm" data-passage="${esc(p.snippet)}" data-index="${esc(p.chunk)}" title="${esc(p.snippet)}">片段 ${esc(p.passage)} · ${esc(p.snippet.slice(0, 32))}</button>`).join('');
         return `<div class="li kb-hit" data-doc="${esc(h.id)}" data-chunk="${h.chunk != null ? h.chunk : ''}" data-op="kb.hit-${esc(h.id)}">
           <span class="kb-sico">${icon(SPACE_ICON[h.space] || 'file')}</span>
-          <div class="grow"><div class="ttl clip">${mark(h.title)}</div>${h.snippet ? `<div class="kb-snip">${mark(h.snippet)}</div>` : ''}<div class="meta clip">${srcLine(h)}</div></div>
+          <div class="grow"><div class="ttl clip">${mark(h.title)}</div>${h.snippet ? `<div class="kb-snip">${mark(h.snippet)}</div>` : ''}<div class="meta clip">${srcLine(h)} · ${esc(h.id)}${h.chunk != null ? ' · 片段 ' + (h.passage || h.chunk + 1) : ''}</div>
+          ${more ? '<details><summary class="meta">同一资料的其他命中片段</summary><div class="col">' + more + '</div></details>' : ''}</div>
           <div class="kb-tags">${h.example ? tag('示例', 'kbStatus') : ''}${h.status !== '现行有效' ? statusTag(h.status) : ''}</div></div>`;
       }
-      function bindHits(root) { root.querySelectorAll('[data-doc]').forEach((r) => (r.onclick = () => go('doc', { id: r.dataset.doc, chunk: r.dataset.chunk === '' ? null : +r.dataset.chunk }))); }
+      function bindHits(root) { root.querySelectorAll('[data-doc]').forEach((r) => (r.onclick = e => {
+        const p = e.target.closest('[data-passage]');
+        if (p) return go('doc', { id: r.dataset.doc, chunk: +p.dataset.index, highlight: p.dataset.passage });
+        if (!e.target.closest('details')) go('doc', { id: r.dataset.doc, chunk: r.dataset.chunk ? +r.dataset.chunk : null,
+          highlight: S.hits?.find(h => h.id === r.dataset.doc && h.passage)?.snippet });
+      })); }
       function renderResults(err) {
         const box = body.querySelector('#kb-res'); if (!box) return;
         if (err) { box.innerHTML = `<div class="callout h-red">${icon('alert')}<div>${esc(err.message || '搜索出错')}</div></div>`; return; }
@@ -170,7 +215,7 @@
           bindHits(box); return;
         }
         if (!S.hits.length) { box.innerHTML = S.answer ? '' : ui.empty({ icon: 'search', title: '没有匹配的资料', desc: '换个关键词，或清空筛选；也可以把资料导入进来', action: can('operate') ? '导入资料' : '' }); const b = box.querySelector('.empty .btn'); if (b) b.onclick = () => go('import'); return; }
-        if (S.answer && S.answer.notFound && !S.showWeak) { box.innerHTML = `<div class="kb-more"><button class="btn ghost sm" data-op="kb.weak">${S.total} 份资料只沾到零散字词，仍要看看</button></div>`; box.querySelector('[data-op="kb.weak"]').onclick = () => { S.showWeak = true; renderResults(); }; return; }
+        if (S.answer && S.answer.notFound && !S.showWeak) { box.innerHTML = `<div class="kb-more"><button class="btn ghost sm" data-op="kb.weak">查看检索返回的 ${S.total} 份候选资料</button></div>`; box.querySelector('[data-op="kb.weak"]').onclick = () => { S.showWeak = true; renderResults(); }; return; }
         box.innerHTML = `<div class="row kb-rh"><span class="meta">找到 <b class="t-2">${S.total}</b> 份相关资料</span><span class="sp"></span><div class="seg" data-op="kb.sort"><button class="${S.sort === 'rel' ? 'on' : ''}" data-s="rel">最相关</button><button class="${S.sort === 'date' ? 'on' : ''}" data-s="date">最新</button></div></div>
           <div class="list lined card flat kb-list">${S.hits.slice(0, 12).map(resultRow).join('')}</div>${S.hits.length > 12 ? `<div class="meta kb-more">还有 ${S.total - 12} 份，换个更具体的说法试试</div>` : ''}`;
         box.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { S.sort = b.dataset.s; runSearch(); }));
@@ -205,7 +250,7 @@
         }
         const [cl, ch] = CONF[a.confidence] || CONF.mid;
         box.innerHTML = `<div class="card kb-ans" data-op="kb.answer">
-          <div class="row"><span class="kb-ai">${icon('sparkles')}</span><b>回答</b>${ui.tag(cl, null, { hue: ch, cls: 'plain' })}<span class="sp"></span><span class="meta">只摘原文，不改写</span></div>
+          <div class="row"><span class="kb-ai">${icon('sparkles')}</span><b>回答</b>${ui.tag(cl, null, { hue: ch, cls: 'plain' })}<span class="sp"></span><span class="meta">${esc(a.routeNote || '只摘原文，不改写')}</span></div>
           <div class="kb-md">${mdAnswer(a.answer)}</div>
           <div class="sect" style="margin-top:16px">出处</div>
           <div class="col">${a.citations.map((c) => `<div class="src kb-src" data-cite-row="${c.n}" data-op="kb.src-${c.n}"><span class="cite">${c.n}</span><div class="grow"><div class="clip">${esc(c.title)}</div><div class="meta clip">${[c.source.docNo, (c.source.org || '').replace(/^北京经济技术开发区/, '经开区'), c.source.date].filter(Boolean).map(esc).join(' · ')}</div></div>${c.example ? tag('示例', 'kbStatus') : ''}${c.status !== '现行有效' ? statusTag(c.status) : ''}${c.source.url ? `<a class="btn ghost sm kb-ext" href="${esc(c.source.url)}" target="_blank" rel="noopener" title="官网原文">${icon('external')}</a>` : ''}</div>`).join('')}</div>
@@ -456,6 +501,14 @@
       }
       const handle = {
         nav: ctx.nav,
+        followScope,
+        async chatAsk(q) {
+          go('home'); S.q = q; body.querySelector('[data-op="kb.q"]').value = q;
+          runSearch();
+          const answer = await runAsk();
+          if (!answer || answer.error) throw Error(answer?.error || '提问范围已改变，请重新提问。');
+          return answer;
+        },
         go,
         actions: {
           async ask(slots, run) {
@@ -508,7 +561,7 @@
             return finishImport(run, true);
           },
         },
-        unmount() { if (current === handle) current = null; },
+        unmount() { clearTimeout(timer); ++askSeq; ++seq; reference = null; if (current === handle) current = null; },
       };
       async function finishImport(run, already) {
         if (run && !already) { await run.step(2); await run.wait(() => S.imp.step === 1 && !S.imp.busy, 8000); }

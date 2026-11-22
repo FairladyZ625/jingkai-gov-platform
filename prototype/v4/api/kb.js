@@ -15,8 +15,8 @@
   window.JKApi.kb = Object.assign(window.JKApi.kb || {}, {
     /** → {items: Space[]} */ spaces: () => H.get('/api/v1/kb/spaces'),
     /** (id, {roles}) → {ok}  管理员改空间可见范围 */ setSpaceRoles: (id, roles) => H.patch('/api/v1/kb/spaces/' + id, { roles }),
-    /** {q, space?, limit?, sort?: 'rel'|'date', filters?:{kind,status,org,year,tag,validOnly}} → {hits: Hit[], total, terms[], facets} */ search: (b) => H.post('/api/v1/kb/search', b),
-    /** {q, space?, filters?} → Answer */ ask: (b) => H.post('/api/v1/kb/ask', b),
+    /** {q, scope?: citationId, space?, limit?, sort?: 'rel'|'date', filters?:{kind,status,org,year,tag,validOnly}} → {hits: Hit[], total, terms[], facets} */ search: (b) => H.post('/api/v1/kb/search', b),
+    /** {q, scope?: citationId, space?, filters?} → Answer；scope 只选择文档版本，不授予权限。 */ ask: (b) => H.post('/api/v1/kb/ask', b),
     /** {space?, status?, kind?, limit?} → {hits: KbDoc[], total, facets} */ list: (q) => H.get('/api/v1/kb/docs', q),
     /** id → {item: KbDoc + {text, chunkList[{i,start,end,head}], versions[], newer, uploadedBy, addedAt, parse}} */ get: (id) => H.get('/api/v1/kb/docs/' + encodeURIComponent(id)),
     /** (id, {tags?, title?, space?, expire?}) → {item} */ update: (id, b) => H.patch('/api/v1/kb/docs/' + encodeURIComponent(id), b),

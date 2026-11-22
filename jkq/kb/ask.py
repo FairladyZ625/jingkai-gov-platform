@@ -59,7 +59,7 @@ def validated_citations(raw, passages):
             continue
         seen.add(identity)
         citation = {key: hit[key] for key in ("id", "title", "chunk", "source", "status")}
-        for key in ("space", "example", "real", "citationId"):
+        for key in ("space", "example", "real", "citationId", "version"):
             if key in hit:
                 citation[key] = hit[key]
         citations.append(dict(citation, n=len(citations) + 1, snippet=quote))
@@ -128,12 +128,41 @@ def _load_search():
     return search
 
 
+def field_answer(question, doc):
+    """按字段核对本次授权且版本匹配的同一份正文，不把政策有效期当申报期。"""
+    from .evidence import FIELDS
+    from .stats import metadata
+
+    fields = [(label, check) for label, trigger, check in FIELDS if trigger.search(question)]
+    if not fields:
+        return None
+    source = metadata(doc)
+    sentences = tuple(source_sentences(doc["text"]))
+    lines, citations, numbers = [], [], {}
+    for label, check in fields:
+        quotes = []
+        for sentence in dict.fromkeys(s for s in sentences if check(s)):
+            if sentence not in numbers:
+                numbers[sentence] = len(citations) + 1
+                citations.append(dict(source, chunk=0, snippet=sentence, n=numbers[sentence]))
+            quotes.append(f"“{sentence}”[{numbers[sentence]}]")
+        lines.append(label + "：" + ("；".join(quotes) or "原文未明确（本次未找到可引用的说明）。"))
+    answer = "\n".join(lines)
+    if not citations:
+        return no_answer(answer)
+    return dict(answer=answer, citations=citations, notFound=False, followups=[], near=[],
+                confidence="low" if doc["status"] in OBSOLETE else "mid", source="extract")
+
+
 def install(app, platform, current_user):
     """由实例在知识库文档服务安装后调用。"""
     from fastapi import APIRouter, Depends
     from pydantic import BaseModel, field_validator
+    from haiknow_core.aihub.streaming import MOCK_CONTENT
 
+    from ..models import preserve_kb_model_failure
     from .docs import KbError, KbRoute
+    from .evidence import profile, strength
     from .spaces import visible_spaces
 
     search = _load_search()
@@ -151,6 +180,7 @@ def install(app, platform, current_user):
         q: str
         space: str | None = None
         filters: Filters | None = None
+        scope: str | None = None   # 上轮引用的 id@vN，只是选择器，不是访问凭证。
 
         @field_validator("q")
         @classmethod
@@ -180,17 +210,58 @@ def install(app, platform, current_user):
         ]
         if not any(character.isalnum() for character in body.q):
             return no_answer()
+        if body.scope is not None:
+            from .search import matches
+            docs = [doc for doc in docs if f"{doc['id']}@v{doc.get('version', 1)}" == body.scope
+                    and matches(doc, filters)]
+            if not docs:
+                return no_answer("当前引用范围已不可用，请清除范围后重新查找。")
+            grouped = field_answer(body.q, docs[0])
+            if grouped is not None:
+                return grouped
+        elif re.search(r"(?:这项|这份|上述|该)(?:政策|文件|办法)的", body.q) or re.search(r"这项[^，。；？的]{1,16}政策的", body.q):
+            return no_answer("请先选定要追问的政策：搜索政策名称并取得引用后，再问这份原文。")
         hits = search(docs, body.q, filters=filters)["hits"]
 
+        texts = {doc["id"]: doc["text"] for doc in docs}
+        hits = [hit for hit in hits if hit["space"] in allowed and hit["snippet"] in texts.get(hit["id"], "")]
+        # 搜索列表每份文件只显示一个摘要；问答还需要同一文件的并列条款。
+        query = profile(body.q)
+        excerpts = []
+        for hit in hits:
+            if not strength(query, hit["title"], hit["snippet"]):
+                continue
+            sentences = sorted(source_sentences(texts[hit["id"]]),
+                               key=lambda s: -strength(query, hit["title"], s))
+            for sentence in dict.fromkeys([hit["snippet"], *sentences[:4]]):
+                if strength(query, hit["title"], sentence):
+                    excerpts.append(dict(hit, snippet=sentence))
+            break  # 一个回答不混用同名政策、不同批次的期限或标准
+        additional = [h for h in excerpts if not any(h["id"] == b["id"] and h["snippet"] == b["snippet"]
+                                                      for b in hits)]
+        hits = [h for h in hits + additional if any(source_sentences(h["snippet"]))]
+        local = False
+
         def complete(messages, classification):
-            result = platform.model.aihub.call(
-                "kb", "chat", {"messages": messages, "classification": classification}, principal=user,
-            )
+            nonlocal local
+            with preserve_kb_model_failure():
+                result = platform.model.aihub.call(
+                    "kb", "chat", {"messages": messages, "classification": classification}, principal=user,
+                )
+            service = getattr(app.state, "jkq_models", None)
+            model = service.models.get(result.get("provider")) if service else None
+            if model and model.kind == "mock" and result["result"] in ("[]", MOCK_CONTENT):
+                local = True
+                # 仅已确认的模拟服务没有预置摘录时，使用有主题、属性依据的本地摘录；
+                # 不把出站拒绝、网关异常、真实模型拒答转换为成功。
+                selected = {(h["id"], h["snippet"]) for h in excerpts}
+                return json.dumps([dict(passage=i, quote=h["snippet"]) for i, h in enumerate(hits, 1)
+                                   if (h["id"], h["snippet"]) in selected])
             return result["result"]
 
-        # 只有标题命中时检索会以标题充当片段；问答只引用正文原文。
-        texts = {doc["id"]: doc["text"] for doc in docs}
-        return ask(body.q, (hit for hit in hits
-                            if hit["space"] in allowed and hit["snippet"] in texts.get(hit["id"], "")), complete)
+        answer = ask(body.q, hits, complete)
+        if local and not answer["notFound"]:
+            answer.update(source="extract", routeNote="本地原文摘录（未使用真实模型）")
+        return answer
 
     app.include_router(router)
