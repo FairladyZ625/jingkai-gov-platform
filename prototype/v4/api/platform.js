@@ -16,8 +16,11 @@
     });
     return r;
   };
-  const reviewDecision = (id, b) => (H.mode() === 'http' && b && b.version == null && reviewVersions[id] != null
-    ? Object.assign({}, b, { version: reviewVersions[id] }) : b);
+  const reviewDecision = (id, b) => {
+    if (H.mode() !== 'http' || !b) return b;
+    const { comment, ...body } = b;
+    return { ...body, reason: body.reason ?? comment ?? '', version: body.version ?? reviewVersions[id] };
+  };
   window.JKApi = window.JKApi || {};
   Object.assign(window.JKApi, {
     auth: {

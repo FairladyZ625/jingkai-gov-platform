@@ -334,6 +334,7 @@
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
+    if (id === 'inbox') return refreshInbox();
     return sleep(30);
   }
   function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
@@ -872,7 +873,12 @@
   // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
   function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
   async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
+    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => {
+      const a = x.app === 'market' ? 'skills' : x.app;
+      if (x.status !== 'pending') return false;
+      if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
+      return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'));
+    }); } catch (e) { S.inbox = []; }
     try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
     renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
   }

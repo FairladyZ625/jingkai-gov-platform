@@ -752,7 +752,20 @@
   on('POST', '/api/apps/document/compare', (b) => { const get = (x) => { if (typeof x === 'string') return x; const d = S.drafts[x.id]; const v = d.versions.find((y) => y.v === x.v) || d.versions[d.versions.length - 1]; return docText(v.content); }; const a = get(b.a), c = get(b.b); const parts = diff(a, c); return { parts, stats: { add: parts.filter((x) => x.op === 'add').reduce((s, x) => s + x.t.length, 0), del: parts.filter((x) => x.op === 'del').reduce((s, x) => s + x.t.length, 0) } }; });
   on('POST', '/api/apps/document/drafts/:id/comments', (b, p) => { const d = S.drafts[p.id]; const c = { id: nid('cm'), para: b.para, by: me().name, at: now(), text: b.text, replies: [], resolved: false }; d.comments.push(c); return { item: c }; });
   on('PATCH', '/api/apps/document/drafts/:id/comments/:cid', (b, p) => { const d = S.drafts[p.id]; const c = d.comments.find((x) => x.id === p.cid); if (b.reply) c.replies.push({ by: me().name, text: b.reply }); if (b.resolved !== undefined) c.resolved = b.resolved; return { item: c }; });
-  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => { const d = S.drafts[p.id]; requireCheckedDraft(d, '请先在“核查”中处理。'); d.status = '审签中'; const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: b.assignee || '李阳' }; S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r }; });
+  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => {
+    if (!can('document', 'operate')) err(403, 'FORBIDDEN', '没有公文操作权限');
+    const d = S.drafts[p.id];
+    if (!d) err(404, 'NOT_FOUND', '文稿不存在');
+    requireCheckedDraft(d, '请先在“核查”中处理。');
+    if (!['草稿', '已退回'].includes(d.status)) err(409, 'INVALID_STATE', '只有草稿或已退回的文稿可以送审');
+    const name = b.assignee || '李阳', reviewer = S.users.find(u => u.name === name);
+    if (!reviewer) err(404, 'NOT_FOUND', '审签人不存在');
+    if (reviewer.id === me().id || reviewer.name === d.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+    if (!can('document', 'approve', reviewer)) err(403, 'FORBIDDEN', '指定用户没有审签权限');
+    d.status = '审签中';
+    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: name, submitter: me().id };
+    S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r };
+  });
   on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${escapeHtml(c.title)}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${escapeHtml(c.docNo) || '发文字号（请填写）'}</p><h1>${escapeHtml(c.title)}</h1><p>${escapeHtml(c.to)}</p>${c.paragraphs.map((x) => `<p>　　${escapeHtml(x)}</p>`).join('')}<p class="sign">${escapeHtml(c.sign)}</p><p class="sign">${escapeHtml(c.date)}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
   // 审签 / 等我确认（复用卫华 reviews）
   on('GET', '/api/v1/reviews', () => ({ items: S.inbox }));
@@ -762,12 +775,13 @@
     const approve = b.decision === 'approve';
     if (r.type === 'review') {
       const d = S.drafts[r.ref];
-      if (approve) {
-        const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
-        if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
-        requireCheckedDraft(d, '请退回修订后重新送审。');
-      }
+      if (me().id === r.submitter || me().name === d?.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+      if (r.assignee && r.assignee !== me().name && r.assignee !== me().id) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
+      const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
+      if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
+      if (approve) requireCheckedDraft(d, '请退回修订后重新送审。');
       d.status = approve ? '已定稿' : '已退回';
+      if (!approve) d.returnReason = b.reason ?? b.comment ?? '';
     }
     r.status = approve ? 'done' : 'rejected';
     r.reason = b.reason;

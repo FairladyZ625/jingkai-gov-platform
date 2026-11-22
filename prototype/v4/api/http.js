@@ -20,7 +20,11 @@
         const r = await fetch(c.baseUrl.replace(/\/$/, '') + path, { method, credentials: 'include', signal: ctl.signal,
           headers: isForm ? {} : { 'Content-Type': 'application/json' }, body: body == null || method === 'GET' ? undefined : isForm ? body : JSON.stringify(body) });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw { status: r.status, code: j.code || 'HTTP_' + r.status, message: j.message || r.statusText };
+        if (!r.ok) {
+          const err = j?.error || j;
+          const message = [err?.message, j?.message].find((s) => typeof s === 'string' && s.trim());
+          throw { status: r.status, code: err?.code || j?.code || 'HTTP_' + r.status, message: message || `请求失败（HTTP ${r.status}）` };
+        }
         return j;
       } catch (e) { if (e && e.name === 'AbortError') throw { status: 0, code: 'TIMEOUT', message: '服务器响应超时' }; throw e.status !== undefined ? e : { status: 0, code: 'NETWORK', message: '网络不可用' }; }
       finally { clearTimeout(t); }
