@@ -41,6 +41,7 @@
     finishPreviousAccount?.();
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
     renderShell(); Op.loadDict(); refreshInbox();
@@ -872,15 +873,25 @@
   /* ---------------- 收件箱 ---------------- */
   // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
   function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
-  async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => {
-      const a = x.app === 'market' ? 'skills' : x.app;
-      if (x.status !== 'pending') return false;
-      if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
-      return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'));
-    }); } catch (e) { S.inbox = []; }
-    try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
-    renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+  let inboxLoad;
+  function refreshInbox() {
+    const who = S.me;
+    const items = async read => { try { return (await read()).items || []; } catch { return []; } };
+    const load = Promise.all([items(API.reviews.list), items(API.todos.list)]).then(([reviews, todos]) => {
+      if (!who || who !== S.me) return;
+      // 打开面板、写入回执和角标通知均可触发刷新。旧请求既不能回写，也不能提前宣告就绪。
+      if (load !== inboxLoad) return inboxLoad;
+      S.inbox = reviews.filter((x) => {
+        const a = x.app === 'market' ? 'skills' : x.app;
+        if (x.status !== 'pending') return false;
+        if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
+        return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && who.role === 'leader'));
+      });
+      S.todos = todos;
+      renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+    });
+    inboxLoad = load;
+    return load;
   }
   JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
@@ -891,7 +902,13 @@
       <div class="tabs" style="margin-bottom:8px"><button class="tab ${tab === 'mine' ? 'on' : ''}" data-t="mine">待我处理 ${list.length ? `<span class="count muted">${list.length}</span>` : ''}</button><button class="tab ${tab === 'todo' ? 'on' : ''}" data-t="todo">我的待办 ${todos.length ? `<span class="count muted">${todos.length}</span>` : ''}</button></div>
       <div class="list">${tab === 'mine' ? (list.map((r) => { const app = r.app === 'market' ? 'skills' : r.app; return `<div class="inb-i">${appIcon(app, 'sm')}<div class="grow"><div class="row"><span class="ttl">${esc(r.title)}</span>${tag(TYPE_LABEL[r.type] || '待处理')}</div><div class="meta">${esc(r.meta || '')}</div></div><div class="row">${r.approver && can(app, 'approve') ? `<button class="btn sm" data-dec="reject" data-id="${r.id}" data-op="inbox.reject.${r.id}">退回</button><button class="btn sm soft" data-dec="approve" data-id="${r.id}" data-op="inbox.approve.${r.id}">通过</button>` : ''}<button class="btn sm ghost" data-open="${app}" data-ref="${esc(r.ref || '')}" data-type="${r.type}">查看 ${icon('chevron-right')}</button></div></div>`; }).join('') || JK.empty({ icon: 'check', title: '全部处理完了', desc: '新的审签、确认会出现在这里' })) : (todos.map((t) => `<div class="inb-i"><input type="checkbox" class="check" data-todo="${t.id}" style="margin-top:4px;accent-color:var(--accent)"><div class="grow"><div class="ttl">${esc(t.title || t.text)}</div><div class="meta">${esc([t.from, t.due && '截止 ' + t.due].filter(Boolean).join(' · '))}</div></div>${t.due ? tag(t.status || '待办') : ''}</div>`).join('') || JK.empty({ icon: 'check', title: '没有待办', desc: '会议纪要派发给你的待办会出现在这里' }))}</div>`;
     el.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { el.dataset.tab = b.dataset.t; renderInbox(el); }));
-    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => { const dec = b.dataset.dec; let comment = ''; if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; } try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
+    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => {
+      const dec = b.dataset.dec; let comment = '';
+      if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; }
+      const version = list.find(row => row.id === b.dataset.id)?.version;
+      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment, version }); toast(dec === 'approve' ? '已通过' : '已退回'); refreshInbox(); }
+      catch (e) { toast(e.message, { type: 'err' }); }
+    }));
     el.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { const a = b.dataset.open; const ref = b.dataset.ref; const R = !ref ? null : a === 'document' ? ['detail', { id: ref }] : a === 'enterprise' ? ['profile', { entId: ref }] : a === 'meeting' ? ['detail', { id: ref, meetingId: ref }] : a === 'skills' ? ['detail', { skillId: ref, review: true }] : null; Promise.resolve(openApp(a)).then(() => { const sl = S.mounted[a]; if (R && sl && sl.ctl && sl.ctl.go) { sl.ctx.params = R[1]; try { sl.ctl.go(R[0], R[1]); } catch (e) { console.error(e); } } }); }));
     el.querySelectorAll('[data-todo]').forEach((c) => (c.onchange = async () => { try { await API.todos.patch(c.dataset.todo, { status: '已完成' }); toast('已完成'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
   }

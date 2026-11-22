@@ -36,6 +36,19 @@ test('收件箱退回把用户输入的意见和被审版本一起提交', async
   assert.equal(sent.reason, '请明确虚拟材料的范围');
 });
 
+test('画面版本优先于列表缓存；服务端拒绝仍按原状态和原因返回', async () => {
+  let sent;
+  const api = transport(async (url, init) => {
+    if (init.method === 'GET') return Response.json({items: [{id: 'S1', app: 'skills', version: 9}]});
+    sent = JSON.parse(init.body);
+    return Response.json({code: 'FORBIDDEN', message: '没有办理权限'}, {status: 403});
+  });
+  await api.reviews.list();
+  await assert.rejects(api.reviews.decide('S1', {decision: 'reject', reason: '请复核', version: 7}),
+    e => e.status === 403 && e.code === 'FORBIDDEN' && e.message === '没有办理权限');
+  assert.deepEqual(sent, {decision: 'reject', reason: '请复核', version: 7});
+});
+
 test('离线公文也不能自送自审，指定领导之外的账号不能代签', async () => {
   const ctx = vm.createContext({window: {}, localStorage: {getItem() {}, setItem() {}}, setTimeout});
   for (const file of ['config/app.config.js', 'config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js']) {
