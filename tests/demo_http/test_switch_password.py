@@ -54,6 +54,39 @@ def test_http_switch_password_success_error_and_cancel(server):
 
 
 @pytest.mark.parametrize('server', [()], indirect=True)
+def test_new_identity_can_switch_while_its_inbox_is_refreshing(server):
+    """阻塞真实收件箱回执的消费，不伪造身份、口令、业务回执或授权。"""
+    with sync_playwright() as engine, engine.chromium.launch() as browser:
+        page = browser.new_page()
+        page.goto(server.url)
+        login(page, 'wangmin', server.password)
+        page.evaluate("""() => {
+            const list = JKApi.reviews.list;
+            const gate = new Promise(resolve => { window.releaseTestInbox = resolve; });
+            JKApi.reviews.list = async (...args) => {
+                const owner = JKShell.S.me.username;
+                const result = await list(...args);
+                if (owner === 'liyang') { window.testInboxHeld = true; await gate; }
+                return result;
+            };
+            window.firstTestSwitch = JKShell.switchUser('liyang');
+        }""")
+        password = page.locator('[data-op="switch.password"]')
+        password.fill(server.password)
+        page.locator('[role="dialog"] [data-ok]').click()
+        page.wait_for_function("window.testInboxHeld && JKShell.S.me.username === 'liyang'")
+        page.evaluate("() => { window.nextTestSwitch = JKShell.switchUser('admin'); }")
+        password.wait_for()
+        assert page.evaluate("() => { releaseTestInbox(); return firstTestSwitch; }") is True
+        assert page.evaluate("JKShell.switchUser('hejun')") is False
+        assert page.request.get(server.url + '/api/v1/me').json()['user']['username'] == 'liyang'
+        password.fill(server.password)
+        page.locator('[role="dialog"] [data-ok]').click()
+        assert page.evaluate("window.nextTestSwitch") is True
+        assert page.request.get(server.url + '/api/v1/me').json()['user']['username'] == 'admin'
+
+
+@pytest.mark.parametrize('server', [()], indirect=True)
 def test_cancel_demo_start_preserves_http_session(server):
     """用临时 HTTP 账号走原始开场，不依赖 JS 伪造登录成功。"""
     with sync_playwright() as engine, engine.chromium.launch() as browser:

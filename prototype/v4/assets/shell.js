@@ -53,7 +53,7 @@
     if (!u) return renderLogin();
     await afterLogin();
   }
-  async function afterLogin(finishPreviousAccount) {
+  async function afterLogin(finishPreviousAccount, identityReady) {
     const profile = await API.me.get();
     const models = await API.models.list().catch(() => null);
     // 视角切换的任务卡属于发起账号。新会话校验通过后，再切换本地存储键。
@@ -63,7 +63,9 @@
     S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
-    Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell(); await refreshInbox();
+    Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell();
+    identityReady?.(S.me);
+    await refreshInbox();
   }
 
   /* ---------------- 登录 ---------------- */
@@ -141,7 +143,8 @@
     // 内部人员已启动的演示可能经过外部视角；续播仍逐次使用真实口令框。
     if (!canPresentDemo() && !(H.mode() === 'http' && window.JKDemo?.ownsSwitch?.(signal))) return false;
     const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a || switchingAccount) return false;
-    switchingAccount = true;
+    const lock = switchingAccount = {};
+    const unlock = () => { if (switchingAccount === lock) switchingAccount = false; };
     try {
       if (window.JKHttp.mode() === 'http') {
         if (!(await passwordLogin(a, signal))) { if (run) run.fail('已取消切号，当前会话已保留'); return false; }
@@ -152,11 +155,18 @@
       if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
       rememberActivePanel();
       // 登录和权限刷新都成功才完成原任务。
-      await afterLogin(() => { if (run) run.done(); });
+      // 身份和权限已确认且新工作台已显示，就允许用户打开下一次口令框。
+      // 收件箱仍按原约定等到就绪；旧刷新结束不能释放下一次切号的锁。
+      let identity;
+      await afterLogin(() => { if (run) run.done(); }, user => {
+        identity = user;
+        if (!run && !signal) unlock(); // 操作员/演示续播仍等待整次切换完成。
+      });
+      if (S.me !== identity) return false;
       toast(`已切换为 ${a.name}（${a.role}）`);
       return true;
     } finally {
-      switchingAccount = false;
+      unlock();
     }
   }
   async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; Op.loadDict(); renderLogin(); }

@@ -9,6 +9,16 @@ async function inspectRole({ username, mode }) {
   const paths = {enterprise:'/api/apps/enterprise/companies', meeting:'/api/apps/meeting/meetings',
     policy:'/api/apps/policy/items', document:'/api/apps/document/documents'};
   const profile = await w.JKAPI.get('/api/v1/me');
+  // 先从已登录的离线夹具取得该角色可读的响应。切到 HTTP 后，fetch 替身
+  // 只服务这些快照，不能再递归调用浏览器 mock 的平台鉴权接口。
+  const snapshots = new Map(), unexpectedMock = [];
+  if (mode === 'http') {
+    for (const path of ['/api/v1/auth/session','/api/v1/me','/api/v1/models','/api/v1/reviews','/api/v1/todos',
+      ...Object.entries(paths).filter(([app])=>profile.grants[app]?.includes('view')).map(([,p])=>p)]) {
+      snapshots.set(path, await w.JKAPI.get(path));
+    }
+    w.JKAPI.request = (_method, path) => { unexpectedMock.push(path); throw Error('HTTP 角色矩阵不允许退回浏览器 mock'); };
+  }
   // transport 明确标成 HTTP 替身，不隐藏会被服务端拒绝的尝试。
   w.JK_CONFIG.api.mode = mode;
   function observe(path) {
@@ -28,8 +38,8 @@ async function inspectRole({ username, mode }) {
     const path = new URL(url, 'https://fixture.invalid').pathname;
     if (!observe(path)) return {ok:false,status:403,json:async()=>({code:'FORBIDDEN'})};
     if (init.method !== 'GET') throw Error('首屏不应发出写请求');
-    const result = await w.JKAPI.get(path);
-    return {ok:true,status:200,json:async()=>result};
+    if (!snapshots.has(path)) throw Error('未登记的角色夹具请求：' + path);
+    return {ok:true,status:200,json:async()=>snapshots.get(path)};
   };
   let preload, todos;
   const load = w.JKOp.loadDict;
@@ -78,12 +88,13 @@ async function inspectRole({ username, mode }) {
       if (w.JKDemo.state.on || prompts || sends || w.JKShell.S.me.username !== username) throw Error('外部身份误启动演示');
     } finally { w.JK.modal = modal; w.JKShell.send = send; }
   }
-  return {role:profile.role.id, counts, requests:startup, denied, menu, examples, demo:!!$('#btn-demo'), railDemo:!!$('[data-op="rail.demo"]'),
+  return {role:profile.role.id, counts, requests:startup, denied, unexpectedMock, menu, examples, demo:!!$('#btn-demo'), railDemo:!!$('[data-op="rail.demo"]'),
     home, help:w.JKOp.hooks.helpNext().map(x=>x.say)};
 }
 function checkRole(assert, r, mode, file = true) {
   const partner = r.role === 'partner', reviewer = ['admin','leader'].includes(r.role), offline = mode === 'mock' && file;
   assert.deepEqual(r.denied, []);
+  assert.deepEqual(r.unexpectedMock, []);
   assert.equal(r.requests['/api/v1/auth/session'], 1);
   assert.deepEqual(r.counts, partner ? {enterprise:1,policy:1} : {enterprise:1,meeting:1,policy:1,document:1});
   assert.equal(r.menu.some(key=>key.startsWith('as:')), offline || mode === 'http' && !partner);
