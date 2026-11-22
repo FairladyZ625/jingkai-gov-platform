@@ -171,12 +171,13 @@
     if (f.validOnly && /已失效|已更新/.test(statusOf(d))) return false;
     return true;
   }
-  function rankChunks(q, filters) {
+  const citationKey = d => d.id + '@v' + (d.version || 1);
+  function rankChunks(q, filters, scope) {
     const { base, extra } = qTokens(q);
     if (!base.length && !extra.length) return { list: [], base, extra };
     const list = [];
     CH.forEach((c) => {
-      if (!canSee(c.doc) || !passFilters(c.doc, filters)) return;
+      if (!canSee(c.doc) || !passFilters(c.doc, filters) || (scope != null && citationKey(c.doc) !== scope)) return;
       let s = bm25(c, base, 1) + bm25(c, extra, 0.45);
       if (!s) return;
       const th = base.filter((t) => c.doc._t.has(t)).length; s += th * 2.5;      // 标题命中加分
@@ -190,10 +191,10 @@
     opts = opts || {}; const limit = opts.limit || 8; const f = Object.assign({}, opts.filters || {}, opts.space ? { space: opts.space } : {});
     q = String(q || '').trim();
     if (!q) { // 无关键词：按时间列出（用于"全部资料"列表）
-      const all = DOCS.filter((d) => canSee(d) && passFilters(d, f)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      const all = DOCS.filter((d) => canSee(d) && passFilters(d, f) && (opts.scope == null || citationKey(d) === opts.scope)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
       return { hits: all.slice(0, opts.limit || 200).map((d) => pub(d, { snippet: d.text.slice(0, 90).replace(/\n/g, ' '), score: 0 })), total: all.length, facets: facets(all) };
     }
-    const { list, base } = rankChunks(q, f); let units = rankChunks.units || qTokens(q).units;
+    const { list, base } = rankChunks(q, f, opts.scope); let units = qTokens(q).units;
     // 按文档聚合：每份资料只出一条（最相关的片段 + 命中片段数）
     const by = new Map();
     list.forEach(({ c, s }) => { const x = by.get(c.doc.id); if (!x) by.set(c.doc.id, { d: c.doc, ci: c.i, s, n: 1, cs: [c] }); else { x.n++; x.cs.push(c); } });
@@ -206,10 +207,14 @@
     let docs = [...by.values()].map((x) => { x.cov = cov(x); x.f = x.s * (0.35 + 0.65 * x.cov) * (1 + Math.min(x.n - 1, 4) * 0.04); return x; }).sort((a, b) => b.f - a.f);
     const top = docs.length ? docs[0].f : 0;
     docs = docs.filter((x) => x.f >= SEARCH_MIN && x.f >= top * SEARCH_REL && (!units.length || x.cov >= SEARCH_COV));
-    // 同标题（如重复抓取的同一通知）只保留一条
-    const tseen = new Set(); docs = docs.filter((x) => { const k = String(x.d.title).replace(/\s|（失效）/g, ''); if (tseen.has(k)) return false; tseen.add(k); return true; });
+    // 搜索已授权后，仅合并有相同来源和完整正文的快照，不能用标题作主键。
+    const seen = new Set(); docs = docs.filter(({d}) => {
+      const k = d.url ? JSON.stringify([d.url, d.title, d.version, statusOf(d), d.expire, !!d.example, d.space === 'enterprise', d.text]) : citationKey(d);
+      if (seen.has(k)) return false; seen.add(k); return true;
+    });
     if (opts.sort === 'date') docs.sort((a, b) => String(b.d.date).localeCompare(String(a.d.date)));
-    return { hits: docs.slice(0, limit).map((x) => pub(x.d, { chunk: x.ci, snippet: snippetOf(x.d, x.ci, q), score: Math.round(x.f * 10) / 10, hitCount: x.n, coverage: Math.round(x.cov * 100) / 100 })), total: docs.length, terms: base, facets: facets(docs.map((x) => x.d)) };
+    return { hits: docs.slice(0, limit).map((x) => pub(x.d, { chunk: x.ci, snippet: snippetOf(x.d, x.ci, q), score: Math.round(x.f * 10) / 10, hitCount: x.n, coverage: Math.round(x.cov * 100) / 100,
+      relatedPassages: x.cs.filter(c => c.i !== x.ci).slice(0, 3).map(c => ({ chunk: c.i, passage: c.i + 1, snippet: x.d.chunks[c.i].text })) })), total: docs.length, terms: base, facets: facets(docs.map((x) => x.d)) };
   }
   function facets(docs) {
     const cnt = (fn) => { const m = {}; docs.forEach((d) => { const k = fn(d); if (k) m[k] = (m[k] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n })); };
@@ -221,7 +226,7 @@
   function ask(q, opts) {
     opts = opts || {}; q = String(q || '').trim();
     const f = Object.assign({}, opts.filters || {}, opts.space ? { space: opts.space } : {});
-    const { list, base, units } = rankChunks(q, f);
+    const { list, base, units } = rankChunks(q, f, opts.scope);
     const top = list[0] ? list[0].s : 0;
     const covered = (c) => { if (!units.length) return 1; return units.filter((alt) => alt.some((t) => c.tf.has(t) || c.doc._t.has(t))).length / units.length; };
     const notFound = () => {
@@ -231,6 +236,34 @@
         message: msg,
         near, suggestions: [{ label: '导入相关资料', action: 'import' }].concat(near.length ? [{ label: `看看《${near[0].title.replace(/^《/, '').slice(0, 14)}…》`, open: near[0].id }] : []) };
     };
+    if (opts.scope != null) {
+      const doc = DOCS.find(d => canSee(d) && passFilters(d, f) && citationKey(d) === opts.scope);
+      if (!doc) return notFound();
+      const fields = [
+        ['申报期限', /期限|截止|截至|申报时间|受理时间/, t => /申报|申请|受理|提交|报送/.test(t) && /截止|截至|期限为|\d{1,2}月\d{1,2}日.{0,4}(?:前|至)|申报时间为/.test(t) && /\d|工作日|常年|另行通知/.test(t)],
+        ['适用对象', /适用对象|适用范围|申报对象|支持对象|谁能申报/, t => /(?:适用于|(?:适用对象|申报对象|支持对象|适用范围)[为是：:])\s*[^\s，。；：:]{2,}/.test(t)],
+        ['审签材料', /审签|签章|签批|盖章/, t => /签字|签章|盖章|审签|签批|签署/.test(t) && /材料|申请表|申报表|申请书|承诺书|证明|清单|报告/.test(t) && !/^(?:.{0,5}[、.．])?(?:需要)?审签材料(?:要求|清单)?[：:。]?$/.test(t)],
+      ].filter(([, trigger]) => trigger.test(q));
+      if (fields.length) {
+        const sentences = doc.chunks.flatMap(c => c.text.split(/(?<=[。！？])|\n/).map(t => ({ t: t.trim(), chunk: c.i })));
+        const citations = [], numbers = new Map();
+        const answer = fields.map(([label, , matches]) => {
+          const quotes = new Set();
+          for (const s of sentences.filter(({t}) => !/\[\d+\]/.test(t) && matches(t))) {
+            if (!numbers.has(s.t)) {
+              numbers.set(s.t, citations.length + 1);
+              citations.push(pub(doc, { n: numbers.get(s.t), snippet: s.t, chunk: s.chunk, citationId: opts.scope }));
+            }
+            quotes.add('“' + s.t + '”[' + numbers.get(s.t) + ']');
+          }
+          return label + '：' + ([...quotes].join('；') || '原文未明确（本次未找到可引用的说明）。');
+        }).join('\n');
+        return { answer, message: answer, notFound: !citations.length, confidence: !citations.length ? 'none' : /已失效|已更新/.test(statusOf(doc)) ? 'low' : 'mid', citations, followups: [], routeNote: '本地原文摘录' };
+      }
+    } else if (/(?:这项|这份|上述|该)(?:政策|文件|办法)的|这项[^，。；？的]{1,16}政策的/.test(q)) {
+      const msg = '请先选定要追问的政策：搜索政策名称并取得引用后，再问这份原文。';
+      return { ...notFound(), answer: msg, message: msg, near: [] };
+    }
     const best0 = list.slice(0, 12).reduce((m, x) => Math.max(m, covered(x.c)), 0);
     if (!list.length || top < ASK_MIN || best0 < (units.length >= 3 ? 0.6 : units.length === 2 ? 0.99 : 0.99)) return notFound();
     const wantNum = /多少|最高|金额|比例|几|上限|封顶|补贴|奖励|标准/.test(q), wantDate = /什么时候|截止|几号|时间|期限|哪天|何时|延期/.test(q), wantCond = /条件|要求|谁可以|能不能|是否|符合/.test(q), wantList = /哪些|有什么|都有/.test(q), wantHow = /怎么|如何|支持|扶持/.test(q);
@@ -252,7 +285,19 @@
     if (wantDate) byDoc.forEach((e) => { const age = (Date.parse(TODAY) - Date.parse(e.d.date || '2000-01-01')) / 864e5; if (age >= 0 && age < 90) e.s *= 1.35; });
     // 标题里含有问题关键词（非泛词）的文件优先：问“数据券”时《数据产业若干措施》排在《机器人若干措施》前
     byDoc.forEach((e) => { const hit = base.filter((t) => t.length > 1 && !GENERIC.has(t) && String(e.d.title).includes(t)).length; if (hit) e.s *= 1 + Math.min(hit, 3) * 0.12; });
-    const docs = [...byDoc.values()].sort((a, b) => b.s - a.s);
+    const applicationDate = wantDate && /申报|受理/.test(q);
+    if (applicationDate) {
+      // 申报日期常在标题所在片段的下一段；排除只提到“申报”的条文和发文日期。
+      for (const [id, e] of byDoc) {
+        e.sents = e.d.chunks.flatMap(c => c.text.split(/(?<=[。！？])|\n/).map(t => t.trim())
+          .filter(t => /申报|受理|报送|提交/.test(t) && /截止|截至|\d{1,2}月\d{1,2}日.{0,4}(至|前)/.test(t) && /\d/.test(t))
+          .map(t => ({ t, ci: c.i, sc: sScore(t) })));
+        if (!e.sents.length) byDoc.delete(id);
+      }
+    }
+    const docs = [...byDoc.values()].sort((a, b) =>
+      (applicationDate && uCov(b.d.title) - uCov(a.d.title)) ||
+      (applicationDate && String(b.d.date || '').localeCompare(String(a.d.date || ''))) || b.s - a.s);
     if (!docs.length) return notFound();
     const topS = docs[0].s; const pick = docs.filter((e, i) => i === 0 || e.s >= topS * 0.55).slice(0, 3);
     const citations = []; const blocks = [];
@@ -263,7 +308,7 @@
       const seen = new Set(); const srt = e.sents.sort((a, b) => b.sc - a.sc); const bestSc = srt[0].sc;
       const sents = srt.filter((x, j) => { if (seen.has(x.t)) return false; seen.add(x.t); return j === 0 || x.sc >= bestSc * (wantList ? 0.6 : 0.8); }).slice(0, k === 0 ? (wantList ? 3 : 2) : 1);
       const st = statusOf(e.d); const warn = /已失效|已更新/.test(st) ? `（⚠ 该文件${st}）` : '';
-      const items = sents.map((x) => { const n = citations.length + 1; const sn = clip(x.t); citations.push({ n, id: e.d.id, title: e.d.title, snippet: x.t.length > 120 ? sn.replace(/^…|…$/g, '') : x.t, chunk: x.ci, space: e.d.space, status: st, source: { org: e.d.org, date: e.d.date, url: e.d.url || '', docNo: e.d.docNo || '' }, real: !!e.d.real, example: !!e.d.example }); return `“${sn}”[${n}]`; });
+      const items = sents.map((x) => { const n = citations.length + 1; const sn = clip(x.t); citations.push({ n, id: e.d.id, citationId: citationKey(e.d), version: e.d.version || 1, title: e.d.title, snippet: x.t.length > 120 ? sn.replace(/^…|…$/g, '') : x.t, chunk: x.ci, space: e.d.space, status: st, source: { org: e.d.org, date: e.d.date, url: e.d.url || '', docNo: e.d.docNo || '' }, real: !!e.d.real, example: !!e.d.example }); return `“${sn}”[${n}]`; });
       blocks.push(k === 0 ? `根据${label(e.d)}${warn}：\n` + items.map((x) => '- ' + x).join('\n') : `- ${label(e.d)}${warn}：${items[0]}`);
     });
     const cov = covered(list[0].c);

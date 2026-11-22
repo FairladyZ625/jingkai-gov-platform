@@ -750,6 +750,9 @@
     text = String(text || '').trim(); if (!text) return;
     if (!opt.silentUser) push({ role: 'user', text });
     const epoch = conversationEpoch;
+    // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
+    const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
+    if (scope) return answer(text, scope);
     const u = Op.understand(text); const b = u.best;
     if (!u.slots.ent && !opt.noFuzzy) { const fz = Op.fuzzyEnt(text); if (fz) {
       const fixed = text.replace(fz.span, fz.ent.short);
@@ -797,17 +800,17 @@
     rememberPanel(saved);
   }
   function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: c.n || i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
-  async function answer(text) {
+  async function answer(text, scope) {
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
     const finish = (o) => { Object.assign(thinking, o); const n2 = renderMsg(thinking); node.replaceWith(n2); saveConvs(); scrollEnd(); };
     const kbLike = /[？?]|什么|怎么|如何|哪些|多少|是否|能不能|可以|条件|标准|规定|政策|办法|补贴|申报|流程|要求/.test(text);
     try {
-      if (kbLike && (JK.services.kb || JK.registry.kb)) {
-        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, {}) : API.kb.ask({ q: text }));
+      if ((kbLike || scope) && (JK.services.kb || JK.registry.kb)) {
+        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, { scope, fromChat: S.active === 'kb' }) : API.kb.ask({ q: text, scope }));
         if (r && (r.confidence === 'none' || (r.answer && ((r.citations || []).length || JK.services.kb)))) { if (!r.answer) r.answer = '知识库里没有找到能回答这个问题的原文，我没有编答案。可以导入相关资料后再问。'; const m = S.models.find((x) => x.id === S.model); const none = r.confidence === 'none' || !(r.citations || []).length;
           const next = (r.suggestions || []).map((x) => ({ label: x.label, say: x.say }));
           if (!none && JK.registry.kb) next.push({ label: '在知识库里看全部结果', open: 'kb', route: 'search', params: { q: text } });
-          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: (m && m.name) || '自动选择', routeNote: none ? '知识库未命中' : '知识库检索', next: next.slice(0, 3) }); }
+          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: r.source === 'extract' || r.source === 'preset' ? '知识库' : (m && m.name) || '自动选择', routeNote: r.routeNote || (none ? '知识库未命中' : '知识库检索'), next: next.slice(0, 3) }); }
       }
       const c = ensureConv(text); const cid = await serverConv(c);
       const r = await API.chat.send(cid, { text, model: S.model });
