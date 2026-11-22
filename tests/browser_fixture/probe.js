@@ -64,18 +64,29 @@
     button('仅测画面版本（刷新页面才退出）', () => {
       showVersion=true; note('协议模式：重新打开收件箱，行标题附当前稿版本；决定只观察，不写状态。');
     });
-    button('演示切号取消（协议探针）', async () => {
-      if (cancelProbe || !JKShell.S.me || JKShell.S.me.username === JK_DEMO_SCRIPT[0].steps[0].login ||
-          JKDemo.state.on || document.querySelector('[role=dialog]')) return note('请用合作方，在无弹窗且未播放时操作');
-      // 只进入产品原生的 HTTP 切号交互。网络永久封锁，不能验证登录成功。
-      const before = JKShell.S.me, old = JK_CONFIG.api.mode;
-      cancelProbe=true; JK_CONFIG.api.mode='http';
-      try { await JKDemo.start(0); }
-      finally {
-        JK_CONFIG.api.mode=old; cancelProbe=false;
-        note('已恢复离线模式；同一身份=' + (before === JKShell.S.me) + '；播放中=' + JKDemo.state.on + '；被阻止的外联/链接=' + T38.blocked);
+    const identityProbe = async role => {
+      if (cancelProbe || JKShell.S.role?.id !== role || JKDemo.state.on || document.querySelector('[role=dialog]')) {
+        return note('请用' + (role === 'partner' ? '合作方何军' : '内部成员王敏') + '，在无弹窗且未播放时操作');
       }
-    });
+      // 合成开场只请求切到李阳，不含任何业务步骤。王敏是正式开场的默认身份，
+      // 不更换开场目标就不会弹切号框。仍由产品 start 创建并持有真实的 owner signal。
+      const before = JKShell.S.me, old = JK_CONFIG.api.mode, script = window.JK_DEMO_SCRIPT;
+      const blocked = T38.blocked;
+      cancelProbe=true; JK_CONFIG.api.mode='http';
+      window.JK_DEMO_SCRIPT = [{ title:'T38 合成切号开场', steps:[{ login:'liyang' }] }];
+      try {
+        const started = JKDemo.start(0);
+        const prompt = !!document.querySelector('[data-op="switch.password"]');
+        await started;
+        note((role === 'partner' ? '合作方拒绝检查' : '内部成员取消检查') + '：口令弹窗=' + prompt);
+      }
+      finally {
+        window.JK_DEMO_SCRIPT=script; JK_CONFIG.api.mode=old; cancelProbe=false;
+        note('已恢复离线模式；同一身份=' + (before === JKShell.S.me) + '；播放中=' + JKDemo.state.on + '；本次拦截外联=' + (T38.blocked - blocked));
+      }
+    };
+    button('合作方禁止启动（HTTP 协议探针）', () => identityProbe('partner'));
+    button('内部成员演示切号取消（HTTP 协议探针）', () => identityProbe('member'));
     logEl=box.querySelector('pre'); document.body.append(box);
     note('T38 进程内观察；收起不会改变页面数据。');
   });
