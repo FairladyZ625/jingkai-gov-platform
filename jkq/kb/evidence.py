@@ -32,18 +32,21 @@ LIMIT = r"(?:最长|最多|最短|最少|至少)"
 # “最长能用多久”的动词是问法的一部分；不从“夜间借用”等主题限定词中删字。
 TIME_TAIL = rf"{LIMIT}(?:能|可(?:以)?)(?:[\u3400-\u9fff]{{0,3}}?)(?:多久|多长时间)"
 MONEY = re.compile(NUMBER + r"\s*(?:[万亿]?元|[%％])")
+SUBSIDY = re.compile(r"奖励|补贴|补助|资助|给予|支持")
+SUBSIDIZED_COST = re.compile(r"费用(?=怎么|如何)(?:怎么|如何)(?:补贴|补助|资助)")
+FREE_ACTIVITY = re.compile(rf"免费([\u3400-\u9fff]{{2,8}}?)(?={TIME_QUESTION})")
 
 ATTRIBUTES = (
     (TIME_QUESTION, DURATION.search),
     (r"截止|什么时候|申报期限|何时", deadline),
-    (r"奖励|补贴|补助|资助|金额|多少钱|能拿", lambda s: re.search(r"奖励|补贴|补助|资助|给予|支持", s) and MONEY.search(s)),
+    (r"奖励|补贴|补助|资助|金额|多少钱|能拿", lambda s: SUBSIDY.search(s) and MONEY.search(s)),
     (r"负责什么|职责|职能", lambda s: re.search(r"负责|统筹|承担|组织实施", s)
      and not re.search(r"负责解释|解释工作", s)),
 )
 FILLER = re.compile(rf"{TIME_TAIL}|{TIME_QUESTION}|{UPPER}|{LOWER}|请问|请介绍|请列出|有哪些|有什么|是什么|分别是|能拿|补贴|奖励|补助|资助|"
                     r"(?<=计划)[中里对]|(?<=政策)[中里对]|申报|申请|什么时候|截止|何时|负责什么|职能|职责|是多少钱|多少钱|是多少|多少|是哪里|在哪[里儿]?|"
                     r"怎么|如何|什么|哪些|关于|[的？?，,。\s]+")
-Profile = namedtuple("Profile", "topics attribute duration")
+Profile = namedtuple("Profile", "topics attribute duration local_subject", defaults=(False,))
 PERMISSION = re.compile(r"(?:是否可以|是否允许|能否|可不可以|能不能)([\u3400-\u9fff]{2,10})[？?]?$")
 BARE_LIMIT = re.compile(r"(?:每次|单次|一次|时长|时间|期限|使用时长|借期|[（(]?\d+[)）.、])?\s*(?:" + UPPER + "|" + LOWER + ")")
 
@@ -63,6 +66,22 @@ def profile(q):
     topics = topic_terms(q)
     attribute = next((test for pattern, test in ATTRIBUTES if re.search(pattern, q)), None)
     duration = bool(re.search(TIME_QUESTION, q))
+    free = FREE_ACTIVITY.search(q)
+    if free:
+        # “可以”是问句助词；“免费”、活动和适用身份仍须在数值所在条款有依据。
+        subject = topic_terms(re.sub(r"(?:可以|能够|可)$", "", q[:free.start()]))
+        activity = re.escape(free[1])
+        value = re.compile(rf"(?:免费{activity}|{activity}免费)(?:的)?(?:时长|时间|期限)?"
+                           rf"(?:为|是|最长|最多|不超过|不得超过|\s|[：:])*{DURATION.pattern}")
+        def free_duration(s):
+            match = value.search(s)
+            return match and not re.search(r"(?:不(?:再|得|可|能|予)?|禁止|取消|非)$", s[:match.start()])
+        return Profile(subject + (free[1],) if subject else (), free_duration, True, True)
+    cost = SUBSIDIZED_COST.search(q)
+    if cost:
+        # 费用从主题词移到证据条件，允许“上市辅导”与“实际支付服务费用”分开写。
+        topics = topic_terms(q[:cost.start()] + q[cost.end():])
+        attribute = lambda s: "费用" in s and SUBSIDY.search(s) and MONEY.search(s)
     fee = re.search(r"押金|费用|收费", q)
     if fee and attribute is None:
         topics = topic_terms(q.replace(fee[0], " "))
@@ -93,24 +112,34 @@ def evidence_fields(parts):
         yield field._replace(topics=tuple(dict.fromkeys((*subject, *field.topics))))
 
 
-def strength(query, title, sentence):
-    topics, attribute, duration = query
-    if not any(len(t) >= 2 for t in topics) or (attribute and not attribute(sentence)):
-        return 0
-    title, text = title.casefold(), sentence.casefold()
+def anchored(topics, title, text, *, split=True, local_subject=False):
     # 限定词必须完整覆盖。允许一个连续主题跨“标题前缀 + 条款后缀”，
     # 如计划名在标题、办理事项在正文；不是任意二元词沾边就算有依据。
     for t in topics:
-        if t not in title and t not in text and not (
-            attribute and any(t[:i] in title and t[i:] in text
+        if t not in text and (local_subject or t not in title) and not (
+            split and any(t[:i] in title and t[i:] in text
                               for i in range(max(2, len(t)-len(text)), min(len(title), len(t)-2)+1))
         ):
-            return 0
+            return False
+    return True
+
+
+def strength(query, title, sentence):
+    topics, attribute, duration, local_subject = query
+    if not any(len(t) >= 2 for t in topics) or (attribute and not attribute(sentence)):
+        return 0
+    title, text = title.casefold(), sentence.casefold()
+    if not anchored(topics, title, text, split=bool(attribute)):
+        return 0
     if duration:
         # 检查含数值的短句本身。“园区停车不得过夜，摄像记录最长为三天”
         # 虽然同句出现两个锚，后三天也并非允许停车的时长。
         clauses = re.split(r"[，,；;]", text)
-        if not any(attribute(c) and (any(t in c for t in topics) or BARE_LIMIT.match(c.strip())) for c in clauses):
+        def relevant(c):
+            if local_subject:
+                return anchored(topics, title, c, local_subject=True)
+            return any(t in c for t in topics) or BARE_LIMIT.match(c.strip())
+        if not any(attribute(c) and relevant(c) for c in clauses):
             return 0
     # 无明确属性时，标题本身、泛泛提及或只匹配部分短语不足以答复。
     if not attribute and (topics[-1] not in text or text.strip("。 ：:") == title or text.endswith(("？", "?", "：", ":"))

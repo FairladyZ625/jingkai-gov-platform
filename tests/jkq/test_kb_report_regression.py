@@ -211,6 +211,41 @@ def test_plan_and_clause_are_separate_anchors(client, q):
     assert post(client, "ask", q="虚拟白榆计划上市辅导补贴最高多少？")["notFound"]
 
 
+def test_relational_subsidy_question_requires_the_qualified_cost_clause(client):
+    q = "群雁计划对境内上市辅导费用怎么补贴？"
+    doc_id = "KB-P4280732"
+    assert doc_id in {h["id"] for h in post(client, "search", q=q)["hits"]}
+    source = client.get("/api/v1/kb/docs/" + doc_id).json()["item"]["text"]
+    expected = next(s.strip() for s in re.split(r"(?<=。)|\n", source)
+                    if all(term in s for term in ("境内上市辅导", "实际支付服务费用", "30%", "200万元")))
+    ref, = post(client, "ask", q=q)["citations"]
+    assert ref["id"] == doc_id and ref["snippet"] == expected
+    for qualifier in ("境外上市辅导", "境内上市辅导差旅"):
+        result = post(client, "ask", q=q.replace("境内上市辅导", qualifier))
+        assert result["notFound"] and not result["citations"]
+
+
+def test_imported_free_duration_requires_matching_visitor_and_free_activity(client):
+    client.fixture_login("wangmin")
+    raw = (ROOT / "tests/fixtures/kb_visitor_parking.txt").read_text(encoding="utf-8")
+    title, quote, *_ = raw.splitlines()
+    doc = post(client, "import", title=title, text=raw, space="rules")["docs"][0]
+    q = "鹿桥园区普通访客可以免费停车多久？"
+    assert doc["id"] in {h["id"] for h in post(client, "search", q=q)["hits"]}
+    result = post(client, "ask", q=q)
+    assert [(c["id"], c["snippet"]) for c in result["citations"]] == [(doc["id"], quote)]
+    for question in (q.replace("普通访客", "驻场车辆"), "鹿桥园区普通访客停车缴费金额是多少？"):
+        missing = post(client, "ask", q=question)
+        assert missing["notFound"] and not missing["citations"]
+    decoy = post(client, "import", title=title + "（对照）", space="rules",
+                 text="鹿桥园区普通访客须登记，驻场车辆免费停车时长为两小时。\n"
+                      "鹿桥园区普通访客不再免费停车，停车时长为三天。")["docs"][0]
+    denied = post(client, "ask", q=q, scope=f"{decoy['id']}@v{decoy['version']}")
+    assert denied["notFound"] and not denied["citations"]
+    client.fixture_login("hejun")
+    assert post(client, "ask", q=q)["notFound"]
+
+
 def test_imported_duration_bounds_and_qualifiers(client):
     client.fixture_login("wangmin")
     for title, text, questions, expected in [

@@ -4,9 +4,12 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const read = name => readFileSync(new URL('../../prototype/v4/' + name, import.meta.url), 'utf8');
-const state = {}, win = { JK_APPCFG: {} };
+const state = {}, win = { JK_APPCFG: {} }, routes = new Map();
 let role = 'member';
-win.JKAPI = { ext: { state: () => state, me: () => ({role}), roleOf: () => ({mask:role === 'partner'}), first() {} },
+let nextId = 0;
+win.JKAPI = { ext: { state: () => state, me: () => ({role}), roleOf: () => ({mask:role === 'partner'}),
+              first(method, path, fn) { routes.set(method + ' ' + path, fn); },
+              can: () => role !== 'partner', nid: prefix => prefix + '-' + (++nextId), now: () => '2026-11-18', audit() {} },
               onLoad: fn => fn() };
 const ctx = vm.createContext({ window: win });
 for (const file of ['apps/kb/config.js', 'data/real-kb.js', 'mock/kb.js']) vm.runInContext(read(file), ctx);
@@ -53,4 +56,31 @@ assert.match(kb.ask('星湖仪器借用是否可以续借？').answer,/不得续
 assert.match(kb.ask('星湖仪器借用最长能用多久，押金是多少？').answer,/押金：当前引用原文未找到/);
 assert.match(kb.ask('星湖仪器借用押金是多少，最长能用多久？').answer,/不得超过四十五分钟/);
 role = 'partner'; assert.ok(kb.ask('星湖仪器借用最长能用多久？').notFound);
+role = 'member';
+const raw = readFileSync(new URL('../fixtures/kb_visitor_parking.txt', import.meta.url), 'utf8');
+const [title, visitorQuote] = raw.split('\n');
+const {docs:[visitor]} = routes.get('POST /api/v1/kb/import')({title,text:raw,space:'rules'});
+const costQ = '群雁计划对境内上市辅导费用怎么补贴？';
+const visitorQ = '鹿桥园区普通访客可以免费停车多久？';
+const exactCost = kb.docs().find(d=>d.id==='KB-P4280732').text.split(/(?<=。)|\n/)
+  .map(s=>s.trim()).find(s=>s.includes('境内上市辅导') && s.includes('200万元'));
+assert.ok(exactCost);
+const missingQuotes = [];
+for (const [q, id, quote] of [[costQ,'KB-P4280732',exactCost],[visitorQ,visitor.id,visitorQuote]]) {
+  assert.ok(kb.search(q).hits.some(h=>h.id===id), q+' 应召回原文');
+  const result = kb.ask(q);
+  if (!result.citations.some(c=>c.id===id && c.snippet===quote) ||
+      !result.citations.every(c=>c.id===id && kb.docs().find(d=>d.id===id).text.includes(c.snippet))) missingQuotes.push(q);
+}
+assert.deepEqual(missingQuotes, [], '已召回，但没有对应的逐字引文');
+for (const q of [costQ.replace('境内上市辅导','境外上市辅导'), costQ.replace('境内上市辅导','境内上市辅导差旅'),
+                 visitorQ.replace('普通访客','驻场车辆'), '鹿桥园区普通访客停车缴费金额是多少？']) {
+  const result = kb.ask(q);
+  assert.ok(result.notFound && !result.citations.length,q);
+}
+const {docs:[decoy]} = routes.get('POST /api/v1/kb/import')({title:title+'（对照）',space:'rules',
+  text:'鹿桥园区普通访客须登记，驻场车辆免费停车时长为两小时。\n鹿桥园区普通访客不再免费停车，停车时长为三天。'});
+assert.ok(kb.ask(visitorQ,{scope:decoy.id+'@v'+decoy.version}).notFound);
+role = 'partner';
+assert.ok(kb.ask(visitorQ).notFound);
 console.log('离线模拟服务：4 条界面示例、逐字引文、追问版本与空间隔离通过');

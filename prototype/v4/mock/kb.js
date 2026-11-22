@@ -227,26 +227,44 @@
   const upper = '最长|最多|最高|上限|封顶|不(?:得|能)?超过|不多于|以内';
   const lower = '最短|最少|最低|下限|至少|不少于|不低于';
   const timeValue = '(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千半]+)\\s*(?:分钟|小时|工作日|天|周|个月|年|秒)';
+  const topicTerms = s => s.split(/(?:最长|最多|最短|最少|至少)(?:能|可(?:以)?)[\u3400-\u9fff]{0,3}?(?:多久|多长时间)|请问|多长时间|多久|几(?:分钟|小时|天|周|个月)|时长|上限|下限|最长|最多|最短|最少|最高|最低|封顶|补贴|奖励|资助|补助|能拿|是多少钱|多少钱|是多少|多少|(?<=计划)[中里对]|(?<=政策)[中里对]|[的？?，,\s]+/).filter(Boolean);
   // 数值必须和所问的上/下限配对；整句保留“不得续借”等限制。
   function attributeField(q) {
     const time = durationQuestion.test(q);
+    const free = q.match(/免费([\u3400-\u9fff]{2,8}?)(?=多久|多长时间|几(?:分钟|小时|天|周|个月)|时长)/);
+    if (free) {
+      const subject = topicTerms(q.slice(0, free.index).replace(/(?:可以|能够|可)$/, ''));
+      const activity = free[1];
+      const value = new RegExp('(?:免费' + activity + '|' + activity + '免费)(?:的)?(?:时长|时间|期限)?' +
+        '(?:为|是|最长|最多|不超过|不得超过|\\s|[：:])*' + timeValue);
+      const accepts = t => {
+        const hit = value.exec(t);
+        return hit && !/(?:不(?:再|得|可|能|予)?|禁止|取消|非)$/.test(t.slice(0, hit.index));
+      };
+      return {topics:subject.length ? [...subject, activity] : [], time, accepts, localSubject:true};
+    }
     const permission = q.match(/(?:是否可以|是否允许|能否|可不可以|能不能)([\u3400-\u9fff]{2,10})[？?]?$/);
     const bound = new RegExp(upper).test(q) ? upper : new RegExp(lower).test(q) ? lower : '';
-    const fee = q.match(/押金|费用|收费/)?.[0];
+    const cost = q.match(/费用(?:怎么|如何)(?:补贴|补助|资助)/);
+    const payment = q.match(/(?:缴费|收费)(?:金额|标准)/)?.[0];
+    const fee = payment || q.match(/押金|费用|收费/)?.[0];
     if (!permission && !fee && !time && !(bound && /补贴|奖励|补助|资助|金额|多少钱|能拿/.test(q))) return null;
     const value = time ? timeValue : '(?:\\d+(?:\\.\\d+)?|[一二两三四五六七八九十百千]+)\\s*[万亿]?元';
     const amount = new RegExp(bound ? '(?:' + bound + ')(?:为|是|需要|可|支持|补贴|使用|借用|停放|停留|\\s|[：:])*' + value +
       '|' + value + (bound === upper ? '以内' : '以上') : value);
-    const subject = permission ? q.slice(0,permission.index) : fee ? q.replace(fee,' ') : q;
-    const topics = subject.split(/(?:最长|最多|最短|最少|至少)(?:能|可(?:以)?)[\u3400-\u9fff]{0,3}?(?:多久|多长时间)|请问|多长时间|多久|几(?:分钟|小时|天|周|个月)|时长|上限|下限|最长|最多|最短|最少|最高|最低|封顶|补贴|奖励|资助|补助|能拿|是多少钱|多少钱|是多少|多少|(?<=计划)[中里对]|(?<=政策)[中里对]|[的？?，,\s]+/).filter(Boolean);
+    const subject = permission ? q.slice(0,permission.index) : cost ? q.replace(cost[0],' ') : fee ? q.replace(fee,' ') : q;
+    const topics = topicTerms(subject);
     const explicit = permission && new RegExp('(?:允许|可以|可|不得|不能|禁止|不支持|不允许|不可)' + permission[1]);
-    const accepts = t => explicit ? explicit.test(t) : fee ? t.includes(fee) && (amount.test(t) || /不收取|免费|免收/.test(t)) :
+    const accepts = t => explicit ? explicit.test(t) : cost ?
+      t.includes('费用') && /补贴|补助|资助/.test(t) && (amount.test(t) || (!bound && /\d+(?:\.\d+)?\s*[%％]/.test(t))) :
+      payment ? /缴费|收费/.test(t) && amount.test(t) :
+      fee ? t.includes(fee) && (amount.test(t) || /不收取|免费|免收/.test(t)) :
       amount.test(t) && (time || /奖励|补贴|补助|资助|给予|支持/.test(t));
     return {topics, time, accepts};
   }
-  function anchored(terms, title, text) {
+  function anchored(terms, title, text, localSubject = false) {
     return terms.every(term => {
-      if (title.includes(term) || text.includes(term)) return true;
+      if (text.includes(term) || (!localSubject && title.includes(term))) return true;
       for (let i = Math.max(2,term.length-text.length); i <= Math.min(title.length,term.length-2); i++) {
         if (title.includes(term.slice(0,i)) && text.includes(term.slice(i))) return true;
       }
@@ -270,8 +288,9 @@
         if (!field || quotes[i]) return;
         const terms = [...new Set([...subject,...field.topics])];
         const text = sentences.find(s => !/\[\d+\]/.test(s) && field.accepts(s) && anchored(terms,d.title,s) &&
-          (!field.time || s.split(/[，,；;]/).some(c => field.accepts(c) && (terms.some(t=>c.includes(t)) ||
-           /^(?:每次|单次|一次|时长|时间|期限|借期)?(?:最长|最短|最多|至少|不得超过|不超过)/.test(c.trim())))));
+          (!field.time || s.split(/[，,；;]/).some(c => field.accepts(c) && (field.localSubject
+            ? anchored(terms,d.title,c,true)
+            : terms.some(t=>c.includes(t)) || /^(?:每次|单次|一次|时长|时间|期限|借期)?(?:最长|最短|最多|至少|不得超过|不超过)/.test(c.trim())))));
         if (text) quotes[i] = {text,i:c.i};
       });
       if (quotes.every(Boolean)) break;
