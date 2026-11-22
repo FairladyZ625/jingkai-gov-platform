@@ -107,7 +107,16 @@ def create_draft(body: DraftIn, ctx: Operator, request: Request):
 
 @router.get("/drafts/{identity}")
 def get_draft(identity: str, ctx: Viewer, version: Annotated[int | None, Query(ge=0)] = None):
-    return {"item": _with_comments(ctx, drafts.get(ctx, identity, version))}
+    item = _with_comments(ctx, drafts.get(ctx, identity, version))
+    if version is None and item["status"] == "已退回":
+        # 只向提交人回显这一版本的实际退回意见，不从批注或旧审签单猜测。
+        core_version = item["versions"][-1]["v"] + 1
+        reviews = ctx.reviews.list(mine="submitted")["items"]
+        review = next((r for r in reviews if r["recordId"] == identity and
+                       r["version"] == core_version and r["status"] == "needs_info"), None)
+        if review and review["decisions"]:
+            item["returnReason"] = review["decisions"][-1]["comment"]
+    return {"item": item}
 
 
 @router.put("/drafts/{identity}")

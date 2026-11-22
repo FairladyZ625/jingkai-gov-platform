@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Response
 from haiknow_sdk import DataError
 from pydantic import BaseModel
 
-from .drafting_router import DocumentRoute, Operator, Text, Viewer, error
+from .drafting_router import DocumentRoute, Operator, Text, Viewer, _with_comments, error
 from .drafts import _present as present, _record as get_record
 
 # 由 api/router.py 收录，平台统一加 /api/apps/document 前缀。
@@ -64,7 +64,7 @@ def submit(identity: str, body: Submission, ctx: Operator, request: Request):
         if exc.code == "self_review":
             return error(409, "SELF_REVIEW", str(exc))
         raise
-    item = present(ctx, {**record, "status": "pending"})
+    item = _with_comments(ctx, present(ctx, {**record, "status": "pending"}))
     return {"item": item, "review": {**review, "type": "review", "app": ctx.app_id,
                                     "ref": identity, "title": item["title"]}}
 

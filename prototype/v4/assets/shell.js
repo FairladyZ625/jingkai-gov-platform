@@ -41,6 +41,7 @@
     finishPreviousAccount?.();
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
     renderShell(); Op.loadDict(); await refreshInbox();
@@ -350,6 +351,7 @@
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
+    if (id === 'inbox') return refreshInbox();
     return rendered;
   }
   function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') return window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
@@ -903,10 +905,25 @@
   /* ---------------- 收件箱 ---------------- */
   // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
   function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
-  async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
-    try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
-    renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+  let inboxLoad;
+  function refreshInbox() {
+    const who = S.me;
+    const items = async read => { try { return (await read()).items || []; } catch { return []; } };
+    const load = Promise.all([items(API.reviews.list), items(API.todos.list)]).then(([reviews, todos]) => {
+      if (!who || who !== S.me) return;
+      // 打开面板、写入回执和角标通知均可触发刷新。旧请求既不能回写，也不能提前宣告就绪。
+      if (load !== inboxLoad) return inboxLoad;
+      S.inbox = reviews.filter((x) => {
+        const a = x.app === 'market' ? 'skills' : x.app;
+        if (x.status !== 'pending') return false;
+        if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
+        return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && who.role === 'leader'));
+      });
+      S.todos = todos;
+      renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+    });
+    inboxLoad = load;
+    return load;
   }
   JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
@@ -922,7 +939,8 @@
       const dec = b.dataset.dec; let comment = '';
       if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; }
       b.disabled = true; b.setAttribute('aria-busy', 'true'); delete b.dataset.failed;
-      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); await refreshInbox(); }
+      const version = list.find(row => row.id === b.dataset.id)?.version;
+      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment, version }); toast(dec === 'approve' ? '已通过' : '已退回'); await refreshInbox(); }
       catch (e) { b.dataset.failed = '1'; toast(e.message, { type: 'err' }); }
       finally { b.removeAttribute('aria-busy'); b.disabled = false; }
     }));
