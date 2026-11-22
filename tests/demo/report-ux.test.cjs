@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
+const {inspectRole, checkRole} = require('./role-surface.cjs');
 
 const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
 let browser;
@@ -22,6 +23,14 @@ async function login(t, user, width = 1440) {
 async function capture(page, name) {
   if (process.env.JKQ_UX_EVIDENCE) await page.screenshot({
     path: path.join(process.env.JKQ_UX_EVIDENCE, name + '-' + page.viewportSize().width + '.png'),
+  });
+}
+for (const mode of ['http', 'mock']) for (const username of ['hejun','wangmin','liyang','admin']) {
+  test(`#174 首屏/菜单/命令授权矩阵：${mode} / ${username}`, async t => {
+    const p = await browser.newPage({offline:true});
+    t.after(() => p.close());
+    await p.goto(entry); await p.locator('#lf').waitFor();
+    checkRole(assert, await p.evaluate(inspectRole, {mode, username}), mode);
   });
 }
 for (const width of [1440, 1280, 375]) {
@@ -105,7 +114,7 @@ for (const width of [1440, 1280]) {
 }
 for (const method of ['关闭', '取消', 'Escape', '遮罩']) {
   test('#177 等待身份时' + method + '取消整次启动', async t => {
-    const p = await login(t, 'hejun', method === '取消' ? 1280 : 1440);
+    const p = await login(t, 'liyang', method === '取消' ? 1280 : 1440);
     // 仅选择 HTTP 口令弹窗分支；全部数据仍在隔离 mock 页，监测是否误发登录或对话。
     await p.evaluate(() => {
       JKHttp.mode = () => 'http';
@@ -131,7 +140,7 @@ for (const method of ['关闭', '取消', 'Escape', '遮罩']) {
     else await dialog.getByRole('button', { name: method, exact: true }).click();
     await p.clock.runFor(15000);
     assert.deepEqual(await p.evaluate(() => [calls, JKDemo.state.i, JKDemo.state.on, JKOp.demo, JKShell.S.me.username]),
-      [[], 0, false, false, 'hejun']);
+      [[], 0, false, false, 'liyang']);
     assert.equal(await p.locator('.demobar,.mask-bg,[role="dialog"]').count(), 0);
   });
 }

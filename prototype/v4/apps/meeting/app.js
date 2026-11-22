@@ -24,9 +24,9 @@
       accepts: [{ kind: '会议录音', ext: C.audioExt, match: /会|录音|座谈|纪要/ }],
       intents: [
         { id: 'meeting.summarize', action: 'summarize', examples: ['整理一下文化企业座谈会的纪要', '看看座谈会纪要', '上次座谈会说了什么'], keywords: ['纪要', '会上说了', '座谈会'], slots: { meeting: 'meeting' }, plan: ['打开会议记录', '找到会议', '打开纪要与待办'] },
-        { id: 'meeting.transcribe', action: 'transcribe', examples: ['整理局务会录音', '把 AI 原生企业推进会的录音转成纪要', '转写最新的会议录音'], keywords: ['转写', '录音', '整理录音'], slots: { meeting: 'meeting' }, plan: ['选中录音', '选纪要模板', '本地转写与分发言人', '生成纪要与待办'] },
+        { id: 'meeting.transcribe', requires: 'operate', action: 'transcribe', examples: ['整理局务会录音', '把 AI 原生企业推进会的录音转成纪要', '转写最新的会议录音'], keywords: ['转写', '录音', '整理录音'], slots: { meeting: 'meeting' }, plan: ['选中录音', '选纪要模板', '本地转写与分发言人', '生成纪要与待办'] },
         { id: 'meeting.todos', action: 'todos', examples: ['会上定了哪些待办', '把座谈会的待办派发下去', '还有哪些待办没认领'], keywords: ['待办', '派发', '认领'], slots: { meeting: 'meeting' }, plan: ['打开纪要与待办', '核对负责人', '等你确认派发'] },
-        { id: 'meeting.record', action: 'record', examples: ['开始现场录音', '帮我录一下这个会'], keywords: ['现场录音', '开始录音', '录一下'], plan: ['打开现场录音', '开始录制'] },
+        { id: 'meeting.record', requires: 'operate', action: 'record', examples: ['开始现场录音', '帮我录一下这个会'], keywords: ['现场录音', '开始录音', '录一下'], plan: ['打开现场录音', '开始录制'] },
         { id: 'meeting.export', action: 'export', examples: ['把座谈会纪要导出 Word', '导出纪要'], keywords: ['导出', 'Word'], slots: { meeting: 'meeting' }, plan: ['打开纪要', '导出 Word'] },
       ],
       starters: ['整理一下文化企业座谈会的纪要', '整理局务会录音', '还有哪些待办没认领？'],

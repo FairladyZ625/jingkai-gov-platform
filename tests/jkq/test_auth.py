@@ -273,6 +273,39 @@ def test_production_role_always_404_and_demo_sessions_are_rejected(instance):
     response(prod.get(ADMIN), 200)
 
 
+@pytest.mark.parametrize('role', ['partner', 'member', 'leader', 'admin'])
+def test_deployed_demo_cannot_reassign_its_role(instance, monkeypatch, role):
+    monkeypatch.setenv('JKQ_DEPLOY_RUNTIME', '1')
+    build, _ = instance
+    client, store = build()
+    before = response(login(client, role), 200)
+    error(client.put(ROLE, json={'role': 'admin' if role != 'admin' else 'member'}), 403, 'FORBIDDEN')
+    after = response(client.get(ME), 200)
+    assert (after['user'], after['grants']) == (before['user'], before['grants'])
+    denied = [r for r in store.audit_list() if r['action'] == 'permission.denied']
+    assert len(denied) == 1 and denied[0]['user'] == before['user']['id']
+    assert denied[0]['detail'] == {'operation': 'auth.role'}
+
+
+def test_deployed_dict_endpoints_enforce_the_same_view_grants(instance, monkeypatch, tmp_path):
+    from jkq.app import create_app as create_instance
+    monkeypatch.setenv('JKQ_DEPLOY_RUNTIME', '1')
+    monkeypatch.setenv('JKQ_DEMO_MODE', '1')
+    monkeypatch.setenv('HAIKNOW_APPS_DIR', str(ROOT / 'apps'))
+    monkeypatch.setenv('JKQ_ENTERPRISE_PRIVATE_DB', str(tmp_path / 'fixture.sqlite'))
+    paths = {'meeting': 'meetings', 'document': 'documents', 'policy': 'items', 'enterprise': 'companies'}
+    with TestClient(create_instance()) as client:
+        for role in ('partner', 'member', 'leader', 'admin'):
+            grants = response(login(client, role), 200)['grants']
+            for app, resource in paths.items():
+                r = client.get(f'/api/apps/{app}/{resource}')
+                if role == 'partner' and app in ('meeting', 'document'):
+                    assert 'view' not in grants[app]
+                    assert r.status_code == 403 and r.json()['error']['code'] == 'FORBIDDEN'
+                else:
+                    assert 'view' in grants[app] and r.status_code == 200
+
+
 def test_demo_role_switch_requires_a_demo_identity(instance):
     build, _ = instance
     prod, _ = build(demo=False)

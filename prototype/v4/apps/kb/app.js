@@ -52,7 +52,7 @@
       ],
       accepts: [{ kind: '资料', ext: ['txt', 'md', 'docx', 'pdf', 'html'], match: /制度|规程|细则|规定|资料|汇编|手册|FAQ|问答|纪要汇编|存入知识库/ }],
       intents: [
-        { id: 'kb.import', action: 'import', examples: ['把这个网址导入知识库 https://kfqgw.beijing.gov.cn/…', '把这份文件存进知识库', '收录到知识库'], keywords: ['导入', '存入知识库', '存进知识库', '入库', '收录', '网址导入'], plan: ['打开导入', '读取并解析', '切片、打标签、查重', '确认后入库'] },
+        { id: 'kb.import', requires: 'operate', action: 'import', examples: ['把这个网址导入知识库 https://kfqgw.beijing.gov.cn/…', '把这份文件存进知识库', '收录到知识库'], keywords: ['导入', '存入知识库', '存进知识库', '入库', '收录', '网址导入'], plan: ['打开导入', '读取并解析', '切片、打标签、查重', '确认后入库'] },
         { id: 'kb.expiring', action: 'expiring', examples: ['哪些政策快到期了', '知识库里有哪些已失效的文件'], keywords: ['快到期', '即将到期', '已失效', '过期'], plan: ['打开资料库', '按状态筛选', '列出文件'] },
         { id: 'kb.open', action: 'open', examples: ['打开数据产业若干措施的原文', '看一下实体书店管理办法原文'], keywords: ['打开原文', '看原文', '原文'], plan: ['检索文件', '打开原文', '定位段落'] },
         { id: 'kb.search', action: 'search', examples: ['在知识库搜一下机器人', '找一下关于算力的文件'], keywords: ['搜一下', '找一下', '搜索', '找文件', '有没有文件'], plan: ['打开知识库', '输入关键词', '看结果'] },

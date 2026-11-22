@@ -25,13 +25,18 @@
   }
 
   /* ---------- 词典 ---------- */
-  Op.loadDict = async function () {
-    const H = window.JKHttp; const d = Op.dict;
+  Op.loadDict = async function (canView) {
+    // 每次身份刷新都替换词典；旧请求只持有旧对象，不可能填回新身份。
+    const H = window.JKHttp, d = Op.dict = {enterprise: [], meeting: [], policy: [], doc: []};
     const grab = async (path, map) => { try { const r = await H.get(path); return (r.items || []).map(map).filter(Boolean); } catch (e) { return []; } };
-    d.enterprise = await grab('/api/apps/enterprise/companies', (e) => ({ id: e.id, name: e.name, short: e.short || e.name, names: [e.name, e.short, ...(e.alias || e.formerNames || [])].filter(Boolean) }));
-    d.meeting = await grab('/api/apps/meeting/meetings', (m) => ({ id: m.id, title: m.title, names: [m.title, m.short].filter(Boolean) }));
-    d.policy = await grab('/api/apps/policy/items', (p) => ({ id: p.id, title: p.title, names: [p.title, p.short].filter(Boolean) }));
-    d.doc = await grab('/api/apps/document/documents', (x) => ({ id: x.id, title: x.title, names: [x.title].filter(Boolean) }));
+    await Promise.all([
+      ['enterprise','enterprise','companies', e => ({ id: e.id, name: e.name, short: e.short || e.name, names: [e.name, e.short, ...(e.alias || e.formerNames || [])].filter(Boolean) })],
+      ['meeting','meeting','meetings', m => ({ id: m.id, title: m.title, names: [m.title, m.short].filter(Boolean) })],
+      ['policy','policy','items', p => ({ id: p.id, title: p.title, names: [p.title, p.short].filter(Boolean) })],
+      ['doc','document','documents', x => ({ id: x.id, title: x.title, names: [x.title].filter(Boolean) })],
+    ].map(async ([key, app, resource, map]) => {
+      if (canView?.(app, 'view')) d[key] = await grab(`/api/apps/${app}/${resource}`, map);
+    }));
   };
   function findIn(list, text) {
     let best = null, bl = 0;
