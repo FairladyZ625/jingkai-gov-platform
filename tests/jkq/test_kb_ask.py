@@ -212,7 +212,7 @@ def test_http_with_cookie_auth_and_partner_space_filter(instance_factory, monkey
         citation, = response.json()["citations"]
         assert citation["id"] == "public" and citation["snippet"] == public["snippet"]
         assert gateway.calls == [({"question": "问题", "passages": [
-            {"passage": 1, "sentences": [public["snippet"]]},
+            {"passage": 1, "title": public["title"], "sentences": [public["snippet"]]},
         ]}, "internal")]
         assert calls[0]["space"] == "policy" and calls[0]["validOnly"] is True
         for q in ("无命中", "只有企业", "只有标题", " ，？！ "):

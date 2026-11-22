@@ -48,6 +48,27 @@ def test_panel_and_chat_citation_scopes(server):
                 page.set_viewport_size({"width": width, "height": 900})
                 page.screenshot(path=Path(folder) / f"kb-follow-{width}.png")
 
+        # 只记录接口、问题和次数；不记录 cookie、其他请求或登录数据。
+        calls = []
+        def count_kb(req):
+            endpoint = req.url.rsplit("/", 1)[-1]
+            if "/api/v1/kb/" in req.url and endpoint in ("ask", "search") and req.method == "POST":
+                calls.append((endpoint, req.post_data_json["q"]))
+        page.on("request", count_kb)
+        questions = page.evaluate("JK_APPCFG.kb.suggestions")
+        assert len(questions) == 4
+        for entry in ("kb.q", "chat.input"):
+            for q, keyword in zip(questions, ("100万元", "奖励", "11月20日", "负责")):
+                calls.clear()
+                body, answer = send(op(entry), q)
+                assert not body.get("scope") and body["timeoutMs"] > 0
+                assert any(keyword in c["snippet"] for c in answer["citations"])
+                expect(op("kb.answer")).to_contain_text(keyword)
+                if entry == "chat.input":
+                    expect(page.locator("#chatcol .pstate").last).to_have_text("已完成", timeout=15000)
+                    expect(page.locator("#chatcol .msg.ai").last.locator(".src").first).to_be_visible()
+                assert calls.count(("ask", q)) == calls.count(("search", q)) == 1
+
         body, book = send(op("kb.q"), "实体书店有哪些奖励？")
         assert not body.get("scope") and book["citations"][0]["citationId"] != scope
         expect(page.locator("#kb-scope")).to_contain_text("实体书店")

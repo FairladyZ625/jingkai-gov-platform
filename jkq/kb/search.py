@@ -89,7 +89,7 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
         for snippet, frequencies, size, found in snippets:
             body = bm25(frequencies, size, found)
             original = sum(t in terms for t in found)
-            quality = strength(query, doc["title"], snippet) if query[1] and (found or title_terms) else 0
+            quality = strength(query, doc["title"], snippet) if query.attribute and (found or title_terms) else 0
             key = (quality, original, len(found) - original, body)
             if picked is None or key > picked[0]:
                 picked = (key, snippet, body)
@@ -138,7 +138,7 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
             freq, size = indexed(sentence, singles)
             found = [t for t in terms if freq[t]]
             if found:
-                quality = strength(query, doc["title"], sentence) if query[1] else 0
+                quality = strength(query, doc["title"], sentence) if query.attribute else 0
                 other.append(((quality, len(found), bm25(freq, size, found)), i, sentence))
         entry["relatedPassages"] = [dict(passage=i, chunk=0, snippet=s)
                                     for _, i, s in sorted(other, key=lambda h: h[0], reverse=True)[:3]]

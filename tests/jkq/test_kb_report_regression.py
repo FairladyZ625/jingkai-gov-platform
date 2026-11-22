@@ -199,3 +199,72 @@ def test_nonmock_backup_success_still_requires_verifiable_quote(client, monkeypa
     assert not answer["notFound"] and "source" not in answer and "虚构，不在正文" not in answer["answer"]
     ref, = answer["citations"]
     assert ref["snippet"] in client.get("/api/v1/kb/docs/" + ref["id"]).json()["item"]["text"]
+
+
+@pytest.mark.parametrize("q", ["群雁计划上市辅导补贴最高多少？", "群雁计划的上市辅导补助上限是多少？",
+                              "群雁计划中，上市辅导的资助上限是多少钱？"])
+def test_plan_and_clause_are_separate_anchors(client, q):
+    a = post(client, "ask", q=q)
+    assert not a["notFound"] and a["source"] == "extract"
+    assert any("上市辅导" in c["snippet"] and "最高为200万元" in c["snippet"] for c in a["citations"])
+    assert all("群雁计划" in c["title"] and "上市辅导" in c["snippet"] for c in a["citations"])
+    assert post(client, "ask", q="虚拟白榆计划上市辅导补贴最高多少？")["notFound"]
+
+
+def test_imported_duration_bounds_and_qualifiers(client):
+    client.fixture_login("wangmin")
+    for title, text, questions, expected in [
+        ("园区停车管理通知", "访客车辆应在服务台登记。园区停车每次最长2小时，到时应驶离。",
+         ["园区停车最长能停多久？", "园区停车最多几小时？"], "最长2小时"),
+        ("星湖仪器借用细则", "维护人员检修最长9小时。星湖仪器借用每次不得超过四十五分钟，不得续借。",
+         ["星湖仪器借用时长上限是多少？", "星湖仪器借用最长能用多久？"], "不得超过四十五分钟，不得续借"),
+    ]:
+        doc = post(client, "import", title=title, text=text, space="rules")["docs"][0]
+        for q in questions:
+            a = post(client, "ask", q=q, space="rules")
+            assert not a["notFound"], q
+            assert {c["id"] for c in a["citations"]} == {doc["id"]}
+            assert all(expected in c["snippet"] and c["snippet"] in text for c in a["citations"])
+    for q in ("星湖仪器借用最短需要多久？", "星湖仪器夜间借用最多几小时？", "园区停车押金是多少？"):
+        a = post(client, "ask", q=q, space="rules")
+        assert a["notFound"] and not a["citations"], q
+    # 只有时长有原文。不能用检修时长、其他文件的费用或常识补缺。
+    partial = post(client, "ask", q="星湖仪器借用最长能用多久，押金是多少？", space="rules")
+    assert "四十五分钟" in partial["answer"] and "押金" in partial["answer"] and "未" in partial["answer"]
+    assert all("不得续借" in c["snippet"] for c in partial["citations"])
+    reversed_fields = post(client, "ask", q="星湖仪器借用押金是多少，最长能用多久？", space="rules")
+    assert "四十五分钟" in reversed_fields["answer"] and "押金" in reversed_fields["answer"] and "未" in reversed_fields["answer"]
+    denied = post(client, "ask", q="星湖仪器借用是否可以续借？", space="rules")
+    assert not denied["notFound"] and all("不得续借" in c["snippet"] for c in denied["citations"])
+    # 标题命中不能把文中其他活动的时长当作允许停车的时间。
+    post(client, "import", title="岚谷停车管理通知", space="rules",
+         text="岚谷停车区不允许过夜，摄像记录最长为三十天。")
+    assert post(client, "ask", q="岚谷停车最长能停多久？", space="rules")["notFound"]
+    client.fixture_login("hejun")
+    assert post(client, "ask", q=questions[0])["notFound"]
+
+
+def test_http_deadline_is_shared_by_model_attempts(client, monkeypatch):
+    import asyncio
+    import httpx
+    from jkq.kb.ask import MODEL_UNAVAILABLE
+
+    service = client.app.state.jkq_models
+    for ident in ("cloud", "deepseek"):
+        monkeypatch.setitem(service.providers, ident, dict(
+            id=ident, kind=service.models[ident].kind, model="fixture", allow_outbound="internal",
+            base_url=f"https://{ident}.invalid/v1", api_key=""))
+    monkeypatch.setattr(service, "primary", "cloud")
+    attempts = []
+
+    async def stalled(request):
+        attempts.append((request.url.host, request.extensions["timeout"]["read"]))
+        await asyncio.sleep(4)
+        pytest.fail("协议桩应在子预算耗尽时取消")
+
+    monkeypatch.setattr(service, "transport", httpx.MockTransport(stalled))
+    answer = post(client, "ask", q="群雁计划上市辅导补贴最高多少？", timeoutMs=2400)
+    assert [host for host, _ in attempts] == ["cloud.invalid", "deepseek.invalid"]
+    # 三个候选（含 mock），按网关原有策略分配；检索已耗时间也从预算扣除。
+    assert all(0 < budget < 2.4 / 4 for _, budget in attempts)
+    assert answer["unavailable"] and answer["message"] == MODEL_UNAVAILABLE and not answer["citations"]
