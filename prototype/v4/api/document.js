@@ -27,7 +27,7 @@
     /** (id, cid, {reply?, resolved?}) → {item:Comment} */
     patchComment: (id, cid, b) => H.patch(`/api/apps/document/drafts/${id}/comments/${cid}`, b),
     /** (id, {assignee?}) → {item, review}  有“必须改”问题时 422 CHECK_FAILED */
-    submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, H.mode() === 'http' ? toUserId(b) : (b || {})),
+    submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, H.mode('document') === 'http' ? toUserId(b) : (b || {})),
     /** id → {filename, html, final} 公文版式 .doc；未定稿带水印 */
     exportWord: (id) => H.get(`/api/apps/document/drafts/${id}/export`),
   };

@@ -14,11 +14,11 @@
     /** → {items:MeetingSummary[], templates:MeetingTemplate[], hotwords:string[]} */
     list: () => H.get('/api/apps/meeting/meetings'),
     /** {title, type, participants[], file, size, source, duration?} → {item:Meeting}（上传 / 现场录音登记） */
-    create: (b) => H.post('/api/apps/meeting/meetings', H.mode() === 'http' ? toForm(b || {}) : b),
+    create: (b) => H.post('/api/apps/meeting/meetings', H.mode('meeting') === 'http' ? toForm(b || {}) : b),
     /** (id, {type?, title?, participants?, hotwords?}) → {job:Job} */
     transcribe: (id, b) => H.post(`/api/apps/meeting/meetings/${id}/transcribe`, b || {}),
     /** jobId → {job:{id,status,progress,step,steps[],stepName}} */
-    job: (jid) => H.get('/api/v1/jobs/' + jid),
+    job: (jid) => H.meetingJob(jid),
     /** id → {item:Meeting(transcript, topics, todos), minutes:Minutes|null} */
     get: (id) => H.get('/api/apps/meeting/meetings/' + id),
     /** (id, {renameSpeaker:{from,to}} | {todo:{id,owner,due}} | {minutes} | {line:{index,text}}) → {item, minutes} */

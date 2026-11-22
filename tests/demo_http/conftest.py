@@ -48,6 +48,7 @@ def server(tmp_path_factory, request):
             env.setenv(key, value)
         for role in ("ADMIN", "MEMBER", "PARTNER", "LEADER"):
             env.setenv(f"JKQ_DEMO_{role}_PASSWORD", password)
+        skills_protocol = getattr(request, "param", None) == "skills-protocol"
         if hasattr(request, "param"):
             from deploy.entrypoint import use_same_origin_http
             from jkq.settings import web_directory
@@ -58,7 +59,7 @@ def server(tmp_path_factory, request):
             config_dir = shutil.copytree(ROOT / "config", tmp / "config")
             demo_path = config_dir / "demo.yaml"
             options = yaml.safe_load(demo_path.read_text())
-            options["mock_modules"] = list(request.param)
+            options["mock_modules"] = [] if skills_protocol else list(request.param)
             demo_path.write_text(yaml.safe_dump(options, allow_unicode=True))
             env.setenv("HAIKNOW_CONFIG_DIR", str(config_dir))
             env.setenv("JKQ_WEB_DIR", str(site_dir))
@@ -81,6 +82,9 @@ def server(tmp_path_factory, request):
 
         env.setattr(PublicURLReader, "read", read_fixture)
         app = create_app()
+        if skills_protocol:
+            from tests.demo_http.skill_protocol import install
+            install(app, env)
         site_thread = threading.Thread(target=site.serve_forever, daemon=True)
         site_thread.start()
         with socket.socket() as listener:

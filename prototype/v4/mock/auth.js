@@ -86,14 +86,24 @@
 
   /* ---------- 统一鉴权（每个请求先过这里；与 haiknow 服务端判定一致） ---------- */
   const appOf = (p) => { let m = /^\/api\/apps\/(\w+)\//.exec(p); if (m) return m[1]; if (/^\/api\/v1\/kb\//.test(p)) return 'kb'; if (/^\/api\/v1\/(skills|builder)/.test(p)) return 'skills'; return null; };
-  A.guard = (method, p) => {
+  A.guard = (method, p, body) => {
     if (/^\/api\/v1\/auth\//.test(p)) return;
-    if (!S().session) X.err(401, 'UNAUTHENTICATED', '登录已失效，请重新登录');
+    if (!S().session && !X.hasHttpPrincipal()) X.err(401, 'UNAUTHENTICATED', '登录已失效，请重新登录');
     if (/^\/api\/v1\/admin\//.test(p) || (method === 'PATCH' && /^\/api\/v1\/models\//.test(p))) { needAdmin(); return; }
     const app = appOf(p); if (!app) return;
-    const read = method === 'GET' || /\/(search|match|calc|compare)$/.test(p);
+    const read = method === 'GET' || /\/(search|match|calc|compare)$/.test(p) ||
+      (X.hasHttpPrincipal() && method === 'POST' && p === '/api/v1/kb/ask');
     const act = read ? 'view' : 'operate';
     if (!X.can(app, act)) X.err(403, 'FORBIDDEN', `你的角色没有「${APP_NAMES[app]}」的${act === 'view' ? '查看' : '操作'}权限`);
+    // 这类跨模块效果不可只凭源模块的授权执行，尤其不能把模拟结果当成线上回执。
+    if (X.hasHttpPrincipal()) {
+      if (method === 'POST' && p === '/api/apps/policy/match' && body?.entId && !X.can('policy', 'operate'))
+        X.err(403, 'FORBIDDEN', '无权使用企业台账进行匹配');
+      if (method === 'POST' && /^\/api\/apps\/meeting\/meetings\/[^/]+\/link$/.test(p) && !X.can('enterprise', 'operate'))
+        X.err(403, 'FORBIDDEN', '没有企业台账的操作权限');
+      if (app === 'skills' && (method === 'POST' && /\/(trial|run)$/.test(p) || /^\/api\/v1\/skills\/jobs\//.test(p)))
+        X.err(501, 'MIXED_JOB_UNSUPPORTED', '跨模块技能任务需要完整 HTTP 服务或独立离线演示');
+    }
   };
 
   /* ---------- 前端判定（界面显示 / 隐藏用；真正拦截在上面 guard） ---------- */

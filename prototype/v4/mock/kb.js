@@ -544,7 +544,7 @@
   on('GET', '/api/v1/kb/suggest', () => ({ items: SUGGEST }));
   /* 旧接口兼容（mock-api.js 的 libraries/files/search） */
   on('GET', '/api/v1/kb/libraries', () => ({ items: SPACES.filter((s) => visSpaces().includes(s.id)).map((s) => ({ id: s.id, name: s.name, icon: s.name[0], files: DOCS.filter((d) => d.space === s.id).length })) }));
-  on('GET', '/api/v1/kb/files/:id', (b, p) => { const d = DOCS.find((x) => x.id === p.id); if (!d) X.err(404, 'NOT_FOUND', '资料不存在'); return { item: { id: d.id, name: d.title, no: d.docNo, text: d.text, state: statusOf(d), url: d.url } }; });
+  on('GET', '/api/v1/kb/files/:id', (b, p) => { const d = DOCS.find((x) => x.id === p.id && canSee(x)); if (!d) X.err(404, 'NOT_FOUND', '资料不存在'); return { item: { id: d.id, name: d.title, no: d.docNo, text: d.text, state: statusOf(d), url: d.url } }; });
 
   /* 【可改】首页建议问题（要保证每条都能在库里找到答案） */
   const SUGGEST = ['数据券补贴最高能拿多少？', '实体书店有哪些奖励？', '人形机器人推广应用怎么支持？', '信息技术产业局负责什么？'];

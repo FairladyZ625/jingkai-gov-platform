@@ -30,8 +30,8 @@
 <script src="api/platform.js"></script>
 <script>
   (function () {
-    var L = window.JK_APP_LIST || [], mock = ((window.JK_CONFIG || {}).api || {}).mode !== 'http';
-    L.forEach(function (a) { if (a.enabled !== false && a.mock && mock) document.write('<script src="mock/' + a.id + '.js"><\/script>'); });
+    var L = window.JK_APP_LIST || [], api = (window.JK_CONFIG || {}).api || {};
+    L.forEach(function (a) { if (a.enabled !== false && a.mock && (api.mode !== 'http' || (api.modules || {})[a.id] === 'mock')) document.write('<script src="mock/' + a.id + '.js"><\/script>'); });
     L.forEach(function (a) { if (a.enabled !== false && a.api) document.write('<script src="api/' + a.id + '.js"><\/script>'); });
   })();
 </script>

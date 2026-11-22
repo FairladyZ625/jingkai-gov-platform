@@ -12,7 +12,8 @@
   // 只映射政策复核表中明确合并的旧条目。下线且无依据的条目没有替代 ID。
   const legacyPolicyIds = new Map([['PI-01', 'RP-003'], ['PI-08', 'RP-006'], ['PI-10', 'RP-007'], ['PI-16', 'PI-17']]);
   const DEMO_SEED_VERSION = 3;
-  let S;
+  let S, httpPrincipal, mixedOwner;
+  const httpSite = () => window.JK_CONFIG?.api?.mode === 'http';
 
   function upgradeSeedDocumentNumbers() {
     const seeded = new Set([...SEED.documents.map((draft) => draft.id), 'DOC-1112']);
@@ -127,7 +128,7 @@
 
   function load() {
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = !httpSite() && localStorage.getItem(KEY);
       if (raw) {
         S = JSON.parse(raw);
         // 政策库没有写入接口，持久化的是演示交互状态，政策始终从当前种子读取。
@@ -163,13 +164,18 @@
     S.demoSeedVersion = DEMO_SEED_VERSION;
     seedDrafts();
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+  function save() { if (!httpSite()) try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
   const nid = (p) => p + '-' + (++S.seq);
   const now = () => { const d = new Date(); return d.toISOString().slice(0, 10) + ' ' + d.toTimeString().slice(0, 5); };
-  const me = () => S.users.find((u) => u.id === S.me);
+  const me = () => httpPrincipal?.user || S.users.find((u) => u.id === S.me);
   /* 权限判定（复用 haiknow rbac.py：角色 × 应用 × 动作 view/operate/approve/admin；授权表在 data/accounts.js） */
   function can(app, action, user) {
     const u = user || me(); if (!u) return false;
+    if (httpPrincipal && u.id === httpPrincipal.user.id) {
+      // /me 已按应用计算有效授权；不从角色名或通配项补回服务器没有返回的动作。
+      const allowed = httpPrincipal.grants[app];
+      if (!Array.isArray(allowed) || !allowed.includes(action)) return false;
+    }
     const g = (S.grants || {})[u.role]; if (!g) return u.role === 'admin';
     const ap = (S.apps || []).find((a) => a.id === app); if (ap && ap.status === 'disabled' && !(g['*'] || []).includes('admin')) return false;
     const acts = [...(g['*'] || []), ...(g[app] || [])];
@@ -848,8 +854,25 @@
     request(method, path, body) {
       const [p, q] = parseQuery(path);
       return new Promise((resolve, reject) => {
-        setTimeout(() => {
+        const authorization = httpSite() ? window.JKHttp?.mockAuthorization(path) : null;
+        setTimeout(async () => {
           try {
+            if (httpSite()) {
+              if (!window.JKAPI.guard || !authorization) err(401, 'UNAUTHENTICATED', '需要有效的服务端会话');
+              const profile = await authorization.profile();
+              authorization.check();
+              const u = profile?.user;
+              const local = u && SEED.users.find(x => x.id === u.id && x.username === u.username && x.role === u.role && x.status === 'active');
+              if (!local || u.status !== 'active' || profile.role?.id !== u.role ||
+                  profile.role.mask !== (SEED.roles || []).find(r => r.id === u.role)?.mask)
+                err(403, 'FORBIDDEN', '当前身份不能使用此演示模块');
+              const owner = JSON.stringify([authorization.epoch, u.id, u.role, u.deptId, profile.grants]);
+              if (owner !== mixedOwner) {
+                load(); loadHooks.forEach(f => f(S)); mixedOwner = owner;
+              }
+              // 仅在下列同步 guard/handler 内生效。不保存线上会话，也不复制真实口令。
+              httpPrincipal = profile;
+            }
             if (window.JKAPI.guard) window.JKAPI.guard(method, p, body || {});
             const r = routes.find((x) => x.method === method && x.re.test(p));
             if (!r) err(404, 'NO_ROUTE', `未实现的接口 ${method} ${p}`);
@@ -857,7 +880,7 @@
             const out = r.fn(body || {}, params, q);
             if (method !== 'GET') { save(); listeners.forEach((f) => f(method, p)); }
             resolve(clone(out));
-          } catch (e) { reject(e); }
+          } catch (e) { reject(e); } finally { httpPrincipal = null; }
         }, method === 'GET' ? Math.min(120, this.latency) : this.latency);
       });
     },
@@ -865,7 +888,7 @@
     onChange: (f) => listeners.push(f),
     reset() { localStorage.removeItem(KEY); load(); loadHooks.forEach((f) => f(S)); save(); listeners.forEach((f) => f('RESET', '')); },
     /* 扩展点：账号权限模块（assets/auth.js）通过它注册路由、读写状态，不改本文件 */
-    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now },
+    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now, hasHttpPrincipal: () => !!httpPrincipal },
     onLoad(f) { loadHooks.push(f); f(S); save(); },
     guard: null,
     setFast(v) { S.demoFast = v; window.JKAPI.latency = v ? 90 : 260; },
