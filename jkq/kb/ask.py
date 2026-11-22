@@ -160,6 +160,7 @@ def install(app, platform, current_user):
     from pydantic import BaseModel, field_validator
     from haiknow_core.aihub.streaming import MOCK_CONTENT
 
+    from ..models import preserve_kb_model_failure
     from .docs import KbError, KbRoute
     from .evidence import profile, strength
     from .spaces import visible_spaces
@@ -243,9 +244,10 @@ def install(app, platform, current_user):
 
         def complete(messages, classification):
             nonlocal local
-            result = platform.model.aihub.call(
-                "kb", "chat", {"messages": messages, "classification": classification}, principal=user,
-            )
+            with preserve_kb_model_failure():
+                result = platform.model.aihub.call(
+                    "kb", "chat", {"messages": messages, "classification": classification}, principal=user,
+                )
             service = getattr(app.state, "jkq_models", None)
             model = service.models.get(result.get("provider")) if service else None
             if model and model.kind == "mock" and result["result"] in ("[]", MOCK_CONTENT):

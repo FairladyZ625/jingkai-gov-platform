@@ -1,5 +1,6 @@
 """公开固定快照 + 临时身份；用真实 HTTP 路由和模拟 provider，不允许外呼。"""
 import re
+import json
 import secrets
 from pathlib import Path
 
@@ -117,3 +118,84 @@ def test_dedup_source_aliases_not_equal_titles():
     main = clauses[0]
     assert {p["snippet"] for p in [main, *main["relatedPassages"]]} == set(paired["text"].splitlines())
     assert {p["passage"] for p in [main, *main["relatedPassages"]]} == {1, 2}
+
+
+@pytest.mark.parametrize("reply,question", [
+    ("timeout", "实体书店有哪些奖励？"), (503, "实体书店有哪些奖励？"),
+    (400, "数据券补贴最高能拿多少？"), ("[]", "实体书店有哪些奖励？"),
+])
+def test_nonmock_outcome_is_not_a_mock_answer(client, monkeypatch, reply, question):
+    import httpx
+    from jkq.kb.ask import MODEL_UNAVAILABLE, NOT_FOUND
+
+    service = client.app.state.jkq_models
+    monkeypatch.setitem(service.providers, "cloud", dict(
+        id="cloud", kind="openai", model="fixture", allow_outbound="internal",
+        base_url="https://model.invalid/v1", api_key="",
+    ))
+    monkeypatch.setattr(service, "primary", "cloud")
+    attempts = []
+
+    def upstream(request):
+        assert request.url.host == "model.invalid"
+        attempts.append(reply)
+        if reply == "timeout":
+            raise httpx.ReadTimeout("fixture", request=request)
+        if isinstance(reply, int):
+            return httpx.Response(reply)
+        return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
+
+    monkeypatch.setattr(service, "transport", httpx.MockTransport(upstream))
+    answer = post(client, "ask", q=question)
+    assert attempts == [reply]
+    assert answer["notFound"] and answer["citations"] == [] and "source" not in answer
+    assert answer["message"] == (NOT_FOUND if reply == "[]" else MODEL_UNAVAILABLE)
+    # 故障标记只属于上一次问答。相同账号明确选择 mock 后仍可用，且不请求上游。
+    client.put("/api/v1/models/current", json={"model": "mock"}).raise_for_status()
+    explicit = post(client, "ask", q="实体书店有哪些奖励？")
+    assert explicit["source"] == "extract" and explicit["citations"]
+    assert attempts == [reply]
+
+
+def test_same_snapshot_uses_only_the_current_roles_visible_alias(client):
+    # 同一份官网通知分别在通知库、政策库入库。不能先选一个不可见的去重代表。
+    q = "亦城人才申报什么时候截止？"
+    lead = post(client, "search", q=q)["hits"][0]
+    assert lead["id"] == "KB-T4892665" and lead["space"] == "template"
+    client.fixture_login("hejun")
+    results = post(client, "search", q=q)["hits"]
+    assert all(hit["space"] == "policy" for hit in results)
+    visible = next(hit for hit in results if hit["source"]["url"] == lead["source"]["url"])
+    assert visible["id"] == "rd-4892665" and visible["snippet"] == lead["snippet"]
+    assert post(client, "ask", q=FOLLOW, scope=lead["citationId"])["notFound"]
+    assert {c["id"] for c in post(client, "ask", q=q)["citations"]} == {visible["id"]}
+
+
+def test_nonmock_backup_success_still_requires_verifiable_quote(client, monkeypatch):
+    import httpx
+
+    service = client.app.state.jkq_models
+    for ident in ("cloud", "deepseek"):
+        monkeypatch.setitem(service.providers, ident, dict(
+            id=ident, kind=service.models[ident].kind, model="fixture", allow_outbound="internal",
+            base_url=f"https://{ident}.invalid/v1", api_key="",
+        ))
+    monkeypatch.setattr(service, "primary", "cloud")
+    hosts = []
+
+    def upstream(request):
+        hosts.append(request.url.host)
+        if request.url.host == "cloud.invalid":
+            return httpx.Response(503)
+        assert request.url.host == "deepseek.invalid"
+        passages = json.loads(json.loads(request.content)["messages"][-1]["content"])["passages"]
+        raw = json.dumps([dict(passage=1, quote="虚构，不在正文。"),
+                          dict(passage=1, quote=passages[0]["sentences"][0])])
+        return httpx.Response(200, json={"choices": [{"message": {"content": raw}}]})
+
+    monkeypatch.setattr(service, "transport", httpx.MockTransport(upstream))
+    answer = post(client, "ask", q="实体书店有哪些奖励？")
+    assert hosts == ["cloud.invalid", "deepseek.invalid"]
+    assert not answer["notFound"] and "source" not in answer and "虚构，不在正文" not in answer["answer"]
+    ref, = answer["citations"]
+    assert ref["snippet"] in client.get("/api/v1/kb/docs/" + ref["id"]).json()["item"]["text"]
