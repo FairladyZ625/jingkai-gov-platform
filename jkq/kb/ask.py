@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -25,8 +26,11 @@ LOGGER = logging.getLogger(__name__)
 
 def no_answer(message=NOT_FOUND):
     # 现有知识库界面用 message 渲染 notFound 卡片，其他调用方用 answer。
-    return dict(answer=message, message=message, confidence="none", notFound=True,
-                citations=[], followups=[], near=[])
+    result = dict(answer=message, message=message, confidence="none", notFound=True,
+                  citations=[], followups=[], near=[])
+    if message in (MODEL_UNAVAILABLE, SEARCH_UNAVAILABLE):
+        result["unavailable"] = True   # 暂时无法查询/生成 ≠ 已检索但没有依据
+    return result
 
 
 def source_sentences(text):
@@ -93,8 +97,8 @@ def ask(question, hits, complete):
         {"role": "user", "content": json.dumps({
             "question": question,
             "passages": [
-                {"passage": index, "sentences": sentences}
-                for index, (_, sentences) in enumerate(passages, 1)
+                {"passage": index, "title": hit["title"], "sentences": sentences}
+                for index, (hit, sentences) in enumerate(passages, 1)
             ],
         }, ensure_ascii=False)},
     ]
@@ -154,15 +158,44 @@ def field_answer(question, doc):
                 confidence="low" if doc["status"] in OBSOLETE else "mid", source="extract")
 
 
+def select_excerpts(hits, texts, parts):
+    """对已授权的候选文件比较字段覆盖；每个本地答复只引用同一文件。"""
+    from .evidence import evidence_fields, strength
+
+    fields = list(evidence_fields(parts))
+    best, excerpts, missing = (0, 0), [], []
+    for hit in hits:
+        if len(fields) == 1 and not strength(fields[0], hit["title"], hit["snippet"]):
+            continue
+        sentences = tuple(dict.fromkeys(source_sentences(texts[hit["id"]])))
+        quotes, gaps, quality = [], [], 0
+        for index, field in enumerate(fields):
+            ranked = sorted(((strength(field, hit["title"], s), s) for s in sentences),
+                            key=lambda item: -item[0])
+            selected = [s for score, s in ranked[:4] if score]
+            if selected:
+                quotes.extend(dict(hit, snippet=s) for s in selected)
+                quality += ranked[0][0]
+            else:
+                label = re.sub(r"[^\w、]", "", parts[index])[:40] or f"第{index + 1}项"
+                gaps.append(label)
+        rank = (len(fields) - len(gaps), quality)
+        if rank > best:
+            best, excerpts, missing = rank, quotes, gaps
+        if quotes and len(fields) == 1:
+            break  # 单个字段依照检索排序，不混用不同批次或同名政策。
+    return excerpts, missing
+
+
 def install(app, platform, current_user):
     """由实例在知识库文档服务安装后调用。"""
     from fastapi import APIRouter, Depends
-    from pydantic import BaseModel, field_validator
+    from pydantic import BaseModel, Field, field_validator
     from haiknow_core.aihub.streaming import MOCK_CONTENT
 
     from ..models import preserve_kb_model_failure
     from .docs import KbError, KbRoute
-    from .evidence import profile, strength
+    from .evidence import question_parts
     from .spaces import visible_spaces
 
     search = _load_search()
@@ -181,6 +214,7 @@ def install(app, platform, current_user):
         space: str | None = None
         filters: Filters | None = None
         scope: str | None = None   # 上轮引用的 id@vN，只是选择器，不是访问凭证。
+        timeoutMs: int | None = Field(default=None, gt=0, strict=True)
 
         @field_validator("q")
         @classmethod
@@ -192,6 +226,7 @@ def install(app, platform, current_user):
 
     @router.post("/ask")
     def ask_route(body: Question, user=Depends(current_user)):
+        started = time.monotonic()
         allowed = set(visible_spaces(user))
         if "partner" in user.roles:
             allowed.discard("enterprise")
@@ -221,22 +256,13 @@ def install(app, platform, current_user):
                 return grouped
         elif re.search(r"(?:这项|这份|上述|该)(?:政策|文件|办法)的", body.q) or re.search(r"这项[^，。；？的]{1,16}政策的", body.q):
             return no_answer("请先选定要追问的政策：搜索政策名称并取得引用后，再问这份原文。")
+        parts = question_parts(body.q)
         hits = search(docs, body.q, filters=filters)["hits"]
 
         texts = {doc["id"]: doc["text"] for doc in docs}
         hits = [hit for hit in hits if hit["space"] in allowed and hit["snippet"] in texts.get(hit["id"], "")]
         # 搜索列表每份文件只显示一个摘要；问答还需要同一文件的并列条款。
-        query = profile(body.q)
-        excerpts = []
-        for hit in hits:
-            if not strength(query, hit["title"], hit["snippet"]):
-                continue
-            sentences = sorted(source_sentences(texts[hit["id"]]),
-                               key=lambda s: -strength(query, hit["title"], s))
-            for sentence in dict.fromkeys([hit["snippet"], *sentences[:4]]):
-                if strength(query, hit["title"], sentence):
-                    excerpts.append(dict(hit, snippet=sentence))
-            break  # 一个回答不混用同名政策、不同批次的期限或标准
+        excerpts, missing_fields = select_excerpts(hits, texts, parts)
         additional = [h for h in excerpts if not any(h["id"] == b["id"] and h["snippet"] == b["snippet"]
                                                       for b in hits)]
         hits = [h for h in hits + additional if any(source_sentences(h["snippet"]))]
@@ -244,9 +270,17 @@ def install(app, platform, current_user):
 
         def complete(messages, classification):
             nonlocal local
+            options = {}
+            if body.timeoutMs is not None:
+                # 可选的调用方剩余预算只能收紧 SDK 的 50s 上限。检索已耗时
+                # 也算在一次请求内；备用服务沿用网关的总截止时间，不重新计时。
+                remaining = min(50_000, body.timeoutMs) / 1000 - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError("本次知识库请求预算已用尽")
+                options["timeout"] = remaining
             with preserve_kb_model_failure():
                 result = platform.model.aihub.call(
-                    "kb", "chat", {"messages": messages, "classification": classification}, principal=user,
+                    "kb", "chat", {"messages": messages, "classification": classification}, principal=user, **options,
                 )
             service = getattr(app.state, "jkq_models", None)
             model = service.models.get(result.get("provider")) if service else None
@@ -262,6 +296,8 @@ def install(app, platform, current_user):
         answer = ask(body.q, hits, complete)
         if local and not answer["notFound"]:
             answer.update(source="extract", routeNote="本地原文摘录（未使用真实模型）")
+            for label in missing_fields:
+                answer["answer"] += f"\n{label}：当前引用原文未找到可核对的说明。"
         return answer
 
     app.include_router(router)

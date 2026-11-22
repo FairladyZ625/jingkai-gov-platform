@@ -223,6 +223,70 @@
 
   /* ===================== 问答：只摘原文句子，句末标 [n]，不编造 ===================== */
   const GENERIC = new Set(tokens('政策 支持 企业 申报 措施 办法 规定 文件 有关 相关 关于 补贴 奖励 哪些 什么 最高 时间 多少 怎么 条件 负责 是否 可以 北京 经开区 开发区 经济技术'));
+  const durationQuestion = /多久|多长时间|几(?:分钟|小时|天|周|个月)|时长/;
+  const upper = '最长|最多|最高|上限|封顶|不(?:得|能)?超过|不多于|以内';
+  const lower = '最短|最少|最低|下限|至少|不少于|不低于';
+  const timeValue = '(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千半]+)\\s*(?:分钟|小时|工作日|天|周|个月|年|秒)';
+  // 数值必须和所问的上/下限配对；整句保留“不得续借”等限制。
+  function attributeField(q) {
+    const time = durationQuestion.test(q);
+    const permission = q.match(/(?:是否可以|是否允许|能否|可不可以|能不能)([\u3400-\u9fff]{2,10})[？?]?$/);
+    const bound = new RegExp(upper).test(q) ? upper : new RegExp(lower).test(q) ? lower : '';
+    const fee = q.match(/押金|费用|收费/)?.[0];
+    if (!permission && !fee && !time && !(bound && /补贴|奖励|补助|资助|金额|多少钱|能拿/.test(q))) return null;
+    const value = time ? timeValue : '(?:\\d+(?:\\.\\d+)?|[一二两三四五六七八九十百千]+)\\s*[万亿]?元';
+    const amount = new RegExp(bound ? '(?:' + bound + ')(?:为|是|需要|可|支持|补贴|使用|借用|停放|停留|\\s|[：:])*' + value +
+      '|' + value + (bound === upper ? '以内' : '以上') : value);
+    const subject = permission ? q.slice(0,permission.index) : fee ? q.replace(fee,' ') : q;
+    const topics = subject.split(/(?:最长|最多|最短|最少|至少)(?:能|可(?:以)?)[\u3400-\u9fff]{0,3}?(?:多久|多长时间)|请问|多长时间|多久|几(?:分钟|小时|天|周|个月)|时长|上限|下限|最长|最多|最短|最少|最高|最低|封顶|补贴|奖励|资助|补助|能拿|是多少钱|多少钱|是多少|多少|(?<=计划)[中里对]|(?<=政策)[中里对]|[的？?，,\s]+/).filter(Boolean);
+    const explicit = permission && new RegExp('(?:允许|可以|可|不得|不能|禁止|不支持|不允许|不可)' + permission[1]);
+    const accepts = t => explicit ? explicit.test(t) : fee ? t.includes(fee) && (amount.test(t) || /不收取|免费|免收/.test(t)) :
+      amount.test(t) && (time || /奖励|补贴|补助|资助|给予|支持/.test(t));
+    return {topics, time, accepts};
+  }
+  function anchored(terms, title, text) {
+    return terms.every(term => {
+      if (title.includes(term) || text.includes(term)) return true;
+      for (let i = Math.max(2,term.length-text.length); i <= Math.min(title.length,term.length-2); i++) {
+        if (title.includes(term.slice(0,i)) && text.includes(term.slice(i))) return true;
+      }
+      return false;
+    });
+  }
+  function attributeAnswer(q, list, notFound) {
+    const clauses = q.split(/[，,；;]/);
+    const parts = clauses.length <= 6 && clauses.every(s => /多久|多长时间|几(?:分钟|小时|天|周|个月)|多少|什么|哪些/.test(s)) ? clauses : [q];
+    const fields = parts.map(attributeField);
+    if (!fields[0]) return null;
+    const subject = fields[0].topics;
+    if (!subject.some(t=>t.length >= 2)) return notFound();
+    const byDoc = new Map();
+    for (const {c} of list) { // list 已按角色、空间、范围和版本筛选并排序
+      const d = c.doc;
+      const quotes = byDoc.get(d) || Array(fields.length).fill(null);
+      byDoc.set(d, quotes);
+      const sentences = d.chunks[c.i].text.split(/(?<=[。！？])|\n/).map(t=>t.trim());
+      fields.forEach((field, i) => {
+        if (!field || quotes[i]) return;
+        const terms = [...new Set([...subject,...field.topics])];
+        const text = sentences.find(s => !/\[\d+\]/.test(s) && field.accepts(s) && anchored(terms,d.title,s) &&
+          (!field.time || s.split(/[，,；;]/).some(c => field.accepts(c) && (terms.some(t=>c.includes(t)) ||
+           /^(?:每次|单次|一次|时长|时间|期限|借期)?(?:最长|最短|最多|至少|不得超过|不超过)/.test(c.trim())))));
+        if (text) quotes[i] = {text,i:c.i};
+      });
+      if (quotes.every(Boolean)) break;
+    }
+    const best = [...byDoc].sort((a,b)=>b[1].filter(Boolean).length-a[1].filter(Boolean).length)[0];
+    if (!best || !best[1].some(Boolean)) return notFound();
+    const [doc, quotes] = best, citations = [];
+    const lines = quotes.map((s,i) => {
+      if (!s) return parts[i].replace(/是多少|多少|[？?]/g,'').slice(0,40) + '：当前引用原文未找到可核对的说明。';
+      const n = citations.length + 1;
+      citations.push(pub(doc,{n,snippet:s.text,chunk:s.i,citationId:citationKey(doc)}));
+      return '“' + s.text + '”[' + n + ']';
+    });
+    return {answer:lines.join('\n'),citations,confidence:/已失效|已更新/.test(statusOf(doc))?'low':'mid',source:'extract',routeNote:'本地原文摘录',followups:[]};
+  }
   function ask(q, opts) {
     opts = opts || {}; q = String(q || '').trim();
     const f = Object.assign({}, opts.filters || {}, opts.space ? { space: opts.space } : {});
@@ -264,6 +328,8 @@
       const msg = '请先选定要追问的政策：搜索政策名称并取得引用后，再问这份原文。';
       return { ...notFound(), answer: msg, message: msg, near: [] };
     }
+    const grounded = attributeAnswer(q, list, notFound);
+    if (grounded) return grounded;
     const best0 = list.slice(0, 12).reduce((m, x) => Math.max(m, covered(x.c)), 0);
     if (!list.length || top < ASK_MIN || best0 < (units.length >= 3 ? 0.6 : units.length === 2 ? 0.99 : 0.99)) return notFound();
     const wantNum = /多少|最高|金额|比例|几|上限|封顶|补贴|奖励|标准/.test(q), wantDate = /什么时候|截止|几号|时间|期限|哪天|何时|延期/.test(q), wantCond = /条件|要求|谁可以|能不能|是否|符合/.test(q), wantList = /哪些|有什么|都有/.test(q), wantHow = /怎么|如何|支持|扶持/.test(q);

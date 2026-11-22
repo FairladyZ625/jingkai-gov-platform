@@ -802,6 +802,10 @@
     // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
     const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
     if (scope) return answer(text, scope);
+    // 已登记的完整知识库问法不需要串行等待远程技能匹配。仍走 runIntent 的授权、
+    // 操作员与实际 ask；非精确匹配的自由输入保留原有技能/意图竞争。
+    const kbAsk = mf('kb').intents?.find(it => it.id === 'kb.ask' && it.examples.includes(text));
+    if (kbAsk) return runIntent({ ...kbAsk, app: 'kb' }, { text }, text);
     const u = Op.understand(text); const b = u.best;
     if (b && b.score >= 2.6 && !canIntent(b.intent)) return runIntent(b.intent, b.slots, text);
     if (!u.slots.ent && !opt.noFuzzy) { const fz = Op.fuzzyEnt(text); if (fz) {
@@ -858,6 +862,7 @@
     try {
       if ((kbLike || scope) && (JK.services.kb || JK.registry.kb)) {
         const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, { scope, fromChat: S.active === 'kb' }) : API.kb.ask({ q: text, scope }));
+        if (r?.unavailable) throw Error(r.message);
         if (r && (r.confidence === 'none' || (r.answer && ((r.citations || []).length || JK.services.kb)))) { if (!r.answer) r.answer = '知识库里没有找到能回答这个问题的原文，我没有编答案。可以导入相关资料后再问。'; const m = S.models.find((x) => x.id === S.model); const none = r.confidence === 'none' || !(r.citations || []).length;
           const next = (r.suggestions || []).map((x) => ({ label: x.label, say: x.say }));
           if (!none && JK.registry.kb) next.push({ label: '在知识库里看全部结果', open: 'kb', route: 'search', params: { q: text } });
@@ -960,7 +965,7 @@
     inboxLoad = load;
     return load;
   }
-  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
+  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\/|^\/api\/v1\/kb\/(?:search|ask)$/.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
   function renderInbox(el) {
     const tab = el.dataset.tab || 'mine';

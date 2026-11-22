@@ -61,7 +61,7 @@
         { id: 'kb.expiring', action: 'expiring', examples: ['哪些政策快到期了', '知识库里有哪些已失效的文件'], keywords: ['快到期', '即将到期', '已失效', '过期'], plan: ['打开资料库', '按状态筛选', '列出文件'] },
         { id: 'kb.open', action: 'open', examples: ['打开数据产业若干措施的原文', '看一下实体书店管理办法原文'], keywords: ['打开原文', '看原文', '原文'], plan: ['检索文件', '打开原文', '定位段落'] },
         { id: 'kb.search', action: 'search', examples: ['在知识库搜一下机器人', '找一下关于算力的文件'], keywords: ['搜一下', '找一下', '搜索', '找文件', '有没有文件'], plan: ['打开知识库', '输入关键词', '看结果'] },
-        { id: 'kb.ask', action: 'ask', examples: ['数据券补贴最高能拿多少？', '知识库里有没有关于火星基地的政策？', '实体书店有哪些奖励', '信息技术产业局负责什么'], keywords: ['知识库', '出处', '依据', '最高能拿', '规定', '哪个文件', '负责什么', '什么时候截止'], plan: ['打开知识库', '检索相关原文', '摘出原文句子', '标注出处'] },
+        { id: 'kb.ask', action: 'ask', examples: [...C.suggestions, '知识库里有没有关于火星基地的政策？'], keywords: ['知识库', '出处', '依据', '最高能拿', '规定', '哪个文件', '负责什么', '什么时候截止'], plan: ['打开知识库', '检索相关原文', '摘出原文句子', '标注出处'] },
       ],
       starters: [C.suggestions[0] || '数据券补贴最高能拿多少？', '哪些政策快到期了', '把官网网址导入知识库'],
       demo: [
@@ -78,7 +78,7 @@
       const S = { tab: 'home', q: '', hits: null, total: 0, terms: [], answer: null, asking: false, filters: {}, showFilters: false, sort: 'rel', space: 'all', spaces: [], stats: null,
         lib: { status: '', space: 'all', list: null, facets: null }, doc: null, docTab: 'text', hl: null, hlChunk: null, back: 'home',
         imp: { step: 0, src: 'file', files: [], text: '', title: '', url: '', items: [], busy: false, result: null } };
-      let seq = 0, askSeq = 0, reference = null, timer;
+      let seq = 0, askSeq = 0, reference = null, timer, preview = null, submission = null;
       function followScope(q) {
         if (!reference || /起草|撰写|生成公文|打开原文|导入|发起审签|提交审签/.test(q)) return undefined;
         const title = q.match(/《([^》]+)》/);
@@ -97,7 +97,7 @@
         };
       }
       function clearScope() {
-        ++askSeq; reference = null; S.asking = false; S.answer = null; renderScope();
+        ++askSeq; preview = null; reference = null; S.asking = false; S.answer = null; renderScope();
       }
 
       /* ---------- 骨架 ---------- */
@@ -121,7 +121,7 @@
         if (route === 'import' && params.src) S.imp.src = params.src;
         render();
         if (S.tab === 'library') loadLib();
-        if (route === 'home' && params.q) { runSearch(); if (params.ask) runAsk(); }
+        if (route === 'home' && params.q) { if (params.ask) submit(); else runSearch(); }
       }
 
       /* ===================== 搜索与问答 ===================== */
@@ -144,9 +144,9 @@
           <div id="kb-ans"></div><div id="kb-res"></div>`;
         const inp = body.querySelector('[data-op="kb.q"]');
         renderScope();
-        inp.oninput = () => { S.q = inp.value; ++askSeq; ++seq; S.asking = false; S.answer = null; renderAnswer(); clearTimeout(timer); timer = setTimeout(runSearch, 140); };
-        inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); S.q = inp.value; runSearch(); if (S.q.trim()) runAsk(); } };
-        body.querySelector('[data-op="kb.ask"]').onclick = () => { S.q = inp.value; runSearch(); runAsk(); };
+        inp.oninput = () => { S.q = inp.value; ++askSeq; ++seq; preview = null; S.asking = false; S.answer = null; renderAnswer(); clearTimeout(timer); timer = setTimeout(() => runSearch(true), 140); };
+        inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); S.q = inp.value; submit(); } };
+        body.querySelector('[data-op="kb.ask"]').onclick = () => { S.q = inp.value; submit(); };
         body.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = () => { clearScope(); S.space = b.dataset.sp; body.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); renderAnswer(); runSearch(); }));
         body.querySelector('[data-op="kb.filters"]').onclick = () => { S.showFilters = !S.showFilters; body.querySelector('#kb-filt').classList.toggle('hide', !S.showFilters); if (S.showFilters) renderFilters(); };
         if (S.showFilters) renderFilters();
@@ -164,11 +164,28 @@
       }
       function afterFilter() { clearScope(); renderAnswer(); runSearch(); renderFilters(); const b = body.querySelector('[data-op="kb.filters"]'); const n = Object.values(S.filters).filter(Boolean).length; if (b) b.innerHTML = `${icon('filter')}筛选${n ? ' · ' + n : ''}`; }
       const curFilters = () => { const f = {}; Object.entries(S.filters).forEach(([k, v]) => { if (v) f[k] = v; }); if (S.space !== 'all') f.space = S.space; return f; };
-      async function runSearch() {
-        const my = ++seq; const q = S.q.trim();
+      function runSearch(isPreview = false) {
+        clearTimeout(timer);
+        const q = S.q.trim();
+        const request = { q, scope: followScope(q), limit: 30, filters: curFilters(), sort: S.sort };
+        const key = JSON.stringify(request);
+        // 只消费本次输入的预检一次：未完成的共享 promise，已成功的不再重搜。
+        // 新输入/角色/文档变化、失败重试和显式再次提交均不会命中旧结果。
+        if (!isPreview && preview?.key === key) { const p = preview.promise; preview = null; return p; }
+        preview = null;
+        const my = ++seq;
+        S.searchError = null;
         if (S.answer && !S.asking && S.answer.q !== q) { S.answer = null; renderAnswer(); }
         if (!q) { S.hits = null; renderResults(); return; }
-        try { const r = await K().search({ q, scope: followScope(q), limit: 30, filters: curFilters(), sort: S.sort }); if (my !== seq) return; S.hits = r.hits; S.total = r.total; S.terms = r.terms || []; S.facets = r.facets; renderResults(); } catch (e) { if (my === seq) { S.hits = []; renderResults(e); } }
+        const promise = Promise.resolve().then(() => K().search(request)).then(r => {
+          if (my !== seq) return;
+          S.hits = r.hits; S.total = r.total; S.terms = r.terms || []; S.facets = r.facets; renderResults();
+        }).catch(e => {
+          if (my !== seq) return;
+          preview = null; S.hits = []; S.searchError = e; renderResults();
+        });
+        if (isPreview) preview = { key, promise };
+        return promise;
       }
       async function runAsk() {
         const q = S.q.trim(); if (!q) return;
@@ -179,12 +196,23 @@
         try {
           const a = await K().ask({ q, filters: curFilters(), scope });
           if (my !== askSeq) return;
-          S.answer = { ...a, q };
+          S.answer = a.unavailable ? { ...a, q, error: a.message } : { ...a, q };
           const c = a.citations && a.citations[0];
           if (c && !scope) reference = { id: c.id, key: c.citationId || c.id + '@v' + (c.version || 1), version: c.version || 1, title: c.title, subject: q + ' ' + c.title + ' ' + c.snippet };
         } catch (e) { if (my !== askSeq) return; S.answer = { error: e.message || '出错了' }; }
         S.asking = false; renderScope(); renderAnswer(); renderResults();
         return S.answer;
+      }
+      function submit() {
+        clearTimeout(timer);
+        const q = S.q.trim();
+        if (!q) return runSearch();
+        const key = JSON.stringify([q, followScope(q), curFilters(), S.sort]);
+        if (submission?.key === key && submission.seq === askSeq) return submission.promise;
+        runSearch(); // 与问答独立发出；任一返回均不等待另一个。
+        const promise = runAsk();
+        const entry = submission = { key, seq: askSeq, promise };
+        return promise.finally(() => { if (submission === entry) submission = null; });
       }
       const mark = (s) => { let out = esc(s); (S.terms || []).filter((t) => t.length > 1).sort((a, b) => b.length - a.length).slice(0, 8).forEach((t) => { out = out.split(esc(t)).join('<mark>' + esc(t) + '</mark>'); }); return out.replace(/<\/mark><mark>/g, ''); };
       const statusTag = (s) => (s ? tag(s, 'kbStatus') : '');
@@ -203,7 +231,7 @@
         if (!e.target.closest('details')) go('doc', { id: r.dataset.doc, chunk: r.dataset.chunk ? +r.dataset.chunk : null,
           highlight: S.hits?.find(h => h.id === r.dataset.doc && h.passage)?.snippet });
       })); }
-      function renderResults(err) {
+      function renderResults(err = S.searchError) {
         const box = body.querySelector('#kb-res'); if (!box) return;
         if (err) { box.innerHTML = `<div class="callout h-red">${icon('alert')}<div>${esc(err.message || '搜索出错')}</div></div>`; return; }
         if (S.hits == null) {
@@ -211,7 +239,7 @@
           box.innerHTML = `<div class="sect">试试这样问</div><div class="kb-sugg">${C.suggestions.map((s, i) => `<button class="kb-sg" data-sg="${esc(s)}" data-op="kb.sugg-${i}">${icon('sparkles')}<span>${esc(s)}</span></button>`).join('')}</div>
             <div class="sect">最近入库</div><div class="list lined card flat kb-list">${recent.map(resultRow).join('') || '<div class="meta" style="padding:12px">暂无</div>'}</div>
             <div class="kb-foot">${icon('globe')}官网同步 ${esc(st.fetched || '')} · ${st.chunks || 0} 个片段</div>`;
-          box.querySelectorAll('[data-sg]').forEach((b) => (b.onclick = () => { S.q = b.dataset.sg; body.querySelector('[data-op="kb.q"]').value = S.q; runSearch(); runAsk(); }));
+          box.querySelectorAll('[data-sg]').forEach((b) => (b.onclick = () => { S.q = b.dataset.sg; body.querySelector('[data-op="kb.q"]').value = S.q; submit(); }));
           bindHits(box); return;
         }
         if (!S.hits.length) { box.innerHTML = S.answer ? '' : ui.empty({ icon: 'search', title: '没有匹配的资料', desc: '换个关键词，或清空筛选；也可以把资料导入进来', action: can('operate') ? '导入资料' : '' }); const b = box.querySelector('.empty .btn'); if (b) b.onclick = () => go('import'); return; }
@@ -259,7 +287,7 @@
         const openCite = (n) => { const c = a.citations.find((x) => String(x.n) === String(n)); if (c) go('doc', { id: c.id, highlight: c.snippet, chunk: c.chunk }); };
         box.querySelectorAll('[data-cite]').forEach((x) => (x.onclick = () => openCite(x.dataset.cite)));
         box.querySelectorAll('[data-cite-row]').forEach((x) => (x.onclick = (e) => { if (e.target.closest('a')) return; openCite(x.dataset.citeRow); }));
-        box.querySelectorAll('[data-fu]').forEach((b) => (b.onclick = () => { const f = a.followups[+b.dataset.fu]; if (/起草/.test(f.label) && ctx.nav && ctx.nav.chat) return ctx.nav.chat(f.say); S.q = f.say; body.querySelector('[data-op="kb.q"]').value = S.q; runSearch(); runAsk(); }));
+        box.querySelectorAll('[data-fu]').forEach((b) => (b.onclick = () => { const f = a.followups[+b.dataset.fu]; if (/起草/.test(f.label) && ctx.nav && ctx.nav.chat) return ctx.nav.chat(f.say); S.q = f.say; body.querySelector('[data-op="kb.q"]').value = S.q; submit(); }));
         box.querySelector('[data-op="kb.copy"]').onclick = () => { const txt = a.answer.replace(/\*\*/g, '') + '\n\n出处：\n' + a.citations.map((c) => `[${c.n}] ${c.title}${c.source.docNo ? '（' + c.source.docNo + '）' : ''} ${c.source.url || ''}`).join('\n'); (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => ui.toast('已复制回答和出处'), () => ui.toast('复制失败，请手动选择文字', { type: 'warn' })); };
         const td = box.querySelector('[data-op="kb.todoc"]'); if (td) td.onclick = () => ctx.nav.open('document', 'new', { from: 'kb', question: a.q, quote: a.citations.map((c) => ({ title: c.title, docNo: c.source.docNo, text: c.snippet, url: c.source.url })) });
       }
@@ -484,19 +512,29 @@
         renderTabs(); const ib = el.querySelector('[data-op="kb.import-open"]'); if (ib) ib.classList.toggle('hide', S.tab === 'import');
         if (S.tab === 'home') renderHome(); else if (S.tab === 'library') renderLib(); else if (S.tab === 'import') renderImport(); else renderDoc();
       }
-      const offs = [];
-      if (ctx.bus) { ctx.bus.on('kb:changed', async () => { await loadMeta(); if (S.tab === 'home') renderHome(); else if (S.tab === 'library') await loadLib(); }); ctx.bus.on('data:reset', async () => { await loadMeta(); render(); }); }
+      if (ctx.bus) {
+        ctx.bus.on('kb:changed', async () => {
+          if (current !== handle) return;
+          preview = null; ++seq; await loadMeta();
+          if (current !== handle) return;
+          if (S.tab === 'home') renderHome(); else if (S.tab === 'library') await loadLib();
+        });
+        ctx.bus.on('data:reset', async () => {
+          if (current !== handle) return;
+          clearScope(); ++seq; await loadMeta(); if (current === handle) render();
+        });
+      }
 
       /* ===================== 操作员动作（AI 替你操作） ===================== */
       const textOf = (s) => (typeof s === 'string' ? s : (s && (s.text || s.q)) || '');
       async function typeAndAsk(q, run) {
-        go('home'); await sleep(60);
-        if (run) { await run.step(1); await run.fill('[data-op="kb.q"]', q); } else { S.q = q; body.querySelector('[data-op="kb.q"]').value = q; }
-        S.q = q; runSearch();
-        if (run) await run.click('[data-op="kb.ask"]'); else runAsk();
-        if (run && !S.asking && !S.answer) runAsk();
-        if (run) { await run.step(2); await run.wait(() => S.answer && !S.asking, 8000); await run.step(3); await run.highlight('[data-op="kb.answer"]'); }
-        else { for (let i = 0; i < 80 && (!S.answer || S.asking); i++) await sleep(100); }
+        if (!run) return handle.chatAsk(q);
+        go('home');
+        await run.step(1); await run.fill('[data-op="kb.q"]', q);
+        await run.click('[data-op="kb.ask"]');
+        await run.step(2); await run.wait(() => S.answer && !S.asking, 8000);
+        await run.step(3);
+        if (!S.answer.error) await run.highlight('[data-op="kb.answer"]');
         return S.answer;
       }
       const handle = {
@@ -504,8 +542,7 @@
         followScope,
         async chatAsk(q) {
           go('home'); S.q = q; body.querySelector('[data-op="kb.q"]').value = q;
-          runSearch();
-          const answer = await runAsk();
+          const answer = await submit();
           if (!answer || answer.error) throw Error(answer?.error || '提问范围已改变，请重新提问。');
           return answer;
         },
@@ -517,7 +554,7 @@
             const a = await typeAndAsk(q, run);
             if (!run) return a;
             if (!a || a.error) return run.fail((a && a.error) || '没有拿到回答');
-            if (a.notFound) return run.done('知识库里没有找到能回答这个问题的原文，我没有编答案。可以导入相关资料后再问。', [{ label: '导入资料', say: '打开知识库导入' }]);
+            if (a.notFound) return run.done(a.message || a.answer, [{ label: '导入资料', say: '打开知识库导入' }]);
             const c = a.citations[0]; await run.step(4);
             if (c) await run.highlight('[data-cite-row="1"]', '点出处可直达原文高亮段落');
             run.done(firstPara(a.answer) || `找到 ${a.citations.length} 处原文依据：${(c && c.snippet || '').slice(0, 60)}…`, [{ label: '看原文', say: `打开${(c && c.title || '').slice(0, 16)}原文` }, { label: '写进公文', say: `根据《${(c && c.title || '').slice(0, 18)}》起草一份告知企业的通知` }], { cites: window.JKShell && JKShell.citesOf ? JKShell.citesOf(a) : [] });
@@ -579,8 +616,22 @@
       }
 
       current = handle;
-      (async () => { await loadMeta(); render(); const p = ctx.params || {}; if (pendingOpen) { const po = pendingOpen; pendingOpen = null; go('doc', po); } else if (p.id) go('doc', p); else if (p.file) handle.actions.intake({ file: p.file }); else if (p.q) go('home', { q: p.q, ask: true }); else if (p.route) go(p.route, p); })();
-      render();
+      const p = ctx.params || {};
+      const openingQuestion = p.q && !pendingOpen && !p.id && !p.file;
+      if (openingQuestion) go('home', { q: p.q, ask: true }); else render();
+      (async () => {
+        await loadMeta(); if (current !== handle) return;
+        const input = body.querySelector('[data-op="kb.q"]');
+        const selection = input && input === document.activeElement && [input.selectionStart, input.selectionEnd];
+        render();
+        if (selection && S.tab === 'home') {
+          const next = body.querySelector('[data-op="kb.q"]'); next.focus(); next.setSelectionRange(...selection);
+        }
+        if (pendingOpen) { const po = pendingOpen; pendingOpen = null; go('doc', po); }
+        else if (p.id) go('doc', p);
+        else if (p.file) handle.actions.intake({ file: p.file });
+        else if (!openingQuestion && p.route) go(p.route, p);
+      })();
       return handle;
     },
   });
