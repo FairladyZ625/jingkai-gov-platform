@@ -119,6 +119,7 @@ def install(app, *, demo=None, clock=time.time):
         raise RuntimeError('经开区实例须关闭 HAIKNOW_DEMO_LOGIN，演示模式请使用 JKQ_DEMO_MODE')
     if demo is None:
         demo = os.environ.get('JKQ_DEMO_MODE') == '1'
+    deployed = os.environ.get('JKQ_DEPLOY_RUNTIME') == '1'
 
     config = yaml.safe_load((platform.config_dir / 'roles.yaml').read_text(encoding='utf-8'))
     demo_users = []
@@ -289,6 +290,11 @@ def install(app, *, demo=None, clock=time.time):
 
         @router.put('/api/v1/me/role')
         def set_role(body: RoleBody, request: Request):
+            if deployed:
+                # 部署实例的演示须验证目标账号口令，不能在原会话内直接改授权。
+                user = current_user(request)
+                store.audit('platform', user.id, 'permission.denied', {'operation': 'auth.role'})
+                raise AuthError(403, 'FORBIDDEN', '部署实例不能直接切换角色')
             with store._lock, store._db as db:
                 store.begin_write()
                 user = current_user(request)

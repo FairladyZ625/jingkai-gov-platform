@@ -73,6 +73,7 @@
   "intents": [
     {
       "id": "document.draft",
+      "requires": "operate",
       "action": "draft",
       "examples": [
         "起草一份数据券申报延期通知",
@@ -115,6 +116,7 @@
     },
     {
       "id": "document.fix",
+      "requires": "operate",
       "action": "fix",
       "examples": [
         "一键修正核查出的问题",
@@ -133,6 +135,7 @@
     },
     {
       "id": "document.polish",
+      "requires": "operate",
       "action": "polish",
       "examples": [
         "润色一下，更正式些",
@@ -170,6 +173,7 @@
     },
     {
       "id": "document.submit",
+      "requires": "operate",
       "action": "submit",
       "examples": [
         "送审签",
@@ -188,6 +192,7 @@
     },
     {
       "id": "document.approve",
+      "requires": "approve",
       "action": "approve",
       "examples": [
         "审签通过",

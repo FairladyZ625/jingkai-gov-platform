@@ -120,7 +120,7 @@
   }
   async function start(from = 0) {
     const segs = window.JK_DEMO_SCRIPT || [];
-    if (activeRun || !segs[from] || document.querySelector('[role="dialog"]')) return;
+    if (activeRun || !JKShell.canPresentDemo() || !segs[from] || document.querySelector('[role="dialog"]')) return;
     const run = { theme: JKShell.theme(), segs, waiters: new Set(), controller: new AbortController() };
     activeRun = run;
     D.i = from; D.paused = D.skip = false;
@@ -166,5 +166,6 @@
     wait(activeRun, CFG.demoReadMs, ctl.signal).then(pick, () => {});
     return () => ctl.abort();
   }
-  window.JKDemo = { start, stop, state: D, scheduleChoice };
+  window.JKDemo = { start, stop, state: D, scheduleChoice,
+    ownsSwitch: signal => !!signal && activeRun?.controller.signal === signal };
 })();

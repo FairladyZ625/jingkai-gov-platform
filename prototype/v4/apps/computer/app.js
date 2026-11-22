@@ -15,11 +15,11 @@
       perms: { view: '查看操作记录', operate: '发起电脑操作任务', approve: '—', admin: '管理系统授权' },
       tools: [{ name: 'computer.start', desc: '让 AI 去某个系统完成任务（提交前停下）', params: { task: 'apply|stats|notice|status', ent: 'string' } }],
       intents: [
-        { id: 'computer.apply', examples: ['帮我把纸鹿二号智驾的申报表填了', '去政策兑现平台帮折页五号大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
-        { id: 'computer.stats', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
-        { id: 'computer.notice', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
-        { id: 'computer.status', examples: ['查一下纸鹿二号智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
-        { id: 'computer.run', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
+        { id: 'computer.apply', requires: 'operate', examples: ['帮我把纸鹿二号智驾的申报表填了', '去政策兑现平台帮折页五号大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
+        { id: 'computer.stats', requires: 'operate', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
+        { id: 'computer.notice', requires: 'operate', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
+        { id: 'computer.status', requires: 'operate', examples: ['查一下纸鹿二号智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
+        { id: 'computer.run', requires: 'operate', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
       ],
       starters: ['帮我把纸鹿二号智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
       demo: [

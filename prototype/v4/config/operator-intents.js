@@ -8,7 +8,8 @@ window.JK_PLATFORM_INTENTS = [
     run: async (s, run, hk) => {
       const def = Object.values(JK.registry).find((d) => [d.manifest.name, d.manifest.short, d.manifest.id].some((n) => n && s.text.includes(n))) || Object.values(JK.registry).find((d) => s.text.includes(d.manifest.name.slice(0, 2)));
       if (!def) return run.done('没找到这个应用。左侧“应用”里可以直接点开。');
-      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, (def.manifest.starters || []).slice(0, 2).map((t) => ({ label: t, say: t })));
+      if (!hk.canViewApp(def.manifest.id)) return run.fail('当前身份没有这个应用的查看权限');
+      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, hk.startersFor(def.manifest.id).slice(0, 2).map((t) => ({ label: t, say: t })));
     } },
   { id: 'inbox', title: '打开收件箱', examples: ['看看有什么要我审签的', '打开收件箱', '我有哪些待办'], keywords: ['收件箱', '要我审', '待我', '审签', '待办事项'], plan: ['打开收件箱', '列出待我处理'],
     run: async (s, run, hk) => { await hk.openBuiltin('inbox'); await run.step(1); const n = hk.inboxCount(); run.done(n ? `有 **${n} 件**等你处理，已在右侧列出。` : '收件箱是空的，暂时没有要你处理的事。'); } },

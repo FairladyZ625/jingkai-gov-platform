@@ -31,11 +31,11 @@
         { name: 'skills.create', desc: '用一句话起草一个新技能', params: { text: 'string' } },
       ],
       intents: [
-        { id: 'skills.create', examples: ['帮我做一个技能：走访后把记录整理成台账更新建议', '做个技能，核对数据券申报材料齐不齐', '我想做一个周报技能'], keywords: ['做技能', '做个技能', '做一个技能', '造技能', '制作技能', '新建技能', '创建技能'], action: 'create', plan: ['打开技能中心', 'AI 起草技能', '用示例试运行', '选择分享范围'] },
-        { id: 'skills.run', examples: ['用实体书店政策预判看看书香里', '运行处室周报整理', '用技能核对数据券材料'], keywords: ['用技能', '运行技能', '技能'], slots: { ent: 'enterprise' }, action: 'run', plan: ['找到技能', '填好要用的信息', '运行技能', '整理结果'] },
-        { id: 'skills.share', examples: ['把处室周报整理分享给企业服务处', '把我的技能分享给王敏'], keywords: ['分享技能', '共享技能', '分享给'], action: 'share', plan: ['找到技能', '选择分享范围', '确认分享'], confirm: true },
+        { id: 'skills.create', requires: 'operate', examples: ['帮我做一个技能：走访后把记录整理成台账更新建议', '做个技能，核对数据券申报材料齐不齐', '我想做一个周报技能'], keywords: ['做技能', '做个技能', '做一个技能', '造技能', '制作技能', '新建技能', '创建技能'], action: 'create', plan: ['打开技能中心', 'AI 起草技能', '用示例试运行', '选择分享范围'] },
+        { id: 'skills.run', requires: 'operate', examples: ['用实体书店政策预判看看书香里', '运行处室周报整理', '用技能核对数据券材料'], keywords: ['用技能', '运行技能', '技能'], slots: { ent: 'enterprise' }, action: 'run', plan: ['找到技能', '填好要用的信息', '运行技能', '整理结果'] },
+        { id: 'skills.share', requires: 'operate', examples: ['把处室周报整理分享给企业服务处', '把我的技能分享给王敏'], keywords: ['分享技能', '共享技能', '分享给'], action: 'share', plan: ['找到技能', '选择分享范围', '确认分享'], confirm: true },
         { id: 'skills.browse', examples: ['打开技能中心', '有哪些技能可以用'], keywords: ['技能中心', '技能广场', '有哪些技能'], action: 'browse', plan: ['打开技能中心'] },
-        { id: 'skills.review', examples: ['审核技能上架申请'], keywords: ['技能审核', '上架审核', '审核技能'], action: 'review', plan: ['打开审核列表', '查看申请'] },
+        { id: 'skills.review', requires: 'approve', examples: ['审核技能上架申请'], keywords: ['技能审核', '上架审核', '审核技能'], action: 'review', plan: ['打开审核列表', '查看申请'] },
       ],
       starters: ['帮我做一个技能：走访后把记录整理成台账更新建议', '用实体书店政策预判看看书香里'],
       demo: [

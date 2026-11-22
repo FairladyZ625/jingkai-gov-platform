@@ -31,7 +31,7 @@ function player(script, shell = {}, elements = {}) {
       querySelectorAll: () => [], querySelector: sel => elements[sel] || null },
     JK: { h: () => ({ querySelector: () => ({}), remove() { bar = null; } }), esc: String, icon: () => '',
       sleep: ms => new Promise(resolve => timeout(resolve, ms)) },
-    JKShell: { theme: () => 'light', setTheme() {}, S: { me: { username: 'original' } },
+    JKShell: { canPresentDemo: () => true, theme: () => 'light', setTheme() {}, S: { me: { username: 'original' } },
       send(text) { sent.push(text); }, ...shell },
     JK_CONFIG: { demoSpeed: 8, demoReadMs: 2400 }, JKOp: {}, JK_DEMO_SCRIPT: script, console };
   scope.window = scope;
