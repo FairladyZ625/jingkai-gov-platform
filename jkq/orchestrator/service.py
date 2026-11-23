@@ -1,5 +1,6 @@
 """按规则与模型执行一轮对话，使用同一个按请求人授权的工具目录。"""
 
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -206,6 +207,17 @@ def _tool_message(result: dict, call_id: str) -> dict:
     return {"role": "tool", "tool_call_id": call_id, "content": encode(result)}
 
 
+def _accepts_on_meta(gateway: ModelGateway) -> bool:
+    try:
+        parameters = inspect.signature(gateway).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD or param.name == "on_meta"
+        for param in parameters
+    )
+
+
 async def respond(
     request: Request, user, *, text: str, app: str | None, model: str | None,
     history: list[dict], gateway: ModelGateway | None, bridge: ToolBridge | None,
@@ -288,6 +300,7 @@ async def respond(
             await on_event("delta", {"text": text})
             reply.deltas.append(text)
 
+    pass_meta = _accepts_on_meta(gateway)
     for round_number in range(MAX_ROUNDS):
         prior_deltas = len(reply.deltas)
         announced: tuple[str | None, str | None] = (None, None)
@@ -300,11 +313,12 @@ async def respond(
                 await on_meta(*announced)
 
         try:
+            extra = {"on_meta": announce if on_meta is not None else None} if pass_meta else {}
             turn = await gateway(
                 request, messages=list(messages), tools=sorted(directory),
                 model=model, classification=classification,
                 on_delta=delta if small_talk and on_event is not None else None,
-                on_meta=announce if on_meta is not None else None,
+                **extra,
             )
             if not all(isinstance(text, str) for text in turn.deltas):
                 raise ValueError("模型回复的文本增量无效")

@@ -760,3 +760,32 @@ def test_concurrent_turns_preserve_pairs_and_finalize_independently(tmp_path):
     }
     assert observed == {("甲", "甲的回复", False), ("乙", "乙的回复", False)}
     assert len(store.platform.audit_list("conversations")) == 7
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_gateway_without_on_meta_parameter_still_handles_sync_and_stream(connected, stream):
+    client, url, bridge, _ = connected
+
+    async def legacy_gateway(request, *, messages, tools, model, classification, on_delta=None):
+        if messages[-1]["role"] == "tool":
+            return ModelTurn(deltas=("工具结果已生成。",), model="legacy-local", route_note="旧签名直连")
+        return ModelTurn(calls=(ToolCall("policy.match", {"entId": "E001"}),))
+
+    client.app.state.chat_gateway = legacy_gateway
+    response = client.post(url, json={"text": "看看相关政策支持", "stream": stream})
+    assert response.status_code == 200
+    assert bridge.calls == [("policy", "policy.match", {"entId": "E001"})]
+    if stream:
+        events = list(_events(response.text))
+        assert [name for name, _ in events] == ["meta", "tool", "meta", "delta", "card", "done"]
+        assert events[2][1]["model"] == "legacy-local"
+        assert events[2][1]["routeNote"] == "旧签名直连"
+        assert events[-1][1]["reply"]["content"] == "查询结果见卡片。"
+        assert events[-1][1]["reply"]["model"] == "legacy-local"
+        assert events[-1][1]["reply"]["routeNote"] == "旧签名直连"
+    else:
+        reply = response.json()["reply"]
+        assert reply["content"] == "查询结果见卡片。"
+        assert reply["toolCalls"] == [{"tool": "policy.match", "args": {"entId": "E001"}, "status": "ok"}]
+        assert reply["model"] == "legacy-local"
+        assert reply["routeNote"] == "旧签名直连"
