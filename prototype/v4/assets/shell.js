@@ -112,15 +112,17 @@
         ok: async (dialog) => {
           if (busy) return false;
           const input = dialog.querySelector('[data-op="switch.password"]');
+          const okBtn = dialog.querySelector('[data-ok]');
           if (!input.value) {
             dialog.querySelector('[data-op="switch.error"]').textContent = '请输入口令，或取消以保留当前身份';
             input.focus(); return false;
           }
-          busy = true;
+          busy = true; input.disabled = true; if (okBtn) okBtn.disabled = true;
           const request = { username: account.username, password: input.value }; input.value = '';
           try {
             await API.auth.login(request); accepted = true;
           } catch (error) {
+            input.disabled = false; if (okBtn) okBtn.disabled = false;
             dialog.querySelector('[data-op="switch.error"]').textContent = '口令不正确或登录失败，当前会话已保留';
             input.focus(); return false;
           } finally { request.password = ''; busy = false; }

@@ -2,8 +2,9 @@
 from contextlib import ExitStack
 import time
 
-import httpx
 import pytest
+
+httpx = pytest.importorskip("httpx")
 
 from tests.demo_http.password_ui import login
 

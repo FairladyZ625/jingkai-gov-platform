@@ -245,6 +245,7 @@ def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeyp
         expected_usage = {"input": 8, "output": 5} if stream_usage else {"input": None, "output": None}
         assert result[3][1]["usage"] == expected_usage
         assert chat_audit(service) == [{"model": "cloud-model", "provider": "cloud",
+                                        "providerKind": "cloud",
                                         "status": "success", "usage": expected_usage}]
         assert upstream.closed
 
@@ -440,7 +441,7 @@ def test_role_disconnect_and_failed_finish(client_factory, monkeypatch, finish):
         assert [e for e, _ in sequence] == ["meta", "error"]
         assert sequence[1][1]["code"] == "PROVIDER_ERROR"
         assert "sensitive-upstream-detail" not in response.text
-        assert chat_audit(service) == [{"provider": "cloud", "model": "cloud-model",
+        assert chat_audit(service) == [{"provider": "cloud", "providerKind": "cloud", "model": "cloud-model",
                                         "status": "provider_error", "usage": {"input": None, "output": None}}]
 
 
@@ -456,7 +457,7 @@ def test_provider_400_is_permanent(client_factory, monkeypatch, stream):
         assert monotonic() - started < 30
         assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
         assert "sensitive-upstream-detail" not in response.text
-        assert chat_audit(service) == [{"provider": "cloud", "model": "cloud-model",
+        assert chat_audit(service) == [{"provider": "cloud", "providerKind": "cloud", "model": "cloud-model",
                                         "status": "provider_error", "usage": {"input": None, "output": None}}]
 
 

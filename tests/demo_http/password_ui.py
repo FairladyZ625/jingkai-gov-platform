@@ -10,10 +10,17 @@ def login(page, username, password):
 
 
 def answer_switch(page, password):
-    field = page.locator('[data-op="switch.password"]')
+    field = page.locator('[data-op="switch.password"]:not([disabled])')
     if field.is_visible():
         field.fill(password)
-        page.locator('[role="dialog"] [data-ok]').click()
+        page.locator('[role="dialog"] [data-ok]:not([disabled])').click()
+        page.wait_for_function(
+            """() => {
+                const field = document.querySelector('[data-op="switch.password"]');
+                const err = document.querySelector('[data-op="switch.error"]');
+                return !field || !!(err && err.textContent);
+            }"""
+        )
 
 
 def wait_segment(page, index, password, timeout=90):

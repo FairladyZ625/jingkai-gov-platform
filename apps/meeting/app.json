@@ -66,6 +66,7 @@
       "id": "meeting.summarize",
       "action": "summarize",
       "examples": [
+        "把园区服务清单的合成录音整理成纪要",
         "整理一下文化企业座谈会的纪要",
         "看看座谈会纪要",
         "上次座谈会说了什么"
