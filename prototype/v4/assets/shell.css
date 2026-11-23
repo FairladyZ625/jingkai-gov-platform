@@ -144,6 +144,8 @@ body.demo-on #root{padding-top:44px}
 .cmdk{top:14vh;width:min(600px,92vw)} .cmdk .ov-h{display:none} .cmdk .ov-b{padding:0;gap:0} .cmdk .ov-f{display:none}
 .cmdk-in{display:flex;align-items:center;gap:10px;height:52px;padding:0 16px;border-bottom:1px solid var(--border)} .cmdk-in input{flex:1;border:0;background:transparent;outline:none;font-size:var(--fs-md)}
 .cmdk-in .ico{color:var(--text-3)}
+.cmdk-in input{min-width:0}
+.cmdk-in [data-x]{flex:none;min-width:40px;min-height:40px}
 .cmdk-list{max-height:52vh;overflow:auto;padding:6px}
 .cmdk-list .mh{padding:8px 10px 4px;font-size:var(--fs-xs);font-weight:var(--fw-m);color:var(--text-3)}
 .cmdk-list .mi{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border-radius:var(--r-md);cursor:pointer;font-size:var(--fs-sm)} .cmdk-list .mi.on,.cmdk-list .mi:hover{background:var(--hover)}
@@ -153,6 +155,13 @@ body.demo-on #root{padding-top:44px}
 /* 演示条 */
 .demobar{position:fixed;left:0;right:0;top:0;height:44px;z-index:110;display:flex;align-items:center;gap:12px;padding:0 10px 0 14px;background:var(--bg-side);border-bottom:1px solid var(--border);font-size:var(--fs-sm)}
 .demobar .tag{height:24px}
+.demobar[hidden]{display:none}
+@media(max-width:700px){
+  body.demo-on #root{padding-top:88px}
+  .demobar{height:88px;flex-wrap:wrap;align-content:center;gap:4px 8px}
+  .demobar .demo-caption{order:1;flex:0 0 100%;white-space:normal;line-height:1.25}
+  .demobar .tag,.demobar .prog{display:none}
+}
 .demobar .prog{width:120px;flex:none} .demobar .seg-t{color:var(--text-3);white-space:nowrap;flex:none;font-variant-numeric:tabular-nums}
 .demo-caption{flex:1;min-width:0;font-weight:var(--fw-m);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 

@@ -8,7 +8,8 @@ window.JK_PLATFORM_INTENTS = [
     run: async (s, run, hk) => {
       const def = Object.values(JK.registry).find((d) => [d.manifest.name, d.manifest.short, d.manifest.id].some((n) => n && s.text.includes(n))) || Object.values(JK.registry).find((d) => s.text.includes(d.manifest.name.slice(0, 2)));
       if (!def) return run.done('没找到这个应用。左侧“应用”里可以直接点开。');
-      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, (def.manifest.starters || []).slice(0, 2).map((t) => ({ label: t, say: t })));
+      if (!hk.canViewApp(def.manifest.id)) return run.fail('当前身份没有这个应用的查看权限');
+      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, hk.startersFor(def.manifest.id).slice(0, 2).map((t) => ({ label: t, say: t })));
     } },
   { id: 'inbox', title: '打开收件箱', examples: ['看看有什么要我审签的', '打开收件箱', '我有哪些待办'], keywords: ['收件箱', '要我审', '待我', '审签', '待办事项'], plan: ['打开收件箱', '列出待我处理'],
     run: async (s, run, hk) => { await hk.openBuiltin('inbox'); await run.step(1); const n = hk.inboxCount(); run.done(n ? `有 **${n} 件**等你处理，已在右侧列出。` : '收件箱是空的，暂时没有要你处理的事。'); } },
@@ -32,5 +33,5 @@ window.JK_PLATFORM_INTENTS = [
   { id: 'demo', title: '一键演示', examples: ['演示一遍', '一键演示', '给我演示所有功能'], keywords: ['演示'], plan: ['准备演示'],
     run: async (s, run, hk) => { run.done('好，开始一键演示。'); setTimeout(() => hk.startDemo(), 300); } },
   { id: 'reset', title: '重置演示数据', examples: ['重置演示数据', '恢复初始数据'], keywords: ['重置', '恢复初始'], plan: ['等你确认', '重置数据'],
-    run: async (s, run, hk) => { const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
+    run: async (s, run, hk) => { if (window.JKHttp.mode() !== 'mock') return run.fail('部署实例不能从网页重置，请联系宿主管理员'); const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
 ];

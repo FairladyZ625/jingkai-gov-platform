@@ -20,7 +20,7 @@
       accepts: [{ kind: '企业资料', ext: ['xlsx', 'xls', 'csv', 'pdf', 'doc', 'docx', 'txt', 'jpg', 'png'], match: /企业|台账|走访|名单|营业执照|公司|有限/ }],
       intents: [
         { id: 'enterprise.find', action: 'find', examples: ['查一下纸鹿二号智驾', '打开书香里文化的一企一档', '纸鹿二号智驾走访前摘要'], keywords: ['查一下', '一企一档', '档案', '摘要', '企业情况'], slots: { ent: 'enterprise' }, plan: ['打开企业管理', '找到企业', '打开一企一档', '生成 30 秒速览'] },
-        { id: 'enterprise.visit', action: 'visit', examples: ['给书香里加一条走访记录', '记一次走访', '整理书香里的走访'], keywords: ['走访', '记录走访', '拜访'], slots: { ent: 'enterprise' }, plan: ['打开一企一档', '填写走访记录', 'AI 提取更新建议', '等你确认写入'] },
+        { id: 'enterprise.visit', requires: 'operate', action: 'visit', examples: ['给书香里加一条走访记录', '记一次走访', '整理书香里的走访'], keywords: ['走访', '记录走访', '拜访'], slots: { ent: 'enterprise' }, plan: ['打开一企一档', '填写走访记录', 'AI 提取更新建议', '等你确认写入'] },
         { id: 'enterprise.filter', action: 'filter', examples: ['打开企业台账筛选高新企业', '台账里只看人工智能企业', '列出所有人工智能企业'], keywords: ['台账', '筛选', '列出', '只看'], plan: ['打开台账', '按条件筛选', '报出数量'] },
         { id: 'enterprise.alerts', action: 'alerts', examples: ['资质快到期的企业有哪些', '哪些企业很久没走访了', '超过 90 天没走访的重点企业', '哪些企业好久没去了', '有哪些企业很久没去看了'], keywords: ['到期', '没走访', '久未', '提醒', '预警', '好久没去', '很久没去', '没去过', '多久没去', '没去看', '好久没走访'], plan: ['打开企业管理', '查看提醒', '列出企业'] },
         { id: 'enterprise.issues', action: 'issues', examples: ['看看企业诉求办理进度', '打开诉求看板'], keywords: ['诉求', '看板', '办理进度'], plan: ['打开诉求看板', '汇总各状态'] },
@@ -37,6 +37,8 @@
     mount(el, ctx) {
       const { ui, api, perms } = ctx; const E = api.enterprise; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canOp = perms.can('operate') && !perms.isPartner;
+      const viewPolicy = () => perms.can('view', 'policy');
+      const matchPolicy = () => viewPolicy() && perms.can('operate', 'policy');
       const S = { tab: 'flow', step: 0, entId: null, prof: null, ptab: 'base', alert: '', q: '', visit: null, notes: '', vtype: C.visitTypes[0], decided: {}, issueId: null, lq: '', ltag: '', lind: '', lalert: false, lsort: 'lastVisit', sel: new Set(), brief: null };
       let ENTS = [], ALERTS = [], ISSUES = [], FACETS = { industries: [], tags: [], servicers: [] }, loaded = false, loadErr = null;
       const $ = (s) => el.querySelector(s);
@@ -54,8 +56,21 @@
       }
       async function refreshLists() { const [l, a, i] = await Promise.all([E.list({ sort: 'lastVisit' }), E.alerts(), E.issues()]); ENTS = l.items; ALERTS = a.items; ISSUES = i.items; }
       async function openProfile(id) { S.entId = id; S.prof = null; S.brief = null; S.step = 1; S.ptab = 'base'; S.visit = null; S.decided = {}; body(); try { S.prof = await E.get(id); } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; } body(); briefPolicies(); }
-      async function briefPolicies() { try { if (!perms.can('view', 'policy') || !api.policy) return; const r = await api.policy.match({ entId: S.entId }); S.brief = r.summary; const b = $('#ebpol'); if (b) b.innerHTML = polLine(); } catch (e) { /* 政策匹配不可用时不显示 */ } }
-      const polLine = () => (S.brief ? `<b class="num">${S.brief.ok}</b> 项可核对${S.brief.check ? ` · ${S.brief.check} 项待确认` : ''} <button class="link" data-act="toPolicy">去看 →</button>` : '<span class="meta">核对中…</span>');
+      async function briefPolicies() {
+        if (!matchPolicy()) return;
+        const entId = S.entId;
+        let summary;
+        try { summary = (await api.policy.match({ entId })).summary; } catch { summary = false; }
+        if (S.entId !== entId) return;
+        S.brief = summary;
+        const b = $('#ebpol'); if (b) b.innerHTML = polLine();
+      }
+      function polLine() {
+        if (!viewPolicy()) return '当前角色没有政策事项库查看权限';
+        if (!matchPolicy()) return '仅可查看政策事项库，不能按企业匹配。';
+        if (S.brief === false) return '暂时无法核对';
+        return S.brief ? `<b class="num">${S.brief.ok}</b> 项可核对${S.brief.check ? ` · ${S.brief.check} 项待确认` : ''} <button class="link" data-act="toPolicy">去看 →</button>` : '<span class="meta">核对中…</span>';
+      }
 
       /* ---------- 框架 ---------- */
       function render() {
@@ -111,7 +126,7 @@
             </div></div>
           <div class="seg" style="margin:var(--s4) 0 var(--s3)">${C.profileTabs.map(([k, l]) => `<button class="${S.ptab === k ? 'on' : ''}" data-ptab="${k}" data-op="enterprise.ptab-${k}">${esc(l)}</button>`).join('')}</div>
           <div class="card" id="eptab">${profileTab(r)}</div>`;
-        foot(back(), `<button class="btn" data-act="toPolicy" data-op="enterprise.to-policy">能申请哪些政策</button>${canOp ? `<button class="btn primary" data-act="toVisit" data-op="enterprise.to-visit">${icon('edit')}记一次走访</button>` : ''}`);
+        foot(back(), `${viewPolicy() ? `<button class="btn" data-act="toPolicy" data-op="enterprise.to-policy">${matchPolicy() ? '能申请哪些政策' : '查看政策事项库'}</button>` : ''}${canOp ? `<button class="btn primary" data-act="toVisit" data-op="enterprise.to-visit">${icon('edit')}记一次走访</button>` : ''}`);
       }
       // 外部协作者拿到的是后端打码投影：未返回的字段不渲染原值，联系人、营收按无权查看显示。
       const dash = (v) => (v == null || v === '' ? '<span class="meta">—</span>' : esc(v));
@@ -267,7 +282,7 @@
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.entId ? `${entOf(S.entId).short}最近有什么情况？` : '哪些企业很久没走访了？');
         if (a === 'newEnt') return newEntModal();
-        if (a === 'toPolicy') return ctx.nav.open('policy', 'match', { entId: S.entId, run: true });
+        if (a === 'toPolicy' && viewPolicy()) return matchPolicy() ? ctx.nav.open('policy', 'match', { entId: S.entId, run: true }) : ctx.nav.open('policy', 'items');
         if (a === 'toVisit') { S.step = 2; S.visit = null; body(); return; }
         if (a === 'sample') { S.notes = C.visitSamples[S.entId] || C.visitSamples._default; step2(); return; }
         if (a === 'voice') return voiceInput();
@@ -295,7 +310,11 @@
         async find({ ent, text } = {}, run) {
           await ready(); const id = resolveEnt(ent, text); if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (run) await run.step(1); await opOpen(id, run);
-          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结'); run.done(`${e.short}${e.example ? "（**示例企业**）" : ""}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }, ...(canOp ? [{ label: '记一次走访', say: `给${e.short}加一条走访记录` }] : [])]); }
+          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结');
+            const next = matchPolicy() ? [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }] : viewPolicy() ? [{ label: '查看政策事项库（只读）', open: 'policy', route: 'items' }] : [];
+            if (canOp) next.push({ label: '记一次走访', say: `给${e.short}加一条走访记录` });
+            run.done(`${e.short}${e.example ? "（**示例企业**）" : ""}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, next);
+          }
           return S.prof;
         },
         async visit({ ent, text, notes } = {}, run) {

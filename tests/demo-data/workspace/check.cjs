@@ -65,7 +65,7 @@ async function check() {
   const api = ctx.JKAPI;
   api.latency = 0;
   ctx.JKHttp = api;
-  await ctx.JKOp.loadDict();
+  await ctx.JKOp.loadDict(app => app === 'enterprise');
   for (const e of rows) {
     for (const n of [e.name, e.short]) assert.equal(ctx.JKOp.understand('查一下' + n).slots.ent.id, e.id, n);
   }

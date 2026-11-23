@@ -17,7 +17,7 @@ def test_one_module_uses_mock(server):
                                      data={"username": "wangmin", "password": server.password})
         assert response.ok
         assert page.evaluate("JK_CONFIG.api.mode") == "http"
-        # 让真实适配器把登录角色同步到浏览器 mock，再仅观察这两次业务调用。
+        # 会话仍由 HTTP 提供；模拟模块另行取当前 /me 授权，不缓存会话口令。
         page.evaluate("JKHttp.get('/api/v1/auth/session')")
         paths = []
         page.on("request", lambda req: paths.append(urlsplit(req.url).path))
@@ -31,9 +31,16 @@ def test_one_module_uses_mock(server):
         }""")
         assert observed == {"mock": ["/api/apps/meeting/meetings"], "meetings": True, "username": "wangmin"}
         assert "/api/v1/me" in paths and "/api/apps/meeting/meetings" not in paths
+        # 直接更换服务器 cookie 而不刷新页面；不能继续沿用上一位成员的模拟授权。
+        assert page.request.post(server.url + "/api/v1/auth/login",
+                                 data={"username": "hejun", "password": server.password}).ok
+        assert page.evaluate("JKApi.meeting.list().then(() => 200, e => e.status)") == 403
+        assert page.request.post(server.url + "/api/v1/auth/logout").ok
+        assert page.evaluate("JKApi.meeting.list().then(() => 200, e => e.status)") == 401
+        assert "/api/apps/meeting/meetings" not in paths
 
 
-@pytest.mark.parametrize("server", [()], indirect=True)
+@pytest.mark.parametrize("server", ["skills-protocol"], indirect=True)
 def test_browser_walks_twelve_segments(server):
     with sync_playwright() as engine, engine.chromium.launch() as browser:
         page = browser.new_page()
@@ -79,6 +86,8 @@ def test_browser_walks_twelve_segments(server):
                 if (path.startsWith('/api/') && reply.ok) {
                     const json = await reply.clone().json().catch(() => ({}));
                     demoNetwork.push({segment, path, reviewId: json.review?.id,
+                        trialDone: json.job?.trial && json.job.status === 'done' && json.job.result?.model === 'ci-skills-protocol',
+                        skillId: json.item?.id, skillStatus: json.item?.status,
                         draftId: json.review?.ref, approved: json.item?.decision?.decision});
                 }
                 return reply;
@@ -96,6 +105,15 @@ def test_browser_walks_twelve_segments(server):
             if pattern:
                 paths = page.evaluate("i => demoNetwork.filter(r => r.segment === i).map(r => r.path)", index)
                 assert any(re.fullmatch(pattern, path) for path in paths), f"{title} 缺少 HTTP 业务回执"
+                if title == "技能中心":
+                    records = page.evaluate("i => demoNetwork.filter(r => r.segment === i)", index)
+                    assert any(r.get("trialDone") for r in records), "未取得真实试运行任务的完成回执"
+                    published = next((r for r in records if r["path"].endswith("/publish")
+                                      and r.get("skillStatus") == "published"), None)
+                    assert published and any(r["path"] == "/api/v1/skills" and r.get("skillId") == published["skillId"]
+                                             and r.get("skillStatus") == "draft" for r in records), "缺同一草稿的保存与发布回执"
+                    saved = page.request.get(server.url + "/api/v1/skills/" + published["skillId"])
+                    assert saved.ok and saved.json()["item"]["status"] == "published"
         assert page.evaluate("JKDemo.state.i") == 12 and not page.evaluate("demoMockCalls")
         assert set(page.evaluate("demoThemes")) >= {"light", "dark"}
         assert page.evaluate("JKShell.S.me.username") == "wangmin"

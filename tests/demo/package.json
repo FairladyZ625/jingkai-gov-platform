@@ -1,6 +1,6 @@
 {
   "name": "jingkai-demo-regression",
   "private": true,
-  "scripts": { "test": "node --test skills-models.test.cjs && node run.cjs && node --test errors.test.cjs" },
+  "scripts": { "test": "node --test playback.test.cjs report-ux.test.cjs skills-models.test.cjs && node run.cjs && node --test errors.test.cjs" },
   "devDependencies": { "playwright": "1.58.2" }
 }

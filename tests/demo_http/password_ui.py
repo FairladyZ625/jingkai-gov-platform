@@ -6,7 +6,7 @@ def login(page, username, password):
     page.locator('[data-op="login.user"]').fill(username)
     page.locator('[data-op="login.pass"]').fill(password)
     page.locator('[data-op="login.go"]').click()
-    page.locator('#btn-demo').wait_for()
+    page.locator('[data-op="rail.cmdk"]').wait_for()
 
 
 def answer_switch(page, password):

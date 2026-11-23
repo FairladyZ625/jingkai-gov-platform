@@ -15,6 +15,25 @@
   const can = (app, action) => { const g = S.grants || {}; const acts = [...(g['*'] || []), ...(g[app] || [])]; return acts.includes('admin') || acts.includes(action || 'view'); };
   const isAdmin = () => (S.grants['*'] || []).includes('admin');
   const roleName = () => (S.role && S.role.name) || '';
+  const offlineDemo = () => H.mode() === 'mock' && window.location.protocol === 'file:';
+  const canPresentDemo = () => !!S.me && (offlineDemo() ||
+    (H.mode() === 'http' && ['admin', 'leader', 'member'].includes(S.role?.id)));
+  function canIntent(it) {
+    if (it.needsAdmin && !isAdmin()) return false;
+    if (it.platform) {
+      if (it.id === 'role' || it.id === 'demo') return canPresentDemo();
+      if (it.id === 'reset') return offlineDemo();
+      return true;
+    }
+    return !!JK.registry[it.app] && can(it.app, 'view') && (!it.requires || can(it.app, it.requires));
+  }
+  const homeSuggestions = () => (CFG.homeSuggestions || []).filter(s =>
+    !s.app || JK.registry[s.app] && can(s.app, 'view') && (!s.requires || can(s.app, s.requires)));
+  function recommendText(text) {
+    const best = Op.understand(text).best;
+    return !best || best.score < 1.5 || canIntent(best.intent);
+  }
+  const startersFor = id => can(id, 'view') ? (mf(id).starters || []).filter(recommendText) : [];
   const greet = () => { const hr = new Date().getHours(); return hr < 6 ? '夜深了' : hr < 11 ? '早上好' : hr < 13 ? '中午好' : hr < 18 ? '下午好' : '晚上好'; };
   const appsVisible = (group) => (window.JK_APP_LIST || []).filter((a) => a.enabled !== false && JK.registry[a.id] && (!group || a.group === group) && can(a.id, 'view'));
   const mf = (id) => (JK.registry[id] ? JK.registry[id].manifest : JK.BUILTIN[id] || { name: id });
@@ -34,21 +53,24 @@
     if (!u) return renderLogin();
     await afterLogin();
   }
-  async function afterLogin(finishPreviousAccount) {
+  async function afterLogin(finishPreviousAccount, identityReady) {
     const profile = await API.me.get();
     const models = await API.models.list().catch(() => null);
     // 视角切换的任务卡属于发起账号。新会话校验通过后，再切换本地存储键。
     finishPreviousAccount?.();
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
-    renderShell(); Op.loadDict(); refreshInbox();
+    Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell();
+    identityReady?.(S.me);
+    await refreshInbox();
   }
 
   /* ---------------- 登录 ---------------- */
   function renderLogin(err, keepUser) {
-    const accts = CFG.demoAccounts || [];
+    const accts = offlineDemo() ? CFG.demoAccounts || [] : [];
     root().innerHTML = `<div class="login">
       <div class="login-l">
         <div class="row"><span class="brand-mark">${icon('cube')}</span><b style="font-size:15px">${esc(CFG.platformName)}</b></div>
@@ -74,9 +96,10 @@
     }));
   }
   // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
-  function passwordLogin(account) {
+  function passwordLogin(account, signal) {
     return new Promise((resolve) => {
       let accepted = false, busy = false;
+      const abort = () => { if (!busy) modal.close(); };
       const holdClose = (event) => {
         if (busy && (event.key === 'Escape' || event.target.closest?.('[data-cancel],[data-x],.mask-bg'))) {
           event.preventDefault(); event.stopImmediatePropagation();
@@ -87,8 +110,12 @@
         body: `<form autocomplete="off"><label>请输入 ${esc(account.username)} 的口令<input class="input" type="password" autocomplete="off" data-op="switch.password"></label><div role="alert" data-op="switch.error"></div></form>`,
         ok: async (dialog) => {
           if (busy) return false;
-          busy = true;
           const input = dialog.querySelector('[data-op="switch.password"]');
+          if (!input.value) {
+            dialog.querySelector('[data-op="switch.error"]').textContent = '请输入口令，或取消以保留当前身份';
+            input.focus(); return false;
+          }
+          busy = true;
           const request = { username: account.username, password: input.value }; input.value = '';
           try {
             await API.auth.login(request); accepted = true;
@@ -101,22 +128,26 @@
           dialog.querySelector('form').onsubmit = (event) => { event.preventDefault(); dialog.querySelector('[data-ok]').click(); };
           dialog.querySelector('input').focus();
         },
+        onClose() {
+          modal.el.querySelector('input').value = '';
+          document.removeEventListener('click', holdClose, true);
+          document.removeEventListener('keydown', holdClose, true);
+          signal?.removeEventListener('abort', abort);
+          resolve(accepted);
+        },
       });
-      const observer = new MutationObserver(() => {
-        if (!modal.el.isConnected) {
-          modal.el.querySelector('input').value = ''; observer.disconnect(); document.removeEventListener('click', holdClose, true); document.removeEventListener('keydown', holdClose, true); resolve(accepted);
-        }
-      });
-      observer.observe(document.body, { childList: true });
+      signal?.addEventListener('abort', abort, { once: true });
     });
   }
-  async function switchUser(username, run) {
-    const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a) return;
-    if (switchingAccount) return;
-    switchingAccount = true;
+  async function switchUser(username, run, signal) {
+    // 内部人员已启动的演示可能经过外部视角；续播仍逐次使用真实口令框。
+    if (!canPresentDemo() && !(H.mode() === 'http' && window.JKDemo?.ownsSwitch?.(signal))) return false;
+    const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a || switchingAccount) return false;
+    const lock = switchingAccount = {};
+    const unlock = () => { if (switchingAccount === lock) switchingAccount = false; };
     try {
       if (window.JKHttp.mode() === 'http') {
-        if (!(await passwordLogin(a))) { if (run) run.fail('已取消切号，当前会话已保留'); return; }
+        if (!(await passwordLogin(a, signal))) { if (run) run.fail('已取消切号，当前会话已保留'); return false; }
       } else {
         await API.auth.logout().catch(() => {});
         await API.auth.login({ username: a.username, password: a.password });
@@ -124,13 +155,21 @@
       if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
       rememberActivePanel();
       // 登录和权限刷新都成功才完成原任务。
-      await afterLogin(() => { if (run) run.done(); });
+      // 身份和权限已确认且新工作台已显示，就允许用户打开下一次口令框。
+      // 收件箱仍按原约定等到就绪；旧刷新结束不能释放下一次切号的锁。
+      let identity;
+      await afterLogin(() => { if (run) run.done(); }, user => {
+        identity = user;
+        if (!run && !signal) unlock(); // 操作员/演示续播仍等待整次切换完成。
+      });
+      if (S.me !== identity) return false;
       toast(`已切换为 ${a.name}（${a.role}）`);
+      return true;
     } finally {
-      switchingAccount = false;
+      unlock();
     }
   }
-  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; renderLogin(); }
+  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; Op.loadDict(); renderLogin(); }
 
   /* ---------------- 外壳骨架 ---------------- */
   function renderShell() {
@@ -141,7 +180,7 @@
         <div class="side-sc" id="side-sc"></div>
         <div class="side-foot">
           ${CFG.showDevPlan === true ? `<a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>` : ''}
-          <button class="nav-i" id="btn-demo" data-op="shell.demo" title="把每个功能自动走一遍"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">约 3 分钟</span></button>
+          ${canPresentDemo() ? `<button class="nav-i" id="btn-demo" data-op="shell.demo" title="播放中可暂停阅读或前往下一段"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">可暂停</span></button>` : ''}
           <div class="me" id="btn-me" data-op="shell.me"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><div class="nm clip">${esc(S.me.name)}</div><div class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</div></span><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
         </div>
       </aside>
@@ -167,7 +206,7 @@
       ${has('computer') ? it('data-app="computer" data-op="rail.computer"', icon(mf('computer').icon || 'computer'), '电脑', S.active === 'computer') : ''}
       ${isAdmin() ? it('data-nav="admin" data-op="rail.admin"', icon('shield'), '后台', S.active === 'admin') : ''}
       <span class="sp"></span>
-      ${it('data-act="demo" data-op="rail.demo"', icon('play'), '演示', false)}`;
+      ${canPresentDemo() ? it('data-act="demo" data-op="rail.demo"', icon('play'), '演示', false) : ''}`;
   }
   function renderSide() {
     renderRail();
@@ -189,13 +228,13 @@
       if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
       const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
       if (b.dataset.conv) return openConv(b.dataset.conv);
-      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(); else if (n) openBuiltin(n);
+      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(b); else if (n) openBuiltin(n);
     };
-    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(); if (n) openBuiltin(n); };
+    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(b); if (n) openBuiltin(n); };
     $('#btn-side').onclick = () => { const s = $('.shell'); s.classList.toggle('side-min'); localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : ''); };
     $('#btn-theme').onclick = (e) => { e.stopPropagation(); setTheme(theme() === 'dark' ? 'light' : 'dark'); };
     $('#btn-me').onclick = (e) => { if (e.target.closest('#btn-theme')) return; meMenu($('#btn-me')); };
-    $('#btn-demo').onclick = () => window.JKDemo && JKDemo.start();
+    const demoButton = $('#btn-demo'); if (demoButton) demoButton.onclick = () => window.JKDemo && JKDemo.start();
     $('#btn-max').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-chat-toggle').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-pclose').onclick = () => { if (switchingAccount) return; Op.running?.stop(true); rememberPanel(); closePanel(); };
@@ -211,11 +250,22 @@
   function meMenu(anchor) {
     const items = [{ head: `${S.me.name} · ${roleName()}` }, { v: 'settings', icon: 'user', label: '个人设置' }];
     if (isAdmin()) items.push({ v: 'admin', icon: 'shield', label: '管理后台' });
-    items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
-    items.push({ sep: true }, { v: 'reset', icon: 'refresh', label: '重置演示数据' }, { v: 'logout', icon: 'logout', label: '退出登录' });
+    if (canPresentDemo()) {
+      items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
+    }
+    items.push({ sep: true });
+    // 部署实例的恢复还需要宿主授权，浏览器（包括管理员会话）不持有该授权。
+    if (offlineDemo()) items.push({ v: 'reset', icon: 'refresh', label: '重置演示数据' });
+    items.push({ v: 'logout', icon: 'logout', label: '退出登录' });
     menu(anchor, items, async (v) => { if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
   }
-  async function reset() { await API.demo.reset(); localStorage.removeItem(storeKey()); try { await API.auth.login({ username: S.me.username, password: (CFG.demoAccounts.find((a) => a.username === S.me.username) || { password: 'jk123456' }).password }); } catch (e) { return renderLogin(); } JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置'); }
+  async function reset() {
+    if (!offlineDemo()) throw Error('部署实例不能从网页重置，请联系宿主管理员');
+    await API.demo.reset(); localStorage.removeItem(storeKey());
+    const account = CFG.demoAccounts.find(a => a.username === S.me.username);
+    try { await API.auth.login({ username: account.username, password: account.password }); } catch { return renderLogin(); }
+    JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置');
+  }
 
   /* ---------------- 布局与面板 ---------------- */
   const shellRoutedApps = ['policy', 'enterprise', 'meeting', 'document'];
@@ -307,7 +357,7 @@
     await sleep(fresh ? 160 : 30);
     return slot;
   }
-  function openBuiltin(id, tab) {
+  async function openBuiltin(id, tab) {
     if (id === 'admin' && !isAdmin()) { toast('需要管理员权限', { type: 'err' }); return; }
     snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
@@ -315,13 +365,14 @@
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
     let slot = S.mounted[id];
     if (!slot) { const view = h(`<div class="pview" data-view="${id}"><div class="app-root pad"></div></div>`); $('#pbody').appendChild(view); slot = S.mounted[id] = { view, el: view.firstElementChild, builtin: true, ctl: {} }; }
-    slot.tab = tab || slot.tab; renderBuiltin(id);
+    slot.tab = tab || slot.tab; const rendered = renderBuiltin(id);
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
-    return sleep(30);
+    if (id === 'inbox') return refreshInbox();
+    return rendered;
   }
-  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
+  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') return window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
   function activate(id) {
     S.active = id; $$('.pview').forEach((v) => v.classList.toggle('on', v.dataset.view === id));
     $('#ptabs').innerHTML = S.open.map((x) => `<button class="ptab ${x === id ? 'on' : ''}" data-id="${x}">${appIcon(x, 'sm')}<span>${esc(mf(x).short || mf(x).name)}</span><span class="x" title="关闭">${icon('x')}</span></button>`).join('');
@@ -552,7 +603,7 @@
     }
   }
   function homeView() {
-    const sugs = (CFG.homeSuggestions || []).filter((s) => !s.app || JK.registry[s.app] && can(s.app, 'view')).slice(0, 3);
+    const sugs = homeSuggestions().slice(0, 3);
     const apps = appsVisible('work').slice(0, 4);
     const v = h(`<div class="home scroll">
       <div style="position:absolute;top:10px;right:16px">${modelChip()}</div>
@@ -587,7 +638,7 @@
     const go = () => { const t = ta.value.trim(); const f = pendingFile; if (!t && !f) return; ta.value = ''; pendingFile = null; showPF(); upd(); if (f) handleFile(f, t); else send(t); };
     sendB.onclick = go;
     scope.querySelector('[data-act="attach"]').onclick = (e) => attachMenu(e.currentTarget, (f) => { pendingFile = f; showPF(); upd(); ta.focus(); });
-    scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = (mf(v).starters || [])[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
+    scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = startersFor(v)[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
     showPF(); upd();
   }
   function attachMenu(anchor, pick) {
@@ -633,7 +684,15 @@
       body.querySelectorAll('.src').forEach((s) => (s.onclick = (e) => { if (e.target.closest('a')) return; openCite(s.dataset.cid, s.dataset.hl); }));
       body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openCite(x.id, (x.snippet || '').slice(0, 60)); }));
     }
-    if (m.next && m.next.length) { const n = h(`<div class="next-acts">${m.next.map((a, i) => `<button class="btn" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>`); n.onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; const a = m.next[+b.dataset.i]; if (a.say) send(a.say); else if (a.open) openApp(a.open, a.route, a.params); }; body.appendChild(n); }
+    const nextButtons = (m.next || []).map((a, i) => {
+      if ((a.say && !recommendText(a.say)) || (a.open && !can(a.open, 'view')) || (a._run && !canIntent(a._run.intent))) return '';
+      return `<button class="btn" data-i="${i}">${esc(a.label)}</button>`;
+    }).join('');
+    if (nextButtons) {
+      const n = h(`<div class="next-acts">${nextButtons}</div>`);
+      n.onclick = e => { const b = e.target.closest('[data-i]'); if (!b) return; const a = m.next[+b.dataset.i]; if (a.say) send(a.say); else if (a.open) openApp(a.open, a.route, a.params); };
+      body.appendChild(n);
+    }
     if (m.model) { const meta = h(`<div class="meta"><span>${esc(m.model)}${m.routeNote ? ' · ' + esc(m.routeNote) : ''}</span><span class="sp"></span><button class="btn sm ghost" data-a="copy" title="复制">${icon('copy')}</button>${m.q ? `<button class="btn sm ghost" data-a="redo" title="换个模型重答">${icon('refresh')}</button>${JK.registry.skills ? `<button class="btn sm ghost" data-a="skill" title="存为我的技能">${icon('skill')}</button>` : ''}` : ''}</div>`); body.appendChild(meta);
       meta.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a;
         if (a === 'copy') { const t = (m.text || '').replace(/\*\*/g, ''); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('已复制'), () => toast('已复制')); }
@@ -684,7 +743,15 @@
     text = String(text || '').trim(); if (!text) return;
     if (!opt.silentUser) push({ role: 'user', text });
     const epoch = conversationEpoch;
+    // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
+    const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
+    if (scope) return answer(text, scope);
+    // 已登记的完整知识库问法不需要串行等待远程技能匹配。仍走 runIntent 的授权、
+    // 操作员与实际 ask；非精确匹配的自由输入保留原有技能/意图竞争。
+    const kbAsk = mf('kb').intents?.find(it => it.id === 'kb.ask' && it.examples.includes(text));
+    if (kbAsk) return runIntent({ ...kbAsk, app: 'kb' }, { text }, text);
     const u = Op.understand(text); const b = u.best;
+    if (b && b.score >= 2.6 && !canIntent(b.intent)) return runIntent(b.intent, b.slots, text);
     if (!u.slots.ent && !opt.noFuzzy) { const fz = Op.fuzzyEnt(text); if (fz) {
       const fixed = text.replace(fz.span, fz.ent.short);
       if (Op.demo) return send(fixed, { silentUser: true, noFuzzy: true });
@@ -693,13 +760,14 @@
       if (n) n.onclick = (e) => { const bb = e.target.closest('[data-i]'); if (!bb) return; n.remove(); if (bb.dataset.i === '0') send(fixed, { silentUser: true, noFuzzy: true }); else send(text, { silentUser: true, noFuzzy: true }); };
       return; } }
     // 技能触发语
-    let sk = null; try { sk = JK.services.skills && JK.services.skills.match ? await JK.services.skills.match(text) : null; } catch (e) {}
+    let sk = null; try { sk = can('skills', 'operate') && JK.services.skills?.match ? await JK.services.skills.match(text) : null; } catch (e) {}
     if (epoch !== conversationEpoch || switchingAccount) return;
     if (sk && sk.skill && (!b || sk.score >= b.score)) return runIntent({ app: 'skills', action: 'run', title: '运行技能：' + sk.skill.name, plan: ['打开技能中心', '准备输入', '运行技能', '整理结果'] }, { ...u.slots, skillId: sk.skill.id }, text);
     if (b && b.score >= 2.6) return runIntent(b.intent, b.slots, text);
     if (b && b.score >= 1.5 && Op.demo) return runIntent(b.intent, b.slots, text);
     if (b && b.score >= 1.5 && !opt.noConfirm) {
-      const alts = [b, ...u.alts.filter((x) => x.score >= 1.5)].slice(0, 2);
+      const alts = [b, ...u.alts].filter(x => x.score >= 1.5 && canIntent(x.intent)).slice(0, 2);
+      if (!alts.length) return postAI({ text: '当前身份不能执行这项操作。如需办理，请联系管理员。' });
       const m = postAI({ text: `我理解为「**${alts[0].intent.title || alts[0].intent.plan[0]}**」，要这样做吗？`, next: [...alts.map((a) => ({ label: a.intent.title || a.intent.plan[0], _run: a })), { label: '都不是，直接回答', _answer: true }] });
       const node = $$('#chatcol .msgs-in > .msg').pop(); const n = node.querySelector('.next-acts');
       if (n) n.onclick = (e) => { const bb = e.target.closest('[data-i]'); if (!bb) return; const a = m.next[+bb.dataset.i]; n.remove(); if (a._run) runIntent(a._run.intent, a._run.slots, text); else answer(text); };
@@ -710,9 +778,9 @@
   async function runIntent(intent, slots, text, file) {
     if (switchingAccount) return;
     const app = intent.app;
-    if (intent.needsAdmin && !isAdmin()) return postAI({ text: '这件事需要**管理员**来做。你可以在头像菜单里切换到管理员视角（演示）。' });
     if (app && !intent.platform && JK.registry[app] && !can(app, 'view')) return postAI({ text: `你的角色（${roleName()}）没有「${mf(app).name}」的使用权限。需要的话请管理员在“角色与授权”里开通。` });
     if (app && !intent.platform && !JK.registry[app]) return postAI({ text: `「${app}」应用还没有启用。` });
+    if (!canIntent(intent)) return postAI({ text: '当前身份不能执行这项操作。如需办理，请联系管理员。' });
     ensureConv(text || intent.title || '新对话');
     const epoch = conversationEpoch;
     return Op.start({
@@ -731,17 +799,18 @@
     rememberPanel(saved);
   }
   function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: c.n || i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
-  async function answer(text) {
+  async function answer(text, scope) {
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
     const finish = (o) => { Object.assign(thinking, o); const n2 = renderMsg(thinking); node.replaceWith(n2); saveConvs(); scrollEnd(); };
     const kbLike = /[？?]|什么|怎么|如何|哪些|多少|是否|能不能|可以|条件|标准|规定|政策|办法|补贴|申报|流程|要求/.test(text);
     try {
-      if (kbLike && (JK.services.kb || JK.registry.kb)) {
-        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, {}) : API.kb.ask({ q: text }));
+      if ((kbLike || scope) && (JK.services.kb || JK.registry.kb)) {
+        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, { scope, fromChat: S.active === 'kb' }) : API.kb.ask({ q: text, scope }));
+        if (r?.unavailable) throw Error(r.message);
         if (r && (r.confidence === 'none' || (r.answer && ((r.citations || []).length || JK.services.kb)))) { if (!r.answer) r.answer = '知识库里没有找到能回答这个问题的原文，我没有编答案。可以导入相关资料后再问。'; const m = S.models.find((x) => x.id === S.model); const none = r.confidence === 'none' || !(r.citations || []).length;
           const next = (r.suggestions || []).map((x) => ({ label: x.label, say: x.say }));
           if (!none && JK.registry.kb) next.push({ label: '在知识库里看全部结果', open: 'kb', route: 'search', params: { q: text } });
-          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: (m && m.name) || '自动选择', routeNote: none ? '知识库未命中' : '知识库检索', next: next.slice(0, 3) }); }
+          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: r.source === 'extract' || r.source === 'preset' ? '知识库' : (m && m.name) || '自动选择', routeNote: r.routeNote || (none ? '知识库未命中' : '知识库检索'), next: next.slice(0, 3) }); }
       }
       const c = ensureConv(text); const cid = await serverConv(c);
       const r = await API.chat.send(cid, { text, model: S.model });
@@ -753,10 +822,10 @@
   async function serverConv(c) { if (c.sid) return c.sid; try { const r = await API.chat.create({ title: c.title }); c.sid = r.item.id; } catch (e) { c.sid = 'C-301'; } saveConvs(); return c.sid; }
   function fallbackNext() {
     const list = [];
-    Object.values(JK.registry).forEach((d) => { const st = (d.manifest.starters || [])[0]; if (st && can(d.manifest.id, 'view') && list.length < 4) list.push({ label: st, say: st }); });
+    Object.values(JK.registry).forEach((d) => { const st = startersFor(d.manifest.id)[0]; if (st && list.length < 4) list.push({ label: st, say: st }); });
     return list;
   }
-  function suggestFor(intent) { const d = JK.registry[intent]; return d ? (d.manifest.starters || []).slice(0, 2).map((t) => ({ label: t, say: t })) : []; }
+  function suggestFor(intent) { return startersFor(intent).slice(0, 2).map(t => ({label:t, say:t})); }
 
   /* 文件投递 */
   async function handleFile(file, text) {
@@ -766,8 +835,10 @@
     const c = Op.classify(file);
     if (!c.length) {
       const opts = [];
-      if (JK.registry.kb) opts.push({ label: '存入知识库', run: { app: 'kb', accept: { kind: '其他', plan: ['识别文件', '打开知识库', '解析入库'] } } });
-      Object.values(JK.registry).forEach((d) => { if ((d.manifest.accepts || []).length && d.manifest.id !== 'kb') opts.push({ label: '交给' + d.manifest.short, run: { app: d.manifest.id, accept: d.manifest.accepts[0] } }); });
+      const canReceive = app => can(app, 'view') && can(app, 'operate');
+      if (JK.registry.kb && canReceive('kb')) opts.push({ label: '存入知识库', run: { app: 'kb', accept: { kind: '其他', plan: ['识别文件', '打开知识库', '解析入库'] } } });
+      Object.values(JK.registry).forEach((d) => { if ((d.manifest.accepts || []).length && d.manifest.id !== 'kb' && canReceive(d.manifest.id)) opts.push({ label: '交给' + d.manifest.short, run: { app: d.manifest.id, accept: d.manifest.accepts[0] } }); });
+      if (!opts.length) return postAI({text:'当前身份没有可接收这类文件的应用。'});
       const m = postAI({ text: `我没认出「${file.name}」是什么。想怎么处理？`, next: opts.slice(0, 3).map((o) => ({ label: o.label, _r: o.run })) });
       const node = $$('#chatcol .msgs-in > .msg').pop(); const n = node.querySelector('.next-acts'); if (n) n.onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; n.remove(); intake(m.next[+b.dataset.i]._r, file, text); };
       return;
@@ -783,34 +854,62 @@
   }
 
   /* ---------------- ⌘K ---------------- */
-  function cmdk() {
-    if ($('.cmdk')) return;
-    const x = JK.modal({ title: '', body: `<div class="cmdk-in">${icon('search')}<input placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>` });
+  function cmdk(opener = document.activeElement) {
+    if ($('[role="dialog"]')) return;
+    const x = JK.modal({ title: '搜索与命令', body: `<div class="cmdk-in">${icon('search')}<input aria-label="搜索与命令" placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>`,
+      onClose() {
+        const original = opener?.isConnected && opener !== document.body ? opener : opener?.dataset.op && $(`[data-op="${CSS.escape(opener.dataset.op)}"]`);
+        (original || $('[data-op="rail.cmdk"]'))?.focus({ preventScroll: true });
+      } });
+    x.el.setAttribute('aria-label', '搜索与命令');
+    x.el.setAttribute('aria-modal', 'true');
+    const closeButton = x.el.querySelector('[data-x]');
+    x.el.querySelector('.cmdk-in').append(closeButton);
     x.el.classList.add('cmdk'); const inp = x.el.querySelector('input'); const list = x.el.querySelector('.cmdk-list'); let items = [], sel = 0;
     const draw = async () => {
       const q = inp.value.trim(); items = [];
-      if (q) items.push({ g: '交给 AI', label: `“${q}”`, d: 'AI 理解后替你操作', icon: 'sparkles', fn: () => send(q) });
+      if (q && recommendText(q)) items.push({ g: '交给 AI', label: `“${q}”`, d: 'AI 理解后替你操作', icon: 'sparkles', fn: () => send(q) });
       [...appsVisible('work'), ...appsVisible('platform')].forEach((a) => { const m = mf(a.id); if (!q || (m.name + m.summary).includes(q)) items.push({ g: '打开应用', label: m.name, d: m.summary, app: a.id, fn: () => openApp(a.id) }); });
       [['inbox', '收件箱', '待我审签 / 确认'], ...(isAdmin() ? [['admin', '管理后台', '账号、权限、模型、审计']] : [])].forEach(([id, n, d]) => { if (!q || n.includes(q)) items.push({ g: '平台', label: n, d, app: id, fn: () => openBuiltin(id) }); });
-      Op.allIntents().filter((it) => !it.platform && JK.registry[it.app] && can(it.app, 'view')).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
+      Op.allIntents().filter((it) => !it.platform && canIntent(it)).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
       S.convs.filter((c) => q && c.title.includes(q)).slice(0, 4).forEach((c) => items.push({ g: '最近对话', label: c.title, icon: 'history', fn: () => openConv(c.id) }));
       items = items.slice(0, 14); sel = 0; render();
     };
     const render = () => { let g = ''; list.innerHTML = items.map((it, i) => `${it.g !== g ? `<div class="mh">${esc((g = it.g))}</div>` : ''}<div class="mi ${i === sel ? 'on' : ''}" data-i="${i}">${it.app ? appIcon(it.app, 'sm') : icon(it.icon || 'arrow-right')}<span class="ck-t">${esc(it.label)}</span>${it.d ? `<span class="ck-d">${esc(it.d)}</span>` : ''}${i === sel ? '<span class="ck-k">↵</span>' : ''}</div>`).join('') || JK.empty({ icon: 'search', title: '没有匹配的结果' }); };
     list.onclick = (e) => { const it = e.target.closest('[data-i]'); if (!it) return; x.close(); items[+it.dataset.i].fn(); };
     inp.oninput = draw; inp.onkeydown = (e) => { if (e.key === 'ArrowDown') { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); } if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); render(); e.preventDefault(); } if (e.key === 'Enter' && items[sel]) { x.close(); items[sel].fn(); } };
-    draw(); setTimeout(() => inp.focus(), 20);
+    x.el.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      (document.activeElement === inp ? closeButton : inp).focus();
+    });
+    draw(); inp.focus();
   }
 
   /* ---------------- 收件箱 ---------------- */
   // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
   function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
-  async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
-    try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
-    renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+  let inboxLoad;
+  function refreshInbox() {
+    const who = S.me;
+    const items = async read => { try { return (await read()).items || []; } catch { return []; } };
+    const load = Promise.all([items(API.reviews.list), items(API.todos.list)]).then(([reviews, todos]) => {
+      if (!who || who !== S.me) return;
+      // 打开面板、写入回执和角标通知均可触发刷新。旧请求既不能回写，也不能提前宣告就绪。
+      if (load !== inboxLoad) return inboxLoad;
+      S.inbox = reviews.filter((x) => {
+        const a = x.app === 'market' ? 'skills' : x.app;
+        if (x.status !== 'pending') return false;
+        if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
+        return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && who.role === 'leader'));
+      });
+      S.todos = todos;
+      renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+    });
+    inboxLoad = load;
+    return load;
   }
-  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
+  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\/|^\/api\/v1\/kb\/(?:search|ask)$/.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
   function renderInbox(el) {
     const tab = el.dataset.tab || 'mine';
@@ -819,7 +918,16 @@
       <div class="tabs" style="margin-bottom:8px"><button class="tab ${tab === 'mine' ? 'on' : ''}" data-t="mine">待我处理 ${list.length ? `<span class="count muted">${list.length}</span>` : ''}</button><button class="tab ${tab === 'todo' ? 'on' : ''}" data-t="todo">我的待办 ${todos.length ? `<span class="count muted">${todos.length}</span>` : ''}</button></div>
       <div class="list">${tab === 'mine' ? (list.map((r) => { const app = r.app === 'market' ? 'skills' : r.app; return `<div class="inb-i">${appIcon(app, 'sm')}<div class="grow"><div class="row"><span class="ttl">${esc(r.title)}</span>${tag(TYPE_LABEL[r.type] || '待处理')}</div><div class="meta">${esc(r.meta || '')}</div></div><div class="row">${r.approver && can(app, 'approve') ? `<button class="btn sm" data-dec="reject" data-id="${r.id}" data-op="inbox.reject.${r.id}">退回</button><button class="btn sm soft" data-dec="approve" data-id="${r.id}" data-op="inbox.approve.${r.id}">通过</button>` : ''}<button class="btn sm ghost" data-open="${app}" data-ref="${esc(r.ref || '')}" data-type="${r.type}">查看 ${icon('chevron-right')}</button></div></div>`; }).join('') || JK.empty({ icon: 'check', title: '全部处理完了', desc: '新的审签、确认会出现在这里' })) : (todos.map((t) => `<div class="inb-i"><input type="checkbox" class="check" data-todo="${t.id}" style="margin-top:4px;accent-color:var(--accent)"><div class="grow"><div class="ttl">${esc(t.title || t.text)}</div><div class="meta">${esc([t.from, t.due && '截止 ' + t.due].filter(Boolean).join(' · '))}</div></div>${t.due ? tag(t.status || '待办') : ''}</div>`).join('') || JK.empty({ icon: 'check', title: '没有待办', desc: '会议纪要派发给你的待办会出现在这里' }))}</div>`;
     el.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { el.dataset.tab = b.dataset.t; renderInbox(el); }));
-    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => { const dec = b.dataset.dec; let comment = ''; if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; } try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
+    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => {
+      if (b.disabled) return;
+      const dec = b.dataset.dec; let comment = '';
+      if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; }
+      b.disabled = true; b.setAttribute('aria-busy', 'true'); delete b.dataset.failed;
+      const version = list.find(row => row.id === b.dataset.id)?.version;
+      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment, version }); toast(dec === 'approve' ? '已通过' : '已退回'); await refreshInbox(); }
+      catch (e) { b.dataset.failed = '1'; toast(e.message, { type: 'err' }); }
+      finally { b.removeAttribute('aria-busy'); b.disabled = false; }
+    }));
     el.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { const a = b.dataset.open; const ref = b.dataset.ref; const R = !ref ? null : a === 'document' ? ['detail', { id: ref }] : a === 'enterprise' ? ['profile', { entId: ref }] : a === 'meeting' ? ['detail', { id: ref, meetingId: ref }] : a === 'skills' ? ['detail', { skillId: ref, review: true }] : null; Promise.resolve(openApp(a)).then(() => { const sl = S.mounted[a]; if (R && sl && sl.ctl && sl.ctl.go) { sl.ctx.params = R[1]; try { sl.ctl.go(R[0], R[1]); } catch (e) { console.error(e); } } }); }));
     el.querySelectorAll('[data-todo]').forEach((c) => (c.onchange = async () => { try { await API.todos.patch(c.dataset.todo, { status: '已完成' }); toast('已完成'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
   }
@@ -840,14 +948,14 @@
     const apps = [...appsVisible('work'), ...appsVisible('platform')].map((a) => `· **${mf(a.id).name}**：${mf(a.id).summary || ''}`).join('\n');
     return `我可以直接在右侧替你操作这些应用：\n${apps}\n也可以把文件拖进对话框，我会认出是什么并交给对应应用。`;
   }
-  const helpNext = () => (CFG.homeSuggestions || []).slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
+  const helpNext = () => homeSuggestions().slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
 
   /* ---------------- 对外（操作员钩子、管理后台、演示） ---------------- */
-  const shellApi = { S, can, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };
+  const shellApi = { S, can, canPresentDemo, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };
   Object.assign(Op.hooks, {
     postPlan, postAI, openApp, appCtl: (id) => S.mounted[id] && S.mounted[id].ctl, appEl: (id) => S.mounted[id] && S.mounted[id].el,
     openBuiltin, inboxCount: () => S.inbox.length, setModel, setTheme, switchUser: (u) => switchUser(u, Op.running), helpText, helpNext,
-    startDemo: () => window.JKDemo && JKDemo.start(), reset,
+    startersFor, canViewApp: id => can(id, 'view'), startDemo: () => window.JKDemo && JKDemo.start(), reset,
   });
   window.JKShell = shellApi;
   document.addEventListener('DOMContentLoaded', boot);

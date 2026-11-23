@@ -9,8 +9,8 @@ window.JK_CONFIG = {
   stateKey: 'jk4-state-r1',        // 改这个值 = 所有浏览器数据重新开始
   /* 首页：问候下面的 3 条建议（点一下就让 AI 去办） */
   homeSuggestions: [
-    { icon: 'policy', app: 'policy', text: '帮我查一下纸鹿二号智驾能申报哪些政策' },
-    { icon: 'meeting', app: 'meeting', text: '把昨天文化企业座谈会整理成纪要' },
+    { icon: 'policy', app: 'policy', requires: 'operate', text: '帮我查一下纸鹿二号智驾能申报哪些政策' },
+    { icon: 'meeting', app: 'meeting', requires: 'operate', text: '把昨天文化企业座谈会整理成纪要' },
     { icon: 'book', app: 'kb', text: '数据券补贴最高能拿多少？' },
   ],
   /* 登录页“一键登录”的演示账号（正式环境删除这段即可） */
@@ -25,6 +25,7 @@ window.JK_CONFIG = {
   /* AI 操作速度：正常演示 1，一键演示时用 demoSpeed */
   operatorSpeed: 1,
   demoSpeed: 1.6,
+  demoReadMs: 2400,                // 未单独编排的结果页沿用片尾字幕的停留；可调整，播放中可随时暂停阅读
   // mock 模式下只选择展示与审计使用的模型，不发网络请求。
   modelRouting: {
     defaultChannel: 'cloud', // 公开请求的自动路由，可切换为 local

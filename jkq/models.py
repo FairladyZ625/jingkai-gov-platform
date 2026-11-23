@@ -1,7 +1,8 @@
 """经开区模型目录、个人偏好和文本对话路由。"""
 
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -21,6 +22,17 @@ SETTINGS_NAMESPACE = "jkq.models"
 PLATFORM_APP = "platform"
 MODEL_KINDS = {"本地部署": "local", "海外模型（默认关闭）": "overseas", "推荐": "local"}
 ModelId = Annotated[str, StringConstraints(min_length=1, max_length=128)]
+_kb_attempt_failures = ContextVar("kb_attempt_failures", default=None)
+
+
+@contextmanager
+def preserve_kb_model_failure():
+    """在一次问答内区分主动模拟与非模拟服务出错后的模拟兜底，包括演示适配器的第二次调用。"""
+    token = _kb_attempt_failures.set([])
+    try:
+        yield
+    finally:
+        _kb_attempt_failures.reset(token)
 
 
 class ModelSelection(BaseModel):
@@ -152,10 +164,14 @@ class ModelService:
         if not candidates and not confidential:
             raise AIError("not_configured", "没有已启用的模型。")
 
+        kb_failures = _kb_attempt_failures.get() if app_id == "kb" else None
+
         def record_attempt(provider_id, model, status, usage):
             self.store.audit(app_id, user_id, "ai.chat", {
                 "provider": provider_id, "model": model, "status": status, "usage": usage,
             })
+            if kb_failures is not None and status != "success" and self.models[provider_id].kind != "mock":
+                kb_failures.append(status)
 
         def record_outbound(app_id, user_id, action, detail):
             # 新版 core 也有成功汇总；逐次审计已经包含模型与 token。
@@ -168,6 +184,11 @@ class ModelService:
         except ProviderRejected as error:
             raise AIError("provider_error", str(error)) from None
 
+        # 真实备用服务的成功仍被接受；仅阻断本次实际故障后返回的 mock。
+        # 在预置层标记成功之前返回 SDK 错误，不改变其他应用的回退或 SDK 响应结构。
+        if kb_failures and result["result"]["mock"]:
+            kind = "timeout" if kb_failures[-1] == "timeout" else "http"
+            raise ModelError(kind, "知识库模型请求失败，不能使用模拟答复。")
         notes = []
         first_allowed = next(provider["id"] for provider, _ in candidates
                              if allowed_outbound(provider, classification))

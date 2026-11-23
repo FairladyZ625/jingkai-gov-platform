@@ -86,11 +86,11 @@
     if (r && r.width > 200) { const hd = col.querySelector('.bar-h, .chat-h, header'); const top = hd && hd.offsetParent ? hd.getBoundingClientRect().bottom : r.top; box.style.left = (r.left + r.width / 2) + 'px'; box.style.top = (top + 10) + 'px'; box.style.bottom = 'auto'; }
     else { box.style.left = '50%'; box.style.top = 'auto'; box.style.bottom = '24px'; }
   }
-  function overlay(kind, { title, body, ok, okText, cancelText, onMount, width, danger, foot }) {
+  function overlay(kind, { title, body, ok, okText, cancelText, onMount, onClose, width, danger, foot }) {
     const m = h('<div class="mask-bg"></div>');
     const d = h(`<div class="${kind}" ${width ? `style="width:min(${width}px,94vw)"` : ''} role="dialog"><div class="ov-h"><b>${esc(title || '')}</b><span class="sp"></span><button class="btn icon sm ghost" data-x aria-label="关闭">${icon('x')}</button></div><div class="ov-b">${body || ''}</div>${ok || foot ? `<div class="ov-f">${foot || ''}${ok ? `<button class="btn" data-cancel>${esc(cancelText || '取消')}</button><button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${esc(okText || '确定')}</button>` : ''}</div>` : ''}</div>`);
     document.body.append(m, d);
-    const close = () => { m.remove(); d.remove(); document.removeEventListener('keydown', onKey); };
+    const close = () => { m.remove(); d.remove(); document.removeEventListener('keydown', onKey); onClose?.(); };
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
     m.onclick = close; d.querySelector('[data-x]').onclick = close;
