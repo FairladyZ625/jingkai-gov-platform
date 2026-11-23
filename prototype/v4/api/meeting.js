@@ -7,7 +7,8 @@
     const form = new FormData(); const hasBlob = typeof Blob !== 'undefined' && b.blob instanceof Blob;
     form.append('title', b.title || '会议录音'); if (b.type) form.append('type', b.type);
     form.append('participants', JSON.stringify(b.participants || []));
-    if (hasBlob) { form.append('file', b.blob, b.file || b.blob.name || 'recording.webm'); form.append('source', 'upload'); } else form.append('source', 'demo');
+    if (hasBlob) { form.append('file', b.blob, b.file || b.blob.name || 'recording.webm'); form.append('source', 'upload'); }
+    else { form.append('source', 'demo'); if (b.sampleId) form.append('sampleId', b.sampleId); }
     return form;
   };
   window.JKApi.meeting = {
