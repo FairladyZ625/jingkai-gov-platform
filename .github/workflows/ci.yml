@@ -63,6 +63,7 @@ jobs:
           npm --prefix web ci
           (cd web && npx --no-install playwright install --with-deps chromium)
           npm --prefix web run test:smoke
+          npm --prefix web run test:smoke:mock
           npm --prefix web run test:e2e
           node --test tests/data/real-supplement.test.cjs
       - name: 前端冒烟

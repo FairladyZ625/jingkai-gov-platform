@@ -10,6 +10,32 @@
   const root = () => $('#root');
   let conversationEpoch = 0;
   let switchingAccount = false;
+  let afterReauthentication = null;
+  const pendingConversations = new WeakMap();
+  const loginDemoAccounts = () => offlineDemo() || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
+
+  window.addEventListener?.('jk:api:notice', ({ detail }) => {
+    if (detail?.retrying) return toast(detail.message, { type: 'err' });
+    const before = new Set($$('.toasts .toast'));
+    setTimeout(() => {
+      const current = $$('.toasts .toast');
+      if (current.some((el) => (el.classList.contains('err') && !before.has(el)) || el.textContent === String(detail?.message ?? '')) || $('#lf [role="alert"]')) return;
+      toast(detail.message, { type: 'err' });
+    }, 0);
+  });
+  window.addEventListener?.('jk:api:unauthenticated', () => {
+    if (!S.me) return;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    const slot = S.mounted[S.active];
+    const panel = slot?.panel && snapshotPanel(slot);
+    afterReauthentication = { userId: S.me.id, conversation: S.cur, panel, layout: S.layout };
+    conversationEpoch++;
+    Op.running?.stop(true);
+    Object.keys(S.mounted).forEach(unmountApp);
+    const username = S.me.username;
+    S.me = null;
+    renderLogin('登录已失效，请重新登录', username);
+  });
 
   /* ---------------- 工具 ---------------- */
   const can = (app, action) => { const g = S.grants || {}; const acts = [...(g['*'] || []), ...(g[app] || [])]; return acts.includes('admin') || acts.includes(action || 'view'); };
@@ -39,8 +65,8 @@
   const appsVisible = (group) => (window.JK_APP_LIST || []).filter((a) => a.enabled !== false && JK.registry[a.id] && (!group || a.group === group) && can(a.id, 'view'));
   const mf = (id) => (JK.registry[id] ? JK.registry[id].manifest : JK.BUILTIN[id] || { name: id });
   const roleHue = () => JK.hue(roleName(), 'role');
-  const storeKey = () => 'jk4-convs:' + (S.me ? S.me.id : '');
-  const saveConvs = () => { try { localStorage.setItem(storeKey(), JSON.stringify(S.convs.slice(0, 30))); } catch (e) {} };
+  const storeKey = (userId = S.me?.id || '') => 'jk4-convs:' + userId;
+  const saveConvs = (userId) => { try { localStorage.setItem(storeKey(userId), JSON.stringify(S.convs.slice(0, 30))); } catch (e) {} };
   const loadConvs = () => { try { S.convs = JSON.parse(localStorage.getItem(storeKey()) || '[]'); } catch (e) { S.convs = []; } };
   const nowHM = () => new Date().toTimeString().slice(0, 5);
   const setTheme = (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem('jk4-theme2', t); } catch (e) {} JK.bus.emit('theme', t); const b = $('#btn-theme'); if (b) b.innerHTML = icon(t === 'dark' ? 'sun' : 'moon'); };
@@ -50,13 +76,19 @@
   /* ---------------- 启动 ---------------- */
   async function boot() {
     setTheme(theme());
-    let u = null; try { u = (await API.auth.session()).user; } catch (e) {}
-    if (!u) return renderLogin();
-    await afterLogin();
+    try {
+      if (!(await API.auth.session()).user) return renderLogin();
+      await afterLogin();
+    } catch (error) {
+      renderLogin(error?.status === 401 ? undefined : error?.message);
+    }
   }
   async function afterLogin(finishPreviousAccount, identityReady) {
     const profile = await API.me.get();
-    const models = await API.models.list().catch(() => null);
+    const models = await API.models.list().catch((error) => {
+      if (error?.status === 401) throw error;
+      return null;
+    });
     // 视角切换的任务卡属于发起账号。新会话校验通过后，再切换本地存储键。
     finishPreviousAccount?.();
     conversationEpoch++;
@@ -65,13 +97,26 @@
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
     Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell();
+    const resume = afterReauthentication;
+    afterReauthentication = null;
+    if (resume?.userId === S.me.id) {
+      if (S.convs.some((c) => c.id === resume.conversation)) {
+        S.cur = resume.conversation;
+        renderSide();
+        renderChat();
+      }
+      const panel = resume.panel;
+      if (panel && JK.BUILTIN[panel.app]) openBuiltin(panel.app, panel.route === 'home' ? undefined : panel.route);
+      else if (panel) openApp(panel.app, panel.route, panel.params, true);
+      if (S.active && resume.layout === 'max') setLayout('max');
+    }
     identityReady?.(S.me);
     await refreshInbox();
   }
 
   /* ---------------- 登录 ---------------- */
   function renderLogin(err, keepUser) {
-    const accts = offlineDemo() ? CFG.demoAccounts || [] : [];
+    const accts = loginDemoAccounts();
     root().innerHTML = `<div class="login">
       <div class="login-l">
         <div class="row"><span class="brand-mark">${icon('cube')}</span><b style="font-size:15px">${esc(CFG.platformName)}</b></div>
@@ -82,19 +127,37 @@
       <div class="login-r"><form class="login-box" id="lf" autocomplete="off">
         <h2>登录</h2><div class="sub">使用局内账号登录</div>
         <div class="col gap3">
-          <div class="field"><label>账号</label><input class="input" name="u" data-op="login.user" placeholder="如 wangmin" value="${esc(keepUser || '')}" ${keepUser ? '' : 'autofocus'}></div>
-          <div class="field"><label>密码</label><input class="input" name="p" type="password" data-op="login.pass" placeholder="密码"></div>
-          ${err ? `<div class="callout h-red">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
+          <div class="field"><label for="login-user">账号</label><input class="input" id="login-user" name="u" autocomplete="username" data-op="login.user" placeholder="请输入账号" value="${esc(keepUser || '')}" ${keepUser ? '' : 'autofocus'}></div>
+          <div class="field"><label for="login-password">密码</label><input class="input" id="login-password" name="p" type="password" autocomplete="current-password" data-op="login.pass" placeholder="请输入密码"></div>
+          ${err ? `<div class="callout h-red" role="alert">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
           <button class="btn primary lg" data-op="login.go" style="width:100%;margin-top:4px">登录</button>
         </div>
-        ${accts.length ? `<div class="sect" style="margin-top:28px">演示账号 · 点一下直接进入</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}" data-p="${window.JKHttp.mode() === 'http' ? '' : esc(a.password)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)}${window.JKHttp.mode() === 'http' ? ' · 请输入口令' : ' / ' + esc(a.password)}</div></span></button>`).join('')}</div>` : ''}
+        ${accts.length ? `<div class="sect" style="margin-top:28px">一键选账号</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)}</div></span></button>`).join('')}</div>` : ''}
       </form></div></div>`;
-    const go = async (u, p) => { try { await API.auth.login({ username: u, password: p }); await afterLogin(); } catch (e) { renderLogin(e.message || '登录失败', u); const pw = $('#lf [name=p]'); if (pw) pw.focus(); } };
-    $('#lf').onsubmit = (e) => { e.preventDefault(); go(e.target.u.value.trim(), e.target.p.value); };
-    $$('.ql').forEach((b) => (b.onclick = () => {
-      if (window.JKHttp.mode() === 'http') { $('#lf [name=u]').value = b.dataset.u; $('#lf [name=p]').focus(); }
-      else go(b.dataset.u, b.dataset.p);
-    }));
+    const form = $('#lf');
+    let submitting = false;
+    const go = async (username, password) => {
+      if (submitting) return;
+      submitting = true;
+      form.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+      try {
+        await API.auth.login({ username, password });
+        await afterLogin();
+      } catch (error) {
+        renderLogin(error.message || '登录失败', username);
+        $('#login-password')?.focus();
+      }
+    };
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      go(form.elements.u.value.trim(), form.elements.p.value);
+    };
+    form.querySelectorAll('.ql').forEach((button) => {
+      button.onclick = () => {
+        const account = accts.find((item) => item.username === button.dataset.u);
+        if (account) go(account.username, account.password);
+      };
+    });
   }
   // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
   function passwordLogin(account, signal) {
@@ -551,7 +614,7 @@
     saveConvs();
   }
   function snapshotPanel(slot) {
-    if (!slot) return;
+    if (!slot?.panel) return;
     const { app, route, params } = slot.panel;
     // 政策应用在画像与手填金额就位后即可保存，后台试算可以继续。
     if (slot.restoring && app !== 'policy') return slot.panel;
@@ -719,8 +782,9 @@
     if (m.role === 'plan') return planEl(m);
     const el = h(`<div class="msg ai"><div class="av">${icon('sparkles')}</div><div class="body"><div class="txt">${md(m.text || '')}</div></div></div>`);
     const body = el.querySelector('.body');
+    (m.cards || []).forEach((card) => body.appendChild(renderReplyCard(card)));
     if (m.cites && m.cites.length) {
-      body.appendChild(h(`<div class="srcs">${m.cites.slice(0, 4).map((c) => `<div class="src" data-cid="${esc(c.id || '')}" data-hl="${esc((c.snippet || '').slice(0, 60))}"><span class="n">${c.n}</span><span class="grow" style="min-width:0"><div class="st clip">${esc(c.title || '')}</div><div class="sm clip">${esc([c.source && c.source.docNo, c.source && c.source.org, c.source && c.source.date].filter(Boolean).join(' · ') || (c.snippet || '').slice(0, 40))}</div></span>${c.source && c.source.url ? `<a class="btn icon sm ghost" href="${esc(c.source.url)}" target="_blank" rel="noopener" title="官网原文">${icon('external')}</a>` : ''}</div>`).join('')}</div>`));
+      body.appendChild(h(`<div class="srcs">${m.cites.slice(0, 4).map((c) => `<div class="src" data-cid="${esc(c.id || '')}" data-hl="${esc((c.snippet || '').slice(0, 60))}"><span class="n">${c.n}</span><span class="grow" style="min-width:0"><div class="st clip">${esc(c.title || '')}</div><div class="sm clip">${esc([c.source && c.source.docNo, c.source && c.source.org, c.source && c.source.date].filter(Boolean).join(' · ') || (c.snippet || '').slice(0, 40))}</div></span>${c.source && /^https?:\/\//i.test(c.source.url) ? `<a class="btn icon sm ghost" href="${esc(c.source.url)}" target="_blank" rel="noopener" title="官网原文">${icon('external')}</a>` : ''}</div>`).join('')}</div>`));
       body.querySelectorAll('.src').forEach((s) => (s.onclick = (e) => { if (e.target.closest('a')) return; openCite(s.dataset.cid, s.dataset.hl); }));
       body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openCite(x.id, (x.snippet || '').slice(0, 60)); }));
     }
@@ -739,6 +803,39 @@
         if (a === 'redo') { const others = S.models.filter((x) => x.enabled && x.id !== S.model && x.kind !== 'route').slice(0, 6); menu(b, [{ head: '换个模型重答' }, ...others.map((x) => ({ v: x.id, label: x.name }))], async (v) => { await API.models.setCurrent(v); S.model = v; $$('.model-chip').forEach((c) => (c.outerHTML = modelChip())); $$('#chatcol .bar-h, #chatcol .home').forEach(bindModelChip); answer(m.q); }); }
         if (a === 'skill') send('帮我做一个技能：' + m.q); }; }
     return el;
+  }
+  const replyCardTypes = {
+    'policy-match': ['政策匹配结果', 'policy'], 'policy-items': ['政策条目', 'policy'],
+    'enterprise-brief': ['企业档案', 'enterprise'], 'enterprise-list': ['企业列表', 'enterprise'],
+    alerts: ['企业提醒', 'enterprise'], 'meeting-list': ['相关会议', 'meeting'],
+    todos: ['会议待办', 'meeting'], 'doc-start': ['公文起草', 'document'],
+    'doc-templates': ['公文模板', 'document'], 'kb-hits': ['知识库检索结果', 'kb'],
+    diff: ['文本对比'], 'app-suggest': ['推荐应用'],
+  };
+  function renderReplyCard(card) {
+    const [title, app] = (Object.hasOwn(replyCardTypes, card.type) && replyCardTypes[card.type]) || ['对话结果'];
+    const view = h(`<div class="plan" data-reply-card="${esc(card.type || '')}"><div class="plan-h"><span class="ptitle">${esc(card.title || title)}</span></div></div>`);
+    const entries = card.results || card.hits || card.items || card.ids || [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (entry == null) continue;
+      const label = typeof entry === 'string' ? entry : entry.title || entry.name || entry.task || entry.text || entry.id;
+      if (!label) continue;
+      const sourceId = entry.id || entry.fileId;
+      if (card.type === 'kb-hits' && sourceId && can('kb', 'view')) {
+        const link = h(`<button type="button" class="btn sm ghost">${esc(label)}</button>`);
+        link.onclick = () => openCite(sourceId, entry.snippet);
+        view.appendChild(link);
+      } else view.appendChild(h(`<div class="pstep">${esc(label)}</div>`));
+    }
+    const target = app || (card.type === 'app-suggest' ? card.app || card.id : null);
+    if (target && JK.registry[target] && can(target, 'view')) {
+      const open = h('<button class="btn sm" type="button">打开应用</button>');
+      open.onclick = () => openApp(target, 'home', {
+        entId: card.entId, templateId: card.templateId, meetingId: card.meetingId,
+      });
+      view.appendChild(open);
+    }
+    return view;
   }
   function openCite(id, hl) { if (!id) return; if (JK.services.kb && JK.services.kb.open) JK.services.kb.open(id, { highlight: hl }); else if (JK.registry.kb) openApp('kb', 'doc', { fileId: id, highlight: hl }); }
   function postAI(o) { return push({ role: 'ai', text: o.text, cites: o.cites, next: o.next, model: o.model, routeNote: o.routeNote, q: o.q }); }
@@ -838,8 +935,9 @@
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }
-  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: c.n || i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
+  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
   async function answer(text, scope) {
+    if (!scope && H.mode() === 'http') return answerHttp(text);
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
     const finish = (o) => { Object.assign(thinking, o); const n2 = renderMsg(thinking); node.replaceWith(n2); saveConvs(); scrollEnd(); };
     const kbLike = /[？?]|什么|怎么|如何|哪些|多少|是否|能不能|可以|条件|标准|规定|政策|办法|补贴|申报|流程|要求/.test(text);
@@ -858,6 +956,68 @@
       if ((!JK.registry[rep.intent] || /^收到。关于/.test(rep.content || '')) && (!rep.citations || !rep.citations.length) && (text.length < 14 || /^收到。关于/.test(rep.content || ''))) return finish({ text: '我没太听懂，你是想：', q: text, next: fallbackNext() });
       finish({ q: text, text: (rep.content || '好的。').replace(/（演示环境[^）]*）/g, '').trim(), cites: (rep.citations || []).map((x, i) => ({ n: i + 1, id: x.fileId, title: x.name, snippet: x.snippet })), model: rep.model, routeNote: rep.routeNote, next: suggestFor(rep.intent) });
     } catch (e) { finish({ text: '抱歉，这个问题我暂时答不上来：' + (e.message || '出错了') }); }
+  }
+  async function answerHttp(text) {
+    const c = ensureConv(text);
+    const userId = S.me.id;
+    const conversations = S.convs;
+    const message = postAI({ text: '正在生成回复…', q: text });
+    let receivedText = false;
+    let streamed = false;
+    let pending = pendingConversations.get(c);
+    if (!c.sid && !pending) {
+      pending = API.chat.create({ title: c.title }).then(({ item }) => {
+        c.sid = item.id;
+        return c.sid;
+      }).finally(() => pendingConversations.delete(c));
+      pendingConversations.set(c, pending);
+    }
+
+    function draw() {
+      if (S.convs !== conversations) return;
+      if (userId !== S.me?.id) {
+        if (!S.me && afterReauthentication?.userId === userId) saveConvs(userId);
+        return;
+      }
+      if (c.id === S.cur) {
+        $('#chatcol .msgs-in')?.children[c.msgs.indexOf(message)]?.replaceWith(renderMsg(message));
+        scrollEnd();
+      }
+      saveConvs();
+    }
+
+    function finish(reply) {
+      Object.assign(message, {
+        text: reply.content ?? (receivedText ? message.text : '回复已完成'),
+        model: reply.model ?? message.model, routeNote: reply.routeNote ?? message.routeNote,
+        cards: reply.cards ?? message.cards, cites: reply.citations ? citesOf(reply) : message.cites,
+        next: suggestFor(reply.intent),
+      });
+    }
+
+    try {
+      const cid = c.sid || await pending;
+      if (userId !== S.me?.id || S.convs !== conversations) return;
+      const result = await API.chat.send(cid, { text, model: S.model, stream: true }, (type, data) => {
+        streamed = true;
+        if (type === 'meta') {
+          message.model = data.model;
+          message.routeNote = data.routeNote;
+        }
+        if (type === 'delta' && typeof data.text === 'string') {
+          message.text = (receivedText ? message.text : '') + data.text;
+          receivedText = true;
+        }
+        if (type === 'card' && data && typeof data === 'object') (message.cards ||= []).push(data);
+        if (type === 'done') finish(data.reply || {});
+        draw();
+      });
+      if (!streamed) finish(result.reply || result);
+    } catch (error) {
+      const note = error.message || '出错了';
+      message.text = receivedText ? message.text + '\n\n' + note : note;
+    }
+    draw();
   }
   async function serverConv(c) { if (c.sid) return c.sid; try { const r = await API.chat.create({ title: c.title }); c.sid = r.item.id; } catch (e) { c.sid = 'C-301'; } saveConvs(); return c.sid; }
   function fallbackNext() {

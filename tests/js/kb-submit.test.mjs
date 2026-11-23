@@ -25,7 +25,8 @@ const start=performance.now();
 const state = {};
 win.JKAPI = { ext:{state:()=>state,me:()=>({role:'member'}),roleOf:()=>({mask:false}),first(){}},onLoad:fn=>fn() };
 for (const p of ['data/real-kb.js','mock/kb.js']) vm.runInContext(read(p),vmctx);
-win.JK_CONFIG={api:{mode:'http',baseUrl:'https://fixture.invalid',timeoutMs:20000}};
+// 本脚本测 KB 面板预检/提交去重与错误隔离，传输层自动重试由 http-smoke 单独覆盖。
+win.JK_CONFIG={api:{mode:'http',baseUrl:'https://fixture.invalid',timeoutMs:20000,retryLimit:0}};
 let lastAnswer;
 vmctx.fetch=async (url,options)=>{
   const op = url.split('/').pop();
