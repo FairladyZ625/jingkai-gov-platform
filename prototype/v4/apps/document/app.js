@@ -48,6 +48,8 @@
       const { ui, api, perms } = ctx; const D = api.document; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canView = perms.can('view') && !perms.isPartner, canOp = canView && perms.can('operate'), canApprove = canView && perms.can('approve');
       const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
+      // 起草要素按草稿隔离，仅在当前公文会话保存；不从正文猜字段，也不写入共享记录。
+      const draftForms = new Map();
       let TPLS = [], GROUPS = [], DOCS = [], POLS = null, ENTS = null, loaded = false, loadErr = null;
       const $ = (s) => el.querySelector(s);
       const tplOf = (id) => TPLS.find((t) => t.id === id);
@@ -67,8 +69,24 @@
       async function refreshList() { try { DOCS = (await D.list()).items; } catch (e) { /* 列表刷新失败不影响当前稿 */ } }
       async function openDoc(id, step) {
         S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
+        S.inputs = {}; S.from = null; S.refs = new Set(); S.hits = [];
         S.tab = 'flow'; S.step = step == null ? 2 : step; render();
-        try { S.doc = (await D.get(id)).item; S.tpl = tplOf(S.doc.templateId); if (step == null && ['审签中', '已定稿', '已退回'].includes(S.doc.status)) S.step = 3; } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; }
+        try {
+          const { item } = await D.get(id);
+          if (S.id !== id) return;
+          S.doc = item; S.tpl = tplOf(item.templateId);
+          const form = draftForms.get(id);
+          if (form) {
+            S.inputs = { ...form.inputs }; S.from = form.from;
+            S.refs = new Set(form.refs); S.hits = form.hits.slice();
+          } else if (item.policyId && S.tpl?.inputs.some(([key]) => key === 'policy')) {
+            S.inputs.policy = item.policyId;
+          }
+          if (step == null && ['审签中', '已定稿', '已退回'].includes(item.status)) S.step = 3;
+        } catch (e) {
+          if (S.id !== id) return;
+          ui.toast(e.message, { type: 'err' }); S.step = 0;
+        }
         body();
       }
 
@@ -129,24 +147,28 @@
         const pol = S.inputs.policy && (POLS || []).find((p) => p.id === S.inputs.policy);
         const missing = t.inputs.filter(([k]) => !String(S.inputs[k] || '').trim()).length;
         $('#ds').innerHTML = `<div class="q">${esc(T.fillQ)} <span class="t-3">· ${esc(t.name)}</span></div><div class="q-sub">${esc(T.fillSub)}</div>
+          ${S.doc ? `<div class="callout h-blue"><div>重新生成会新建草稿，当前文稿和历史版本保留。</div>${draftForms.has(S.doc.id) ? '' : '<div class="meta">当前会话没有这份草稿的完整起草要素，缺失字段需重新填写。</div>'}</div>` : ''}
           ${S.from ? `<div class="callout h-indigo" style="margin-bottom:var(--s4)">${icon('link')}<div>来自${esc(S.from.label || S.from)}：已带上相关要素</div></div>` : ''}
           <div class="dc-fill"><div class="stack">${t.inputs.map(([k, label]) => `<div class="field"><label>${esc(label)}</label>${inputCtl(k, label)}</div>`).join('')}
             <div class="row" style="margin-top:var(--s2)"><button class="btn sm ghost" data-act="sample" data-op="document.sample">${icon('sparkles')}用示例填好</button><span class="sp"></span><span class="meta">${missing ? `还有 ${missing} 项没填` : '要素已齐'}</span></div>
             ${pol ? `<div class="dc-pol"><div class="meta">政策依据</div><b>${esc(pol.title)}</b><div class="meta">${esc(pol.docNo || '无文号')}${!pol.example && pol.source?.url ? ` · <a class="link" href="${esc(pol.source.url)}" target="_blank" rel="noopener">官网原文 ${icon('external')}</a>` : ''}</div></div>` : ''}</div>
             <div><div class="sec">参考范文 <span class="meta">${t.id === 'T03' ? '（初稿按公开政策与已填要素生成；勾选的范文仅供查阅）' : '（勾选后保留为文稿参考）'}</span></div><div id="drefs">${refsHtml()}</div></div></div>`;
-        foot(`<button class="btn ghost" data-step="0">换一类</button>`, `<button class="btn primary" data-act="gen" data-op="document.gen" ${S.busy ? 'disabled' : ''}>${S.busy ? '<span class="dc-spin"></span>起草中…' : `${icon('sparkles')}生成初稿`}</button>`);
+        foot(`<button class="btn ghost" data-step="0">换一类</button>`, `<button class="btn primary" data-act="gen" data-op="document.gen" ${S.busy ? 'disabled' : ''}>${S.busy ? '<span class="dc-spin"></span>起草中…' : `${icon('sparkles')}${S.doc ? '重新生成初稿' : '生成初稿'}`}</button>`);
       }
       const refsHtml = () => (S.hits == null ? '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>' : S.hits.length ? `<div class="stack rows">${S.hits.map((h) => `<label class="card tight li dc-ref"><input type="checkbox" class="cb" data-ref="${esc(h.id)}" ${S.refs.has(h.id) ? 'checked' : ''}><div class="grow"><div class="t clip">${esc(h.title)}</div><div class="s clip2">${esc((h.snippet || '').replace(/<[^>]+>/g, '').slice(0, 70))}</div></div><button class="btn icon sm ghost" data-kb="${esc(h.id)}" title="看原文">${icon('external')}</button></label>`).join('')}</div>` : '<div class="meta">知识库里暂时没有相近的范文</div>');
       async function loadRefs() {
-        const t = S.tpl; let hits = [];
+        const t = S.tpl, inputs = S.inputs; let hits = [];
         try { const q = `${t.name.replace(/通知|公示|意见/g, '')} ${String(S.inputs[t.inputs[0][0]] || t.inputs[0][2] || '').slice(0, 20)}`; const r = await ctx.kb.search(q, { space: 'template', limit: 8 }); const seen = new Set(); hits = (r.hits || []).filter((h) => !seen.has(h.title) && seen.add(h.title)).slice(0, 4); } catch (e) { hits = []; }
-        if (S.tpl !== t) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
+        if (S.tpl !== t || S.inputs !== inputs) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
       }
       async function generate() {
         if (S.busy) return; S.busy = true; if (S.step === 1) step1();
         try {
-          const refs = (S.hits || []).filter((h) => S.refs.has(h.id)).map((h) => ({ id: h.id, title: h.title }));
-          const r = await D.draft({ templateId: S.tpl.id, inputs: S.inputs, refs });
+          const form = { inputs: { ...S.inputs }, from: S.from, hits: (S.hits || []).slice(), refs: [...S.refs] };
+          const refs = form.hits.filter((h) => form.refs.includes(h.id)).map((h) => ({ id: h.id, title: h.title }));
+          const r = await D.draft({ templateId: S.tpl.id, inputs: form.inputs, refs });
+          draftForms.set(r.item.id, form);
+          if (draftForms.size > 50) draftForms.delete(draftForms.keys().next().value);
           S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${S.tpl.name} · ${r.item.title}`);
           await refreshList(); S.busy = false; render(); await runCheck(true);
         } catch (e) { S.busy = false; ui.toast(e.message, { type: 'err' }); if (S.step === 1) step1(); }
