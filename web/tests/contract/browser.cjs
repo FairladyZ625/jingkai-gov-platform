@@ -5,12 +5,14 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 test('Chromium 空存储：HTTP 登录、mock 知识库、刷新、HTTP 退出', { timeout: 60_000 }, async t => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(
+    process.env.PLAYWRIGHT_CHROME_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROME_PATH } : undefined,
+  );
   t.after(() => browser.close());
   const context = await browser.newContext({ colorScheme: 'light' });
   const page = await context.newPage();
   const remote = 'https://contract.invalid';
-  const credentials = { username: 'contract.leader', password: 'synthetic-example' };
+  const credentials = { username: 'contract.leader', password: 'sample-pw' };
   const user = { id: 'remote-leader', username: credentials.username, name: '契约测试领导', role: 'leader' };
   const me = { user, role: { id: 'leader', name: '审签领导' }, grants: { kb: ['view'] } };
   const requests = [];

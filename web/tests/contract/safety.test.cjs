@@ -99,7 +99,7 @@ test('远程明文 HTTP 在发请求前拒绝，回环 HTTP 与远程 HTTPS 放�
   const calls = [];
   globalThis.fetch = async url => { calls.push(String(url)); throw new TypeError('blocked in test'); };
   t.after(() => { globalThis.fetch = original; });
-  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'synthetic-value' };
+  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'sample-pw' };
   for (const base of ['http://example.com', 'http://10.0.0.8:8000', 'http://127.0.0.1.example.com']) {
     await assert.rejects(main(['--base', base, '--module', 'platform'], env, () => {}, () => {}), /远程目标必须使用 HTTPS/);
   }
@@ -121,7 +121,7 @@ test('登录重定向不会转发凭据或会话 Cookie', async t => {
   await new Promise(resolve => redirect.listen(0, '127.0.0.1', resolve));
   t.after(() => redirect.close());
   const base = 'http://127.0.0.1:' + redirect.address().port;
-  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'synthetic-value' };
+  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'sample-pw' };
   await assert.rejects(main(['--base', base, '--module', 'platform'], env, () => {}, () => {}), /登录失败（HTTP 307）/);
   assert.deepEqual(receiver.requests, []);
 });
@@ -204,7 +204,7 @@ test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用�
   assert.equal(context.JKAuth.user(), null);
   await assert.rejects(api.kb.spaces(), error => error.status === 401);
 
-  await api.auth.login({ username: 'remote.leader', password: 'synthetic-value' });
+  await api.auth.login({ username: 'remote.leader', password: 'sample-pw' });
   assert.equal(fetches.length, 1);
   assert.equal(new URL(fetches[0].url).pathname, '/api/v1/auth/login');
   const spaces = await api.kb.spaces();
@@ -212,7 +212,7 @@ test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用�
   assert.equal(context.JKAuth.user().role, 'leader');
   const session = context.JKAPI.state().session;
   assert.equal(session.bridged, true);
-  assert.ok(!JSON.stringify(context.JKAPI.state()).includes('synthetic-value'), '本地状态不保存远端口令');
+  assert.ok(!JSON.stringify(context.JKAPI.state()).includes('sample-pw'), '本地状态不保存远端口令');
 
   await api.auth.logout();
   assert.equal(context.JKAuth.user(), null);
@@ -231,7 +231,7 @@ test('混合模式登录期间发出的过期 401 不清除刚建立的演示会
   }, ctx => {
     ctx.JK_CONFIG.api = { mode: 'mock', baseUrl: 'https://demo.example.com', modules: { platform: 'http' } };
   });
-  const login = context.JKHttp.post('/api/v1/auth/login', { username: 'remote.leader', password: 'synthetic-value' });
+  const login = context.JKHttp.post('/api/v1/auth/login', { username: 'remote.leader', password: 'sample-pw' });
   const stale = context.JKHttp.get('/api/v1/models');
   finishLogin(Response.json({ user: { username: 'remote.leader', role: 'leader' } }));
   await login;

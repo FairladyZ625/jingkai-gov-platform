@@ -1,5 +1,12 @@
 {
+  "name": "jingkai-v4-web",
+  "private": true,
   "scripts": {
-    "contract": "node tests/contract/run.cjs"
+    "contract": "node tests/contract/run.cjs",
+    "test:smoke": "playwright test tests/smoke.js",
+    "test:e2e": "playwright test tests/e2e.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2"
   }
 }

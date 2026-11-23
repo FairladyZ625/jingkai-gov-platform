@@ -15,16 +15,16 @@
     "data/seed/real/rules.json": [
       "接受竞买报价，签订成交确认书"
     ],
-    "prototype/v4/data/real-kb.js": [
+    "web/data/real-kb.js": [
       "通用人形机器人天工3.0"
     ],
-    "prototype/v4/data/real-supplement.js": [
+    "web/data/real-supplement.js": [
       "接受竞买报价，签订成交确认书"
     ],
     "data/seed/real-kb.json": [
       "全尺寸通用人形机器人天工3.0敲击编钟，镜识科技高自由度灵巧手弹奏钢琴曲，麦麦科技M'ID具身智能内核模拟农业采摘，屏幕上展示的机器人流畅完成百米冲刺、立定跳远等动作……一个个精彩的表演结合现场艺术化的花园场景，生动诠释了具身智能技术从实验室走向大众生活的“未来图景”。"
     ],
-    "prototype/v4/config/mock-data.js": [
+    "web/config/mock-data.js": [
       "全尺寸通用人形机器人天工3.0敲击编钟，镜识科技高自由度灵巧手弹奏钢琴曲，麦麦科技M'ID具身智能内核模拟农业采摘，屏幕上展示的机器人流畅完成百米冲刺、立定跳远等动作……一个个精彩的表演结合现场艺术化的花园场景，生动诠释了具身智能技术从实验室走向大众生活的“未来图景”。"
     ]
   }

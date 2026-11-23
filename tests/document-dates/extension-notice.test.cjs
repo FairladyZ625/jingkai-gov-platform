@@ -11,7 +11,7 @@ function boot(stored = null) {
   const localStorage = { getItem: () => stored, setItem: (_, value) => { stored = value; } };
   const context = vm.createContext({ window: {}, localStorage, setTimeout });
   for (const file of ['config/app.config.js', 'config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js']) {
-    vm.runInContext(readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8'), context);
+    vm.runInContext(readFileSync(path.join(__dirname, '../../web', file), 'utf8'), context);
   }
   const api = context.window.JKAPI;
   api.latency = 0;

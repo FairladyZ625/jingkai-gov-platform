@@ -129,7 +129,7 @@ def test_seed_counts_across_two_restarts(api):
     if policies.exists():
         expected += len(read(policies)["policyDocs"])
     else:
-        script = (ROOT / "prototype/v4/data/real-policies.js").read_text()
+        script = (ROOT / "web/data/real-policies.js").read_text()
         expected += len(json.JSONDecoder().raw_decode(script.split("window.JK_REAL = ")[1])[0]["policyDocs"])
     if (seed / "kb-examples.json").exists():
         expected += len(read(seed / "kb-examples.json"))

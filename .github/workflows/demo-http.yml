@@ -1,0 +1,35 @@
+name: 演示 HTTP 联调
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  demo-http:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt playwright==1.58.0
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q -rs --junitxml=/tmp/demo-http.xml --durations=12 tests/demo_http tests/jkq/test_demo_stability.py
+      - name: 核验 HTTP 业务段 12/12
+        run: python tests/demo_http/check_segments.py /tmp/demo-http.xml
+  # 浏览器验收单独成检查，不并入 demo-http 必过门。
+  # 已知未过两项（断言未放宽）：单模块 mock 待 #108/#42；技能中心分享/发布缺 HTTP 回执。
+  # 两项接通后应并回 demo-http。
+  demo-browser-acceptance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt playwright==1.58.0
+      - run: python -m playwright install --with-deps chromium
+      - name: 浏览器一键演示与模块隔离
+        run: python -m pytest -q tests/demo_http/browser_acceptance.py

@@ -1,5 +1,7 @@
 # 部署演示环境
 
+面向全新 Linux 服务器的分步说明（服务器要求、环境变量表、启动、备份、日志与常见问题）见仓库根目录 [README.md 的「部署到服务器」](../README.md#部署到服务器)。下文是同一套 `deploy/` 文件的运维补充，包括首次启动细节、持有任务续跑验收和公网 pytest。
+
 本说明供有权限的运维人员在专用 Linux 演示机执行。需要 Git、Python 3、GNU Make、flock、curl 7.71+、支持时区的 systemd 和支持 config --no-env-resolution 的 Docker Compose。约定独立检出位于 /opt/jkq-demo，持久目录位于 /var/lib/jkq-demo。域名 A/AAAA 应指向此机，放行 TCP 80、443，供 Caddy 签发证书并对外提供 HTTPS。
 
 ## 首次启动
@@ -12,18 +14,30 @@ install -d -m 0700 /var/lib/jkq-demo/data
 (umask 077; set -C; cat deploy/env.example > deploy/.env)
 ```
 
-如需自定义持久目录，在 deploy/.env 设置绝对路径 DEMO_STATE_DIR，并在该目录创建 data 子目录。Compose 优先使用调用环境的值，其次读取 deploy/.env；手工与定时脚本从 Compose 解析后的 /state/live 挂载定位锁、快照和回退记录。运维人员应将长期设置写入 deploy/.env。编辑 deploy/.env，填写 DEMO_DOMAIN 和实例要求的环境变量：HAIKNOW_SECRET（会话签名，必填，可用 `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` 生成）和四个 JKQ_DEMO_*_PASSWORD（容器内无终端，未填时应用拒绝启动）。HAIKNOW_DEMO_LOGIN 保持 0，演示模式由 JKQ_DEMO_MODE=1 开启。模型凭据按需填写 HAIKNOW_MODEL_* 变量。CEO 指定示例文件名为 deploy/env.example，以兼容仓库对 .env 前缀的守卫。示例域名使用保留后缀 .invalid。容器以 `uvicorn jkq.app:create_app --factory --workers 1` 启动实例工厂，APP_PORT 默认 8000。镜像包含 core/server、core/sdk、jkq/、apps/、config/、data/public/ 和前端目录（有 web/ 时用 web/，否则用 prototype/v4/）。所有业务数据和 job 检查点须落到 HAIKNOW_DATA_DIR。镜像安装与 Chromium 配套的 Python Playwright。应用和浏览器使用容器内部网络，只有反代发布端口。
+如需自定义持久目录，在 deploy/.env 设置绝对路径 DEMO_STATE_DIR，并在该目录创建 data 子目录。Compose 优先使用调用环境的值，其次读取 deploy/.env；手工与定时脚本从 Compose 解析后的 /state/live 挂载定位锁、快照和回退记录。运维人员应将长期设置写入 deploy/.env。编辑 deploy/.env，填写 DEMO_DOMAIN 和实例要求的环境变量：HAIKNOW_SECRET（会话签名，必填，可用 `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` 生成）和四个 JKQ_DEMO_*_PASSWORD（容器内无终端，未填时应用拒绝启动）。HAIKNOW_DEMO_LOGIN 保持 0，演示模式由 JKQ_DEMO_MODE=1 开启。模型凭据按需填写 HAIKNOW_MODEL_* 变量。CEO 指定示例文件名为 deploy/env.example，以兼容仓库对 .env 前缀的守卫。示例域名使用保留后缀 .invalid。容器命令是 `python deploy/entrypoint.py`。演示模式（`JKQ_DEMO_MODE=1`）下四个 `JKQ_DEMO_*_PASSWORD` 未设置或长度不在 6 至 1024 位时，入口直接拒绝启动，不打印口令。入口随后启动 `uvicorn jkq.app:create_app --factory --workers 1`，APP_PORT 默认 8000。实例在对外监听前创建 admin、liyang、wangmin、hejun 四个口令身份并关闭首管入口。健康检查同时要求 `/api/health` 为 200，以及本机 `POST /api/auth/bootstrap` 与 `POST /api/v1/auth/bootstrap` 为 404；未关闭前反代不启动。Caddy 对这两条首管路径直接返回 404，不转发到应用。仅当 `JKQ_DEPLOY_RUNTIME=1`（Compose 已设置）时，入口把容器内前端的 `api.mode` 改为 `http`、`baseUrl` 改为空，页面走同源真实会话；仓库里的原型文件保持 `mock`，file:// 仍可离线打开。镜像额外放入 `apps/jkq-hold`，操作名 `hold`：提交后保持 running，容器重启后同一任务 ID 变为 done，已完成的 `saved` 步骤不重复。镜像包含 core/server、core/sdk、jkq/、apps/、config/、data/public/ 和前端目录（有 web/ 时用 web/，否则用 prototype/v4/）。所有业务数据和 job 检查点须落到 HAIKNOW_DATA_DIR。镜像安装与 Chromium 配套的 Python Playwright。应用和浏览器使用容器内部网络，只有反代发布端口。
 
 ```sh
 docker compose -f deploy/docker-compose.yml up -d
 curl --fail --show-error --output /dev/null --write-out '%{http_code}\n' https://<演示域名>/api/health
 ```
 
-预期输出 200。通过 HTTPS 页面分别用管理员、审签领导、经办人员和外部协作者登录，核对 /api/v1/auth/session 返回的身份。在重启前保存一条业务记录，启动一个可续跑 job，记下两个 ID；执行以下命令后，用同一账号核对记录、job 终态与步骤执行次数。单 worker 与持久卷提供恢复条件，续跑行为依赖实例加载持久检查点。
+预期输出 200。公网 `POST /api/v1/auth/bootstrap` 返回 404。通过 HTTPS 页面分别用管理员、审签领导、经办人员和外部协作者登录，核对 `/api/v1/auth/session` 返回的身份。用管理员或审签领导提交 `appId=jkq-hold`、`operation=hold` 的任务，确认状态为 running 后执行下面的重启；同一任务 ID 变为 done，`saved` 步骤只执行一次。单 worker 与持久卷提供恢复条件。
 
 ```sh
 docker compose -f deploy/docker-compose.yml restart
 ```
+
+## 前端接口模式开关（演示兜底）
+
+容器内前端默认走同源真实接口（`http`）。截至 2026-11-19，真后端尚未覆盖一键演示用到的全部接口（政策、公文、知识库、技能、电脑操作等仍有 404），12 段演示只在 mock 下全部通过。演示环境在 deploy/.env 写入下面一行，重建 app 后前端保留浏览器内 mock，账号登录、健康检查和首管入口关闭不受影响：
+
+```sh
+JKQ_FRONTEND_API_MODE=mock
+docker compose -f deploy/docker-compose.yml up -d --force-recreate app
+curl -s https://<演示域名>/config/app.config.js | grep "api: {"
+```
+
+预期输出含 `mode: 'mock'`。mock 模式的业务数据存在各浏览器的 localStorage，不写 HAIKNOW_DATA_DIR，头像菜单「重置演示数据」只清本机浏览器。真后端接口补齐后，把该值改为 `http`（或删除该行）再重建 app，即回到同源真实会话。deploy/env.example 默认写 `mock`。
 
 ## 快照与重置
 

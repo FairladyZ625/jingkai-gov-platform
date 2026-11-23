@@ -1,0 +1,137 @@
+/* 电脑操作 · 只用 theme.css 变量；选择器以 .app-computer 开头（截图弹窗挂在 body，用 .cu-shotbig） */
+.app-computer .cu-wrap{max-width:880px;margin:0 auto;padding:var(--s6) var(--s8) var(--s12)}
+.app-computer .cu-head{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)} .app-computer .cu-head h2{margin:0}
+.app-computer .cu-tabs{margin-bottom:var(--s5)}
+.app-computer .cu-back{margin:0 0 var(--s3) calc(-1 * var(--s2))} .app-computer .cu-back .ico{transform:rotate(180deg)}
+.app-computer .cu-ask{padding:var(--s3);margin-bottom:var(--s5)} .app-computer .cu-ask .search .ico{color:var(--t-amber-fg)}
+.app-computer .cu-task{display:flex;flex-direction:column;gap:var(--s3)} .app-computer .cu-task>.row>.ico{color:var(--text-3)}
+.app-computer .cu-name{font-weight:var(--fw-b)}
+.app-computer .cu-stop{gap:6px;font-size:var(--fs-xs);color:var(--t-amber-fg)} .app-computer .cu-stop .ico{width:14px;height:14px}
+.app-computer .cu-sys .cu-acc{display:flex;align-items:center;gap:4px;white-space:nowrap} .app-computer .cu-sys .cu-acc .ico{width:13px;height:13px}
+.app-computer .cu-sh{margin-bottom:var(--s5)} .app-computer .cu-sh h2{margin:0 0 2px}
+.app-computer .cu-setup{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}
+.app-computer .cu-sec-h{font-size:var(--fs-sm);font-weight:var(--fw-m);color:var(--text-2);margin-bottom:var(--s3)}
+.app-computer .cu-prev{display:flex;flex-direction:column;gap:2px}
+.app-computer .cu-prev-i{display:flex;align-items:center;gap:var(--s2);padding:6px 0;font-size:var(--fs-sm)}
+.app-computer .cu-prev-i.human{color:var(--text)} .app-computer .cu-you{display:inline-flex;align-items:center;gap:4px;color:var(--t-amber-fg)} .app-computer .cu-you .ico{width:13px;height:13px}
+.app-computer .cu-n{width:18px;height:18px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;font-weight:var(--fw-b);background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);flex:none}
+.app-computer .cu-prev-i.human .cu-n{border-color:var(--t-amber-fg);color:var(--t-amber-fg);background:var(--surface)}
+/* 运行 */
+.app-computer .cu-runw{max-width:920px;padding-top:var(--s4)}
+.app-computer{container-type:inline-size}
+.app-computer .cu-rh{display:flex;flex-direction:column;gap:var(--s3);margin-bottom:var(--s4)} .app-computer .cu-rh-t{min-width:0}
+.app-computer .cu-bar{display:flex;align-items:center;gap:var(--s3);min-height:32px} .app-computer .cu-st{display:flex;align-items:center;gap:var(--s2);min-width:0;flex:1} .app-computer .cu-stepn{min-width:0}
+.app-computer .cu-bar [data-ctl]{flex:none}
+.app-computer .cu-wait{margin-bottom:var(--s3);align-items:flex-start} .app-computer .cu-wait b{display:block;margin-bottom:2px}
+.app-computer .cu-sum{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 16px;margin-top:var(--s2);font-size:var(--fs-xs)}
+.app-computer .cu-sum span{color:var(--text-3);margin-right:6px} .app-computer .cu-sum b{font-weight:var(--fw-m)} .app-computer .cu-sum div{min-width:0} .app-computer .cu-sum span{display:block;margin:0 0 1px} .app-computer .cu-sum b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-computer .cu-browser{position:relative;border:1px solid var(--border-strong);border-radius:var(--r-lg);overflow:hidden;background:var(--surface);box-shadow:var(--shadow-1)}
+.app-computer .cu-browser.manual{box-shadow:0 0 0 2px var(--t-violet-fg)}
+.app-computer .cu-chrome{display:flex;align-items:center;gap:var(--s3);height:36px;padding:0 var(--s3);background:var(--surface-2);border-bottom:1px solid var(--border)}
+.app-computer .cu-dots{display:flex;gap:6px} .app-computer .cu-dots i{width:9px;height:9px;border-radius:50%;background:var(--border-strong)}
+.app-computer .cu-url{flex:1;min-width:0;display:flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-pill);background:var(--bg);font:12px var(--mono);color:var(--text-2)} .app-computer .cu-url .ico{width:12px;height:12px;color:var(--t-green-fg)}
+.app-computer .cu-live{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--t-amber-fg);white-space:nowrap} .app-computer .cu-live i{width:7px;height:7px;border-radius:50%;background:var(--t-amber-fg);animation:cuPulse 1.2s infinite} .app-computer .cu-live i.m{background:var(--t-violet-fg)}
+@keyframes cuPulse{50%{opacity:.3}}
+.app-computer .cu-vp{height:clamp(340px,50vh,480px);overflow:auto;background:var(--bg)}
+.app-computer .cu-shield{position:absolute;inset:36px 0 0;z-index:2;cursor:not-allowed}
+.app-computer .cu-cur{position:absolute;z-index:4;left:50%;top:50%;opacity:0;pointer-events:none;transition:left .55s var(--ease),top .55s var(--ease),opacity .2s;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}
+.app-computer .cu-cur span{position:absolute;left:18px;top:16px;padding:1px 6px;border-radius:5px;background:var(--t-amber-fg);color:var(--surface);font-size:11px;font-weight:var(--fw-b)}
+.app-computer .cu-rip{position:absolute;left:-10px;top:-10px;width:24px;height:24px;border-radius:50%;border:2px solid var(--t-amber-fg);animation:cuRip .5s ease-out forwards} @keyframes cuRip{to{transform:scale(2.2);opacity:0}}
+.app-computer .cu-bubble{position:absolute;z-index:3;left:var(--s3);bottom:var(--s3);max-width:70%;padding:6px 10px;border-radius:var(--r-md);background:var(--surface-3);box-shadow:var(--shadow-pop);font-size:var(--fs-xs);color:var(--text);opacity:0;transform:translateY(4px);transition:all .2s}
+.app-computer .cu-bubble.on{opacity:1;transform:none}
+.app-computer .cu-now{margin:var(--s3) 0 var(--s2);gap:6px}
+.app-computer .cu-strip{display:flex;gap:var(--s2);overflow-x:auto;padding-bottom:4px}
+.app-computer .cu-th{width:120px;flex:none;cursor:pointer;opacity:.55} .app-computer .cu-th.has,.app-computer .cu-th.cur{opacity:1}
+.app-computer .cu-th-img{width:120px;height:72px;border-radius:var(--r-md);border:1px solid var(--border);background:var(--surface-2);overflow:hidden;position:relative}
+.app-computer .cu-th.cur .cu-th-img{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.app-computer .cu-th-in{position:absolute;left:0;top:0;width:800px;height:480px;transform:scale(.15);transform-origin:0 0;pointer-events:none;background:var(--bg)}
+.app-computer .cu-th-l{display:flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:var(--text-2)} .app-computer .cu-th-l .ico{width:12px;height:12px;flex:none} .app-computer .cu-th-l>.ico:first-child{color:var(--t-green-fg)} .app-computer .cu-th-l>.ico:last-child:not(:first-child){color:var(--t-amber-fg)}
+.app-computer .cu-log{margin-top:var(--s4)}
+.cu-shotbig{border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;background:var(--bg);height:520px} .cu-shotbig .cu-shot-in{pointer-events:none}
+
+/* ===== 被操作系统的模拟画面（.vs-*）：中性色，跟随深/浅主题 ===== */
+.app-computer .cu-vp,.cu-shotbig,.app-computer .cu-th-in{--vs-brand:var(--t-red-fg)}
+:is(.app-computer .cu-vp,.cu-shotbig,.app-computer .cu-th-in){font-size:13px;color:var(--text)}
+:is(.app-computer,.cu-shotbig) .vs-top{display:flex;align-items:center;gap:10px;height:44px;padding:0 20px;background:var(--surface);border-bottom:2px solid var(--vs-brand,var(--t-red-fg))}
+:is(.app-computer,.cu-shotbig) .vs-top b{font-size:14px}
+:is(.app-computer,.cu-shotbig) .vs-logo{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:var(--t-red-bg);color:var(--t-red-fg);font-weight:700;font-size:12px}
+:is(.app-computer,.cu-shotbig) .vs-sp{flex:1}
+:is(.app-computer,.cu-shotbig) .vs-nav{font-size:12px;color:var(--text-2);padding:4px 8px;border-radius:6px} :is(.app-computer,.cu-shotbig) .vs-nav.on{color:var(--text);background:var(--hover)}
+:is(.app-computer,.cu-shotbig) .vs-pad{padding:18px 24px}
+:is(.app-computer,.cu-shotbig) .vs-center{display:grid;place-items:center;padding:28px 20px}
+:is(.app-computer,.cu-shotbig) .vs-card{width:360px;padding:22px;border-radius:12px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;gap:12px}
+:is(.app-computer,.cu-shotbig) .vs-tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);margin-bottom:4px} :is(.app-computer,.cu-shotbig) .vs-tabs span{padding:6px 0;color:var(--text-2);cursor:pointer} :is(.app-computer,.cu-shotbig) .vs-tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--vs-brand,var(--t-red-fg))}
+:is(.app-computer,.cu-shotbig) .vs-f{display:flex;flex-direction:column;gap:4px} :is(.app-computer,.cu-shotbig) .vs-f label{font-size:12px;color:var(--text-2)} :is(.app-computer,.cu-shotbig) .vs-f label i{color:var(--t-red-fg);font-style:normal;margin-left:2px}
+:is(.app-computer,.cu-shotbig) .vs-in{height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:13px;width:100%;transition:border-color .15s,box-shadow .15s}
+:is(.app-computer,.cu-shotbig) .vs-hint{font-size:11px;color:var(--t-amber-fg)}
+:is(.app-computer,.cu-shotbig) .vs-row{display:flex;gap:8px}
+:is(.app-computer,.cu-shotbig) .vs-btn{height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap}
+:is(.app-computer,.cu-shotbig) .vs-btn.pri{background:var(--t-red-fg);border-color:var(--t-red-fg);color:var(--surface);font-weight:600} :is(.app-computer,.cu-shotbig) .vs-btn.block{width:100%} :is(.app-computer,.cu-shotbig) .vs-btn.sm{height:26px;padding:0 10px;font-size:12px} :is(.app-computer,.cu-shotbig) .vs-btn.ghost{background:transparent}
+:is(.app-computer,.cu-shotbig) .vs-mini{font-size:11px;color:var(--text-3)}
+:is(.app-computer,.cu-shotbig) .vs-h{font-size:15px;font-weight:600;margin-bottom:12px}
+:is(.app-computer,.cu-shotbig) .vs-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px} :is(.app-computer,.cu-shotbig) .vs-item.link{cursor:pointer}
+:is(.app-computer,.cu-shotbig) .vs-grow{flex:1;min-width:0} :is(.app-computer,.cu-shotbig) .vs-it{font-weight:500}
+:is(.app-computer,.cu-shotbig) .vs-tag{font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap;background:var(--t-amber-bg);color:var(--t-amber-fg)} :is(.app-computer,.cu-shotbig) .vs-tag.ok{background:var(--t-green-bg);color:var(--t-green-fg)} :is(.app-computer,.cu-shotbig) .vs-tag.bad{background:var(--t-red-bg);color:var(--t-red-fg)}
+:is(.app-computer,.cu-shotbig) .vs-crumb{font-size:12px;color:var(--text-3);margin-bottom:12px}
+:is(.app-computer,.cu-shotbig) .vs-sec{font-weight:600;margin:16px 0 10px;padding-left:8px;border-left:3px solid var(--vs-brand,var(--t-red-fg))}
+:is(.app-computer,.cu-shotbig) .vs-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px} :is(.app-computer,.cu-shotbig) .vs-f.wide{grid-column:1/-1}
+:is(.app-computer,.cu-shotbig) .vs-up{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px dashed var(--border-strong);border-radius:8px;margin-bottom:8px}
+:is(.app-computer,.cu-shotbig) .vs-file{font-size:12px;color:var(--t-green-fg)}
+:is(.app-computer,.cu-shotbig) .vs-check{display:flex;align-items:center;gap:8px;margin:14px 0;font-size:12px;color:var(--text-2);cursor:pointer}
+:is(.app-computer,.cu-shotbig) .vs-box{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--border-strong);flex:none} :is(.app-computer,.cu-shotbig) .vs-box.on{background:var(--t-red-fg);border-color:var(--t-red-fg);box-shadow:inset 0 0 0 3px var(--surface)}
+:is(.app-computer,.cu-shotbig) .vs-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+:is(.app-computer,.cu-shotbig) .vs-ok{align-items:center;text-align:center} :is(.app-computer,.cu-shotbig) .vs-okc{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--t-green-bg);color:var(--t-green-fg);font-size:22px}
+:is(.app-computer,.cu-shotbig) .vs-kv{display:flex;justify-content:space-between;width:100%;font-size:12px} :is(.app-computer,.cu-shotbig) .vs-kv span{color:var(--text-3)}
+:is(.app-computer,.cu-shotbig) .vs-verify{margin-top:12px;padding:8px 12px;border-radius:8px;background:var(--t-green-bg);color:var(--t-green-fg);font-size:12px}
+:is(.app-computer,.cu-shotbig) .vs-article .vs-at{font-size:16px;font-weight:600;text-align:center;line-height:1.5} :is(.app-computer,.cu-shotbig) .vs-c{text-align:center;margin:6px 0 12px}
+:is(.app-computer,.cu-shotbig) .vs-meta{display:flex;flex-wrap:wrap;gap:6px 16px;padding:8px 12px;border-radius:8px;background:var(--surface-2);font-size:12px;margin-bottom:12px}
+:is(.app-computer,.cu-shotbig) .vs-article p{line-height:1.8;text-indent:2em;color:var(--text-2)}
+:is(.app-computer,.cu-shotbig) .vs-att{display:flex;gap:8px;align-items:center;margin:12px 0 6px;font-size:12px} :is(.app-computer,.cu-shotbig) .vs-att a{color:var(--accent);cursor:pointer}
+:is(.app-computer,.cu-shotbig) .vs-tbl{width:100%;border-collapse:collapse;font-size:12px} :is(.app-computer,.cu-shotbig) .vs-tbl th{text-align:left;color:var(--text-3);font-weight:500;padding:8px;border-bottom:1px solid var(--border)} :is(.app-computer,.cu-shotbig) .vs-tbl td{padding:9px 8px;border-bottom:1px solid var(--border)}
+:is(.app-computer,.cu-shotbig) .vs-focus{outline:2px solid var(--t-amber-fg);outline-offset:2px;border-radius:6px}
+:is(.app-computer,.cu-shotbig) .clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} :is(.app-computer,.cu-shotbig) .mono{font-family:var(--mono)}
+
+/* 窄面板（对话 + 面板并排时约 480–640px） */
+@container (max-width: 640px) {
+  .app-computer .cu-wrap{padding:var(--s5) var(--s5) var(--s10)}
+  .app-computer .cu-wait{flex-wrap:wrap}
+  .app-computer .cu-wait>.grow{flex:1 1 calc(100% - 40px)}
+  .app-computer .cu-wait>.col{flex-direction:row;width:100%;padding-left:28px}
+  .app-computer .cu-bar [data-ctl] .btn .ico+*{display:inline}
+  .app-computer .cu-sys .cu-acc{display:none}
+}
+@container (max-width: 520px) {
+  .app-computer .cu-tasks{grid-template-columns:1fr}
+}
+
+/* 2.0：提示条中性底；“等你确认”用细色边 + 色相图标，不用色块 */
+.app-computer .callout[class*=" h-"]{background:var(--surface-2);border-color:var(--border)}
+.app-computer .cu-wait{background:var(--surface);border-color:var(--border-strong);box-shadow:var(--shadow-1)}
+.app-computer .cu-wait[data-op="computer.wait"]{border-color:var(--tb);box-shadow:0 0 0 1px var(--tb)}
+.app-computer .cu-wait>.ico{color:var(--tf)}
+.app-computer .cu-wait b{font-weight:var(--fw-b)}
+.app-computer .cu-head h2,.app-computer .cu-sh h2{font-weight:var(--fw-m);letter-spacing:var(--track-tight)}
+.app-computer .cu-rh .h3{font-weight:var(--fw-m);font-size:var(--fs-xl);letter-spacing:var(--track-tight)}
+.app-computer .cu-name{font-weight:var(--fw-m)}
+.app-computer .cu-sec-h{font-size:var(--fs-xs);color:var(--text-3)}
+.app-computer .cu-browser+.cu-strip{margin-top:var(--s3)}
+@container (max-width: 760px) { .app-computer .cu-setup{grid-template-columns:1fr} }
+
+/* ===== 2.2 multica 对齐（skills worker） ===== */
+/* 模拟政务网站永远浅色（深色主题下也是）：用 [data-theme=light] 局部重置令牌 */
+.app-computer [data-theme=light]{color:var(--text);color-scheme:light}
+.app-computer .cu-browser[data-theme=light]{background:var(--bg)}
+/* 新任务：输入框不再套框；任务卡 = multica 卡（细边、无阴影、浅灰列底） */
+.app-computer .cu-ask{padding:0;border:0;background:none;box-shadow:none}
+.app-computer .cu-tasks{background:var(--canvas);border:1px solid var(--border);border-radius:var(--r-xl);padding:var(--s2);gap:var(--s2)}
+.app-computer .cu-task{padding:var(--s3) var(--s4);gap:var(--s2);box-shadow:none;border-color:var(--border-strong)}
+.app-computer .cu-task:hover{border-color:var(--border-hover);box-shadow:var(--shadow-1)}
+.app-computer .cu-task .cu-stop{font-size:var(--fs-xs)}
+.app-computer .sect{margin-top:var(--s5)}
+/* AI 会这样做：发丝线行 + 状态环 */
+.app-computer .cu-plan{padding:0;overflow:hidden}
+.app-computer .cu-plan .cu-sec-h{height:36px;display:flex;align-items:center;padding:0 var(--s4);margin:0;background:var(--fill);color:var(--text-2);font-size:var(--fs-sm);font-weight:var(--fw-m);border-bottom:1px solid var(--border)}
+.app-computer .cu-plan .cu-prev{gap:0}
+.app-computer .cu-plan .cu-prev-i{padding:0 var(--s4);min-height:38px;border-bottom:1px solid var(--border)} .app-computer .cu-plan .cu-prev-i:last-child{border-bottom:0}
+.app-computer .cu-n{background:transparent;border:1.5px solid var(--border-hover);color:var(--text-3);font-weight:var(--fw-m)}
+.app-computer .cu-prev-i.human .cu-n{border-color:var(--t-amber-fg)}

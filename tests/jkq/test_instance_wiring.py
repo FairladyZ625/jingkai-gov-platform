@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -26,7 +27,7 @@ PANEL = {"app": "policy", "route": "detail", "params": {"id": "PI-03"}}
 
 
 @pytest.fixture
-def client(monkeypatch, tmp_path, cheap_password_hash):
+def client(request, monkeypatch, tmp_path, cheap_password_hash):
     for name in tuple(os.environ):
         if name.startswith(("HAIKNOW_MODEL_", "HAIKNOW_PROVIDER_")):
             monkeypatch.delenv(name)
@@ -43,6 +44,8 @@ def client(monkeypatch, tmp_path, cheap_password_hash):
     ]}), encoding="utf-8")
     apps = tmp_path / "apps"
     shutil.copytree(ROOT / "tests/fixtures/platform-app", apps / "sample-app")
+    for name in getattr(request, "param", ()):
+        shutil.copytree(ROOT / "apps" / name, apps / name)
     monkeypatch.delenv("HAIKNOW_ROOT", raising=False)
     monkeypatch.delenv("JKQ_WEB_DIR", raising=False)
     monkeypatch.setenv("HAIKNOW_SECRET", "jkq-test-session-signing")
@@ -132,22 +135,37 @@ def test_conversation_routes_return_errors_through_instance(client):
     assert_error(client.get(f"{CONVERSATIONS}/{cid}"), 404, "NOT_FOUND")
 
 
-def test_job_route_uses_jingkai_view_and_sdk_falls_back(client):
-    client.app.state.platform.jobs.operations[("sample-app", "transcribe")] = ("1", None)
-    login(client, "sampleoperator")
-    response = client.post(JOBS, json={
-        "appId": "sample-app", "project": "jkq", "operation": "transcribe",
-        "input": {"ref": "audio-1"}, "idempotencyKey": "instance-wiring",
-    })
-    assert response.status_code == 202, response.text
-    job_id = response.json()["id"]
-    job = client.get(f"{JOBS}/{job_id}").json()["job"]
-    assert {key: job[key] for key in ("id", "kind", "ref", "status")} == {
-        "id": job_id, "kind": "transcribe", "ref": "audio-1", "status": "running",
-    }
-    sdk = client.get(f"{JOBS}/{job_id}?app=sample-app")
-    assert sdk.status_code == 200, sdk.text
-    assert "job" not in sdk.json() and sdk.json()["id"] == job_id
+def test_job_route_uses_jingkai_view_and_sdk_falls_back(client, monkeypatch):
+    started, release = Event(), Event()
+
+    def transcribe(_execution, _body):
+        started.set()
+        assert release.wait(timeout=10), "测试未释放样例长任务"
+        return {}
+
+    monkeypatch.setitem(
+        client.app.state.platform.jobs.operations, ("sample-app", "transcribe"), ("1", transcribe)
+    )
+    try:
+        login(client, "sampleoperator")
+        response = client.post(JOBS, json={
+            "appId": "sample-app", "project": "jkq", "operation": "transcribe",
+            "input": {"ref": "audio-1"}, "idempotencyKey": "instance-wiring",
+        })
+        assert response.status_code == 202, response.text
+        job_id = response.json()["id"]
+        # 等操作真正开始，并在两个视图读取完毕前保持运行，避免依赖调度时序。
+        assert started.wait(timeout=5), "样例长任务未启动"
+        job = client.get(f"{JOBS}/{job_id}").json()["job"]
+        assert {key: job[key] for key in ("id", "kind", "ref", "status")} == {
+            "id": job_id, "kind": "transcribe", "ref": "audio-1", "status": "running",
+        }
+        sdk = client.get(f"{JOBS}/{job_id}?app=sample-app")
+        assert sdk.status_code == 200, sdk.text
+        assert "job" not in sdk.json() and sdk.json()["id"] == job_id
+        assert sdk.json()["status"] == "running"
+    finally:
+        release.set()
     assert_error(client.get(f"{JOBS}/missing"), 404, "NOT_FOUND")
 
 
@@ -179,3 +197,16 @@ def test_review_sdk_requests_fall_back_to_core(client):
     confirmed = client.post(path, json={"decision": "confirm", "version": 1})
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["status"] == "confirmed" and "item" not in confirmed.json()
+
+
+@pytest.mark.parametrize("client", [("document",)], indirect=True)
+def test_document_instance_guards_generic_review_entry(client):
+    """#41：实例启动即挂载公文送审、导出，通用送审入口拒绝公文，其他应用不受影响。"""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/apps/document/drafts/{identity}/submit" in paths
+    assert "/api/apps/document/drafts/{identity}/export" in paths
+    login(client, "sampleoperator")
+    blocked = client.post(REVIEWS, json={"appId": "document", "recordId": "any", "version": 1})
+    assert_error(blocked, 405, "METHOD_NOT_ALLOWED")
+    review = submit_review(client)
+    assert review["status"] == "pending"

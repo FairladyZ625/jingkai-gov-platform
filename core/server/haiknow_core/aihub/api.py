@@ -14,7 +14,7 @@ from .gateway import CAPABILITIES, CAPABILITY_SUPPORT, TEST_ORDER, Gateway
 
 def v1_error(status, code, message, **details):
     """v1 错误信封的管理接口拒绝：理由要写清，不能被通用文案盖掉。"""
-    return JSONResponse({'error': {'code': code, 'message': message, 'retryable': False, **details}}, status_code=status)
+    return JSONResponse({'error': {'code': code.upper(), 'message': message, 'retryable': False, **details}}, status_code=status)
 
 
 def transport_warnings(kind, base_url):
@@ -110,7 +110,7 @@ def install(app, plat):
     async def ai_error(request: Request, error: AIError):
         status = {'not_configured': 503, 'quota_exceeded': 429, 'timeout': 504, 'bad_input': 400,
                   'provider_error': 502, 'outbound_denied': 403, 'not_found': 404}[error.kind]
-        envelope = {'code': error.kind, 'message': str(error), 'retryable': error.retryable}
+        envelope = {'code': error.kind.upper(), 'message': str(error), 'retryable': error.retryable}
         if getattr(error, 'task_id', None):
             envelope['taskId'] = error.task_id
         return JSONResponse({'error': envelope}, status_code=status)

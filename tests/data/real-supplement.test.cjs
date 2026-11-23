@@ -7,7 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { tmpdir } = require('node:os');
 
 const root = path.resolve(__dirname, '../..');
-const data = path.join(root, 'prototype/v4/data');
+const data = path.join(root, 'web/data');
 const groups = ['gongwen', 'rules', 'minutes', 'enterprises'];
 const read = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
 const seeds = Object.fromEntries(groups.map(key => [key, read('data/seed/real/' + key + '.json')]));
@@ -40,11 +40,11 @@ test('逐条保留来源与日期，并按原始依据标注文种、效力和�
 test('已有知识库的页面也加载补充数据，保持企业台账独立并避免重复加载', () => {
   const window = { JK_REAL: {}, JK_REAL_KB: {}, JK_KB_EXAMPLES: [], JK_DATA: { enterprises: [] } };
   const writes = [];
-  const document = { currentScript: { src: 'file:///prototype/v4/data/index.js' },
+  const document = { currentScript: { src: 'file:///web/data/index.js' },
     readyState: 'loading', write: html => writes.push(html) };
   const run = name => vm.runInNewContext(fs.readFileSync(path.join(data, name), 'utf8'), { window, document });
   run('index.js');
-  assert.deepEqual(writes, ['<script src="file:///prototype/v4/data/real-supplement.js"></script>']);
+  assert.deepEqual(writes, ['<script src="file:///web/data/real-supplement.js"></script>']);
   run('real-supplement.js');
   assert.deepEqual(JSON.parse(JSON.stringify(window.JK_REAL_SUPPLEMENT)), seeds);
   run('index.js');
@@ -56,7 +56,7 @@ test('已有知识库的页面也加载补充数据，保持企业台账独立�
 test('从公开快照重建的种子和离线脚本与提交内容逐字节一致', t => {
   const tmp = fs.mkdtempSync(path.join(tmpdir(), 'jk8-seed-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  for (const dir of ['scripts/data', 'prototype/v4/data', 'data/public']) {
+  for (const dir of ['scripts/data', 'web/data', 'data/public']) {
     fs.mkdirSync(path.join(tmp, dir), { recursive: true });
   }
   const builder = 'scripts/data/build_real_supplement.py';
@@ -66,7 +66,7 @@ test('从公开快照重建的种子和离线脚本与提交内容逐字节一�
     fs.copyFileSync(path.join(root, file), path.join(tmp, file));
   }
   execFileSync('python3', [path.join(tmp, builder)]);
-  for (const file of [...groups.map(key => 'data/seed/real/' + key + '.json'), 'prototype/v4/data/real-supplement.js']) {
+  for (const file of [...groups.map(key => 'data/seed/real/' + key + '.json'), 'web/data/real-supplement.js']) {
     assert.ok(fs.readFileSync(path.join(tmp, file)).equals(fs.readFileSync(path.join(root, file))), file);
   }
 });

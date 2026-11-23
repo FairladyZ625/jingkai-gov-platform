@@ -4,7 +4,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 const vm = require('node:vm');
 
-const prototype = path.join(__dirname, '../../prototype/v4');
+const prototype = path.join(__dirname, '../../web');
 const documentApi = '/api/apps/document';
 
 function mock(storage = new Map()) {

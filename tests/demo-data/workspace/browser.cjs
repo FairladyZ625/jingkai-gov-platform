@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
 const legacy = require('./legacy-cache.json');
 
 const root = path.resolve(__dirname, '../../..');
-const entry = pathToFileURL(path.join(root, 'prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.join(root, 'web/index.html')).href;
 const realSeed = JSON.parse(fs.readFileSync(path.join(root, 'data/seed/real-kb.json'), 'utf8')).docs;
 const countOf = async (locator) => Number((await locator.innerText()).match(/\d+/)?.[0]);
 const op = (page, name) => page.locator('[data-op="' + name + '"]');
