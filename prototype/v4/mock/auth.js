@@ -101,6 +101,9 @@
         X.err(403, 'FORBIDDEN', '无权使用企业台账进行匹配');
       if (method === 'POST' && /^\/api\/apps\/meeting\/meetings\/[^/]+\/link$/.test(p) && !X.can('enterprise', 'operate'))
         X.err(403, 'FORBIDDEN', '没有企业台账的操作权限');
+      // 平台收件箱仍走 HTTP，模拟文稿不能生成只有当前浏览器看得到的待办。
+      if (method === 'POST' && /^\/api\/apps\/document\/drafts\/[^/]+\/submit$/.test(p))
+        X.err(409, 'MIXED_REVIEW_UNSUPPORTED', '模拟公文不能送审，请在真实公文模块中起草并送审。');
       if (app === 'skills' && (method === 'POST' && /\/(trial|run)$/.test(p) || /^\/api\/v1\/skills\/jobs\//.test(p)))
         X.err(501, 'MIXED_JOB_UNSUPPORTED', '跨模块技能任务需要完整 HTTP 服务或独立离线演示');
     }

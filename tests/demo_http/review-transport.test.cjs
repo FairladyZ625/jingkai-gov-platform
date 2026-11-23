@@ -49,6 +49,38 @@ test('画面版本优先于列表缓存；服务端拒绝仍按原状态和原�
   assert.deepEqual(sent, {decision: 'reject', reason: '请复核', version: 7});
 });
 
+test('HTTP 会话中的模拟公文不能送进真实收件箱，也不生成孤立的模拟待办', async () => {
+  const paths = [];
+  const ctx = vm.createContext({
+    localStorage: {getItem() {}, setItem() {}}, setTimeout, clearTimeout, AbortController,
+    fetch: async (url, init) => {
+      paths.push([init.method, url]);
+      assert.equal(url, '/api/v1/me');
+      return Response.json({
+        user: {id: 'u-wangmin', username: 'wangmin', name: '王敏', role: 'member', status: 'active'},
+        role: {id: 'member', mask: false}, grants: {document: ['view', 'operate']},
+      });
+    },
+  });
+  ctx.window = ctx;
+  const load = file => vm.runInContext(readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8'), ctx);
+  load('config/app.config.js');
+  ctx.JK_CONFIG.api = {mode: 'http', baseUrl: '', modules: {document: 'mock'}};
+  for (const file of ['config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/auth.js',
+                      'api/http.js', 'api/document.js']) load(file);
+  ctx.JKAPI.latency = 0;
+  const api = ctx.JKApi.document;
+  const template = (await api.templates()).items.find(t => t.id === 'T06');
+  const inputs = Object.fromEntries(template.inputs.map(([k, , v]) => [k, v]));
+  const {item} = await api.draft({templateId: template.id, inputs});
+  const before = ctx.JKAPI.state().inbox.length;
+  await assert.rejects(api.submit(item.id, {assignee: '李阳'}), e =>
+    e.status === 409 && e.code === 'MIXED_REVIEW_UNSUPPORTED' && /不能送审/.test(e.message));
+  assert.equal((await api.get(item.id)).item.status, '草稿');
+  assert.equal(ctx.JKAPI.state().inbox.length, before);
+  assert.ok(paths.every(([method, url]) => method === 'GET' && url === '/api/v1/me'));
+});
+
 test('离线公文也不能自送自审，指定领导之外的账号不能代签', async () => {
   const ctx = vm.createContext({window: {}, localStorage: {getItem() {}, setItem() {}}, setTimeout});
   for (const file of ['config/app.config.js', 'config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js']) {

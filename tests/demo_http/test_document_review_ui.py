@@ -7,6 +7,57 @@ from tests.demo_http.password_ui import login
 
 
 @pytest.mark.parametrize("server", [()], indirect=True)
+def test_reward_notice_can_fill_missing_header_fields_and_reach_leader(server):
+    with sync_playwright() as pw, pw.chromium.launch() as browser:
+        leader, member = browser.new_page(), browser.new_page()
+        for page, name in ((leader, "liyang"), (member, "wangmin")):
+            page.goto(server.url)
+            assert page.evaluate("JK_CONFIG.api.mode") == "http"
+            login(page, name, server.password)
+
+        member.locator('[data-op="nav.document"]').click()
+        member.locator('[data-op="document.tpl-T03"]').click()
+        member.locator('[data-op="document.sample"]').click()
+        endpoint = server.url + "/api/apps/document/drafts"
+        with member.expect_response(lambda r: r.url == endpoint and r.request.method == "POST") as created:
+            member.locator('[data-op="document.gen"]').click()
+        assert created.value.ok, created.value.text()
+        draft = created.value.json()["item"]
+        paper = member.locator('.dc-paper')
+        expected = {"sign": "隔离测试工作组", "to": "试验参与单位：", "date": "2026年11月18日"}
+        for key, value in expected.items():
+            assert "待补" in draft["versions"][-1]["content"][key]
+            paper.locator(f'[data-pe="{key}"]').first.click()
+            editor = paper.locator(f'[data-ed="{key}"]')
+            editor.fill(value)
+            editor.press("Tab")
+        # 样例正文的申报材料仍需人工填写，不能靠放宽核查来送审。
+        paper.locator('[data-op="document.p-2"]').click()
+        editor = paper.locator('[data-ed="2"]')
+        editor.fill("申报材料仅限本次测试的虚构申请表。")
+        editor.press("Tab")
+        with member.expect_response(lambda r: r.url == f'{endpoint}/{draft["id"]}' and r.request.method == "PUT") as saved:
+            member.locator('[data-op="document.save"]').click()
+        assert saved.value.ok, saved.value.text()
+        content = saved.value.json()["item"]["versions"][-1]["content"]
+        assert {key: content[key] for key in expected} == expected
+
+        member.locator('[data-op="document.to-review"]').click()
+        member.locator('[data-op="document.submit"]').click()
+        dialog = member.get_by_role("dialog")
+        expect(dialog.get_by_label("审签人")).to_have_value("李阳")
+        with member.expect_response(lambda r: r.url == f'{endpoint}/{draft["id"]}/submit') as submitted:
+            dialog.get_by_role("button", name="确认送审").click()
+        assert submitted.value.ok, submitted.value.text()
+        review = submitted.value.json()["review"]
+        assert review["assignee"] == "u-liyang"
+        assert any(item["id"] == review["id"] for item in
+                   leader.request.get(server.url + "/api/v1/reviews").json()["items"])
+        leader.locator('[data-op="nav.inbox"]').click()
+        expect(leader.locator(".inb-i").filter(has_text=draft["title"])).to_be_visible()
+
+
+@pytest.mark.parametrize("server", [()], indirect=True)
 @pytest.mark.parametrize("width", [1440, 1280])
 def test_document_submission_dialog(server, width, tmp_path):
     with sync_playwright() as pw, pw.chromium.launch() as browser:
