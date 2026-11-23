@@ -5,6 +5,12 @@
 (function () {
   const { esc, icon, tag, toast, modal, confirm, appIcon } = JK; const API = window.JKApi;
   const TABS = [['users', '账号', 'users'], ['org', '组织', 'building'], ['grants', '角色与授权', 'shield'], ['models', '模型', 'cpu'], ['skills', '技能审核', 'skill'], ['audit', '审计日志', 'history'], ['usage', '用量', 'chart']];
+  const documentAuditLabels = new Map([
+    ['document.draft.mock', '起草公文初稿（模拟）'],
+    ['v1.record.save', '保存公文记录'],
+  ]);
+  const auditApp = row => row.app === 'document' ? '公文协作' : row.app;
+  const auditAction = row => row.app === 'document' ? documentAuditLabels.get(row.action) || row.action : row.action;
   let SH = null;
   async function render(el, tab, shell) {
     SH = shell; el.dataset.tab = tab;
@@ -61,9 +67,9 @@
     },
     async audit(b, el) {
       const r = await API.audit.list(); const items = (r.items || []).map((x) => Array.isArray(x) ? { at: x[0], user: x[1], app: x[2], action: x[3], model: x[4] } : x);
-      const f = el.dataset.af || ''; const list = items.filter((x) => !f || [x.user, x.app, x.action].join(' ').includes(f));
+      const f = el.dataset.af || ''; const list = items.filter((x) => !f || [x.user, x.app, x.action, auditApp(x), auditAction(x)].join(' ').includes(f));
       b.innerHTML = `<div class="row" style="margin-bottom:16px"><div class="search grow" style="max-width:280px">${icon('filter')}<input class="input sm" placeholder="按人 / 应用 / 动作筛选" value="${esc(f)}" data-af></div><span class="sp"></span><span class="t-3 t-sm">${list.length} 条</span><button class="btn" data-csv>${icon('download')}导出 CSV</button></div>
-        <div class="card flat" style="overflow:auto"><table class="tbl"><thead><tr><th>时间</th><th>人员</th><th>应用</th><th>动作</th><th>模型</th></tr></thead><tbody>${list.slice(0, 60).map((x) => `<tr class="audit-row"><td class="num" style="white-space:nowrap">${esc((x.at || '').slice(5))}</td><td style="white-space:nowrap">${esc(x.user)}</td><td>${tag(x.app, null, { cls: 'plain' })}</td><td>${esc(x.action)}</td><td class="t-3" style="white-space:nowrap">${esc(x.model || '—')}</td></tr>`).join('')}</tbody></table></div>`;
+        <div class="card flat" style="overflow:auto"><table class="tbl"><thead><tr><th>时间</th><th>人员</th><th>应用</th><th>动作</th><th>模型</th></tr></thead><tbody>${list.slice(0, 60).map((x) => `<tr class="audit-row"><td class="num" style="white-space:nowrap">${esc((x.at || '').slice(5))}</td><td style="white-space:nowrap">${esc(x.user)}</td><td>${tag(auditApp(x), null, { cls: 'plain' })}</td><td title="${esc(x.action)}">${esc(auditAction(x))}</td><td class="t-3" style="white-space:nowrap">${esc(x.model || '—')}</td></tr>`).join('')}</tbody></table></div>`;
       const fi = b.querySelector('[data-af]'); fi.oninput = () => { el.dataset.af = fi.value; clearTimeout(fi._t); fi._t = setTimeout(() => re(el).then(() => { const n = el.querySelector('[data-af]'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }), 300); };
       b.querySelector('[data-csv]').onclick = () => { const csv = '\ufeff时间,人员,应用,动作,模型\n' + list.map((x) => [x.at, x.user, x.app, x.action, x.model || ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'); JK.download('审计日志.csv', csv, 'text/csv;charset=utf-8'); toast('已导出'); };
     },

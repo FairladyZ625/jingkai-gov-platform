@@ -450,7 +450,10 @@
       nav: { open: (a, r, p) => { if (mounted()) return a === 'inbox' || a === 'admin' ? openBuiltin(a, r) : openApp(a, r, p); }, go: (r, p) => mounted()?.ctl?.go?.(r, p), back: () => {}, chat: (text) => { if (mounted()) return send(text); } },
       operator: { isRunning: () => !!Op.running },
       chat: { post: (card) => { if (mounted()) return postAI(typeof card === 'string' ? { text: card } : card); }, say: (t) => { if (mounted()) return postAI({ text: t }); } },
-      audit: (action, detail) => H.post('/api/v1/audit', { app: mf(id).name, action: detail ? `${action} · ${detail}` : action }).catch(() => {}),
+      // HTTP 审计由执行操作的后端生成；浏览器仅向离线演示的模拟审计表写入。
+      audit: (action, detail) => H.mode() === 'mock'
+        ? H.post('/api/v1/audit', { app: mf(id).name, action: detail ? `${action} · ${detail}` : action }).catch(() => {})
+        : Promise.resolve(),
     };
   }
 
