@@ -173,6 +173,7 @@
       function fillCtl(id, cond, c) {
         if (cond.trigger && /有相关投入/.test(cond.label || '')) return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>需人工确认：投入是否属于本事项支持范围</span><button class="link" data-src="${id}">看原文</button></div>`;
         if (cond.f === 'license' || cond.op === 'has') return `<label class="check pol-fill-i"><input type="checkbox" data-lic="${esc([].concat(cond.v)[0])}" data-op="policy.fill-license">${esc(c.label)}？已持有</label>`;
+        if (typeof cond.v === 'boolean') return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>需人工确认：${esc(c.label)}</span><button class="link" data-src="${id}">看原文</button></div>`;
         const f = F(cond.f);
         return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>缺：${esc(f[0] || c.label)}</span><input class="input sm num" type="number" min="0" data-fill="${cond.f}" data-op="policy.fill-${cond.f}" placeholder="${esc(f[1])}" style="width:110px"><span class="meta">${esc(f[1])}</span><button class="btn sm" data-act="refill" data-op="policy.refill-${cond.f}">重算</button><button class="link" data-sample="${cond.f}">填入示例</button></div>`;
       }
@@ -251,7 +252,8 @@
         ]));
         S.busy = true;
         try {
-          const { text } = await P.notice({ entId: S.mode === 'ent' ? S.entId : undefined, itemIds: list.map((x) => x.id), amounts });
+          const target = S.mode === 'ent' ? { entId: S.entId } : { profile: { subjectType: S.manual.object } };
+          const { text } = await P.notice({ ...target, itemIds: list.map((x) => x.id), amounts });
           if (S.match !== match || S.step !== step) return;
           if (inputs.some(([x, calc]) => S.calc[x.id] !== calc)) return;
           S.notice = text;
@@ -345,12 +347,16 @@
         const applicable = results.filter((x) => x.level !== 'no');
         const eligible = applicable.filter((x) => !x.ended);
         const ok = eligible.filter((x) => x.level === 'ok');
+        const eligibleIds = new Set(eligible.map(x => x.id));
+        const defaults = Array.isArray(response.defaultItemIds)
+          ? [...new Set(response.defaultItemIds.filter(id => eligibleIds.has(id)))]
+          : (ok.length ? ok : eligible.slice(0, 2)).map(x => x.id);
         return {
           ...response,
           results,
           total: response.total ?? ITEMS.length,
           summary: { ...response.summary, ended: response.summary.ended ?? applicable.length - eligible.length },
-          defaultItemIds: response.defaultItemIds ?? (ok.length ? ok : eligible.slice(0, 2)).map((x) => x.id),
+          defaultItemIds: defaults,
         };
       }
       async function runMatch(fromSnapshot = false) {

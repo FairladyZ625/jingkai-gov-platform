@@ -14,12 +14,13 @@ DATA_ITEMS = ("RP-001", "RP-003")
 
 
 @pytest.fixture
-def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch):
+def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch, tmp_path):
     config, _ = isolated_platform
     for name in ("projects.yaml", "roles.yaml", "users.yaml"):
         copyfile(REPO_ROOT / "config" / name, config / name)
     monkeypatch.setenv("HAIKNOW_APPS_DIR", str(REPO_ROOT / "apps"))
     monkeypatch.setenv("HAIKNOW_SECRET", "test-policy-session")
+    monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", str(tmp_path / "enterprise.db"))
     monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
     monkeypatch.setenv("JKQ_DEMO_MODE", "1")
     for role in ("admin", "leader", "member", "partner"):
@@ -58,3 +59,21 @@ def test_match_post_applies_enterprise_overrides(policy_client):
 def test_view_only_role_cannot_match_enterprise(policy_client):
     response = policy_client("partner").post(MATCH, json={"entId": "E001", "overrides": {"dataPurchase": 300000}})
     assert response.status_code == 403
+
+
+def test_general_enterprise_profile_does_not_confirm_specialized_policy_scope(policy_client):
+    response = policy_client().post(MATCH, json={"profile": {
+        "subjectType": "企业", "regInZone": True,
+        "tags": ["智能网联汽车", "人工智能"], "license": ["高新技术企业"], "yearsInZone": 3,
+    }})
+    assert response.status_code == 200, response.text
+    results = {row["id"]: row for row in response.json()["results"]}
+    for item_id, field in {
+        "RP-028": "supplyChainFinanceProvider",
+        "RP-038": "exportCreditInsuredEnterprise",
+        "RP-050": "recognizedIncubator",
+        "RP-062": "assemblyProject",
+    }.items():
+        row = results[item_id]
+        assert row["level"] == "check", (item_id, row["level"])
+        assert any(c["condition"]["f"] == field and c["state"] == "unknown" for c in row["checks"])

@@ -16,12 +16,13 @@ PREFIX = "/api/apps/policy"
 NOTICE = {"entId": "E001", "itemIds": ["RP-001", "RP-006"]}
 
 @pytest.fixture
-def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch):
+def policy_client(isolated_platform, reuse_loaded_routers, cheap_password_hash, monkeypatch, tmp_path):
     config, _ = isolated_platform
     for name in ("projects.yaml", "roles.yaml", "users.yaml"):
         copyfile(REPO_ROOT / "config" / name, config / name)
     monkeypatch.setenv("HAIKNOW_APPS_DIR", str(REPO_ROOT / "apps"))
     monkeypatch.setenv("HAIKNOW_SECRET", "test-policy-session")
+    monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", str(tmp_path / "enterprise.db"))
     monkeypatch.delenv("HAIKNOW_DEMO_LOGIN", raising=False)
     monkeypatch.setenv("JKQ_DEMO_MODE", "1")
     for role in ("admin", "leader", "member", "partner"):
@@ -58,12 +59,32 @@ def test_notice_returns_source_departments_and_document_prefill(policy_client):
     assert all(item["title"] in link["params"]["inputs"]["issue"] for item in selected)
 
 
+def test_manual_notice_without_enterprise_preserves_trial_calculation(policy_client):
+    response = policy_client().post(f"{PREFIX}/notice", json={
+        "profile": {"subjectType": "企业"},
+        "itemIds": ["PI-03", "RP-006"],
+        "amounts": {"PI-03": 10000, "RP-006": None},
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert "申报对象：企业（手动描述）" in result["text"]
+    assert "企业编号：" not in result["text"]
+    assert "试算参考：1 万元 × 50% = 5000 元" in result["text"]
+    assert result["text"].count("试算参考：") == 1
+    assert result["deepLink"]["params"]["inputs"]["ent"] == ""
+    assert "entId" not in result["deepLink"]["params"]
+
+
 @pytest.mark.parametrize(("overrides", "status", "code"), [
     ({"itemIds": []}, 400, "INVALID_REQUEST"),
     ({"itemIds": ["PI-03", "missing"]}, 404, "NOT_FOUND"),
     ({"itemIds": [" "]}, 400, "INVALID_REQUEST"),
     ({"itemIds": "PI-03"}, 400, "INVALID_REQUEST"),
     ({"entId": "missing"}, 404, "NOT_FOUND"),
+    ({"entId": None}, 400, "INVALID_REQUEST"),
+    ({"profile": {"subjectType": "企业"}}, 400, "INVALID_REQUEST"),
+    ({"entId": None, "profile": {"subjectType": "未知"}}, 400, "INVALID_REQUEST"),
+    ({"amounts": {"PI-03": -1}}, 400, "INVALID_REQUEST"),
 ])
 def test_invalid_notice_requests(policy_client, overrides, status, code):
     response = policy_client().post(f"{PREFIX}/notice", json={**NOTICE, **overrides})
