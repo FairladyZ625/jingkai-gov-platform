@@ -182,3 +182,10 @@ def admin_usage(request: Request, groupBy: Literal['app', 'model', 'user'] = 'ap
     store = request.app.state.platform.store
     with store._lock:
         return usage.usage_page(store._db, groupBy)
+
+
+@router.get('/api/v1/admin/usage/summary')
+def admin_usage_summary(request: Request, user=Depends(require_action('*', 'admin'))):
+    store = request.app.state.platform.store
+    with store._lock:
+        return {'usage': usage.usage_summary(store._db)}
