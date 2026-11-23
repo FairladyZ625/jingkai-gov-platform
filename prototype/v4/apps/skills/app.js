@@ -52,6 +52,7 @@
       const canReview = () => ctx.perms.can('approve', 'skills');
       const catHue = (c) => ctx.ui.hue(c, 'skillCat');
       const st = { view: 'home', q: '', cat: '全部', list: [], apps: [], mine: [], review: [], detail: null, dtab: 'use', make: null, opts: null, ents: null, out: null };
+      const reviewing = new Set();
       let alive = true;
 
       /* ---------- 数据 ---------- */
@@ -105,7 +106,7 @@
       /* ---------- 审核 ---------- */
       function viewReview() {
         if (!st.review.length) return ctx.ui.empty({ icon: 'check', title: '没有待审核的技能', desc: '同事申请“全区公开”时会出现在这里' });
-        return `<div class="col rows">${st.review.map((s) => `<div class="card sk-rv"><div class="row gap3">${skIco(s)}<div class="grow"><div class="sk-name">${esc(s.name)}</div><div class="t-3 t-xs">${esc(s.author)} · ${esc(s.dept || '')} · v${esc(s.version)} · 申请全区公开</div></div>${tag('待上架审核')}</div>
+        return `<div class="col rows">${st.review.map((s) => `<div class="card sk-rv"><div class="row gap3">${skIco(s)}<div class="grow"><div class="sk-name">${esc(s.name)}</div><div class="t-3 t-xs">${esc(s.author)} · ${esc(s.dept || '')} · v${esc(s.contentVersion ?? s.version)} · 申请全区公开</div></div>${tag('待上架审核')}</div>
             <div class="t-2 t-sm sk-sum">${esc(s.summary)}</div>
             <div class="row wrap sk-chips">${s.spec.steps.map((x) => `<span class="sk-step-pill">${icon(COPY.stepTypes[x.type][0])}${esc(x.label)}</span>`).join('')}<span class="sk-step-pill">${icon('cpu')}${esc(modelName(s.spec.model))}</span></div>
             <div class="card-f"><button class="btn sm ghost" data-open="${s.id}">查看并试运行</button><span class="sp"></span><button class="btn sm" data-reject="${s.id}" data-op="skills.reject.${s.id}">退回</button><button class="btn sm soft" data-approve="${s.id}" data-op="skills.approve.${s.id}">${icon('check')}通过上架</button></div></div>`).join('')}</div>`;
@@ -428,9 +429,52 @@
         toast('已删除', { action: { label: '撤销', fn: async () => { await API.undoRemove(r.item); await loadLists(); render(); } } });
       }
       async function decide(id, decision) {
-        let reason = '';
-        if (decision === 'reject') { reason = await new Promise((res) => { ctx.ui.modal({ title: '退回原因', body: '<textarea class="textarea" rows="3" data-rs placeholder="例如：输出里缺少政策依据"></textarea>', okText: '退回', ok: (d) => res(d.querySelector('[data-rs]').value.trim() || '需要修改'), onMount: (d, close) => { d.querySelector('[data-x]').addEventListener('click', () => res(null)); } }); }); if (reason === null) return; }
-        try { await API.review(id, { decision, reason }); ctx.bus && ctx.bus.emit('inbox:changed'); toast(decision === 'approve' ? '已通过，全区可用' : '已退回'); await loadLists(); render(); } catch (e) { toast(e.message, { type: 'err' }); }
+        const pending = st.review.find(s => s.id === id);
+        if (!pending || !canReview() || reviewing.has(id)) return;
+        const target = {};
+        if (window.JKHttp.mode('skills') === 'http') {
+          const { reviewId, version } = pending;
+          if (typeof reviewId !== 'string' || !reviewId.trim() || !Number.isInteger(version) || version < 1) {
+            toast('待审版本不可用，请刷新审核列表后重试', { type: 'err' });
+            return;
+          }
+          Object.assign(target, { reviewId, version });
+        }
+        async function send(reason) {
+          if (!alive || !canReview() || reviewing.has(id)) return false;
+          reviewing.add(id);
+          try {
+            try {
+              await API.review(id, { decision, reason, ...target });
+            } catch (e) {
+              toast(e.message || '审核请求失败，请刷新后重试', { type: 'err' });
+              return false;
+            }
+            if (!alive) return true;
+            ctx.bus?.emit('inbox:changed');
+            toast(decision === 'approve' ? '已通过，全区可用' : '已退回');
+            try { await loadLists(); render(); }
+            catch { toast('审核结果已保存，但列表未刷新，请重试', { type: 'warn' }); }
+            return true;
+          } finally {
+            reviewing.delete(id);
+          }
+        }
+        if (decision === 'approve') return send('');
+        return ctx.ui.modal({
+          title: '退回原因', okText: '退回',
+          body: '<textarea class="textarea" rows="3" data-rs aria-label="退回原因" placeholder="例如：输出里缺少政策依据"></textarea>',
+          onMount: d => d.querySelector('[data-rs]').focus(),
+          ok: async d => {
+            const input = d.querySelector('[data-rs]'), reason = input.value.trim();
+            if (!reason) { toast('请填写退回原因', { type: 'warn' }); input.focus(); return false; }
+            const button = d.querySelector('[data-ok]');
+            button.disabled = true;
+            if (await send(reason)) return true;
+            button.disabled = false;
+            return false;
+          },
+        });
       }
       async function shareDialog(id) {
         await opts(); const r = await API.get(id); const s = r.item; const sh = Object.assign({ people: [] }, s.share); const link = `jkq://skills/${s.id}`;
