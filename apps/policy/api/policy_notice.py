@@ -4,24 +4,30 @@ from html import unescape
 
 from haiknow_sdk.preview.components.c06 import Book, Slot
 
+from .policy_calc import estimate
 
-_HEADER = Book((Slot("entId"),))
+
+_HEADER = Book((Slot("subject"),))
 _SECTION = Book((Slot("title"), Slot("guidance", required=False), Slot("department")))
 _SECTION_TEMPLATE = "{{title}}\n{{guidance}}落款：{{department}}\n咨询电话：请填写"
 _FOOTER = "具体申报条件、材料及受理时间以正式申报通知为准。"
 _TEMPLATE_ID = "T10"  # 公文的「企业诉求答复意见」模板
 
 
-def build_notice(ent_id: str, items: list[dict]) -> dict:
-    heading = _HEADER.render("政策兑现一次性告知单\n企业编号：{{entId}}", {"entId": ent_id})
+def build_notice(ent_id: str | None, items: list[dict], *, subject_type=None, amounts=None) -> dict:
+    subject = f"企业编号：{ent_id}" if ent_id else f"申报对象：{subject_type}（手动描述）"
+    heading = _HEADER.render("政策兑现一次性告知单\n{{subject}}", {"subject": subject})
     sections = [heading.html]
     for index, item in enumerate(items, 1):
         source = item.get("source") or {}
         department = (source.get("deptResp") or "").strip() or "请填写"
         times = item.get("times") or {}
+        rule = item.get("rule") or {}
+        trial = estimate(rule, (amounts or {}).get(item["id"]))
         fields = (
             ("政策依据", " ".join(value for value in (item.get("docNo"), item.get("clause")) if value)),
-            ("支持标准", (item.get("rule") or {}).get("text")),
+            ("支持标准", rule.get("text")),
+            ("试算参考", trial["text"] if trial and trial["kind"] == "ratio" else None),
             ("申报时间", times.get("deadlineText") or times.get("window")),
             ("需准备材料", "、".join(item.get("materials") or [])),
             ("尚需确认", "、".join(item.get("pending") or [])),
@@ -43,11 +49,11 @@ def build_notice(ent_id: str, items: list[dict]) -> dict:
             "app": "document",
             "route": "new",
             "params": {
-                "entId": ent_id,
+                **({"entId": ent_id} if ent_id else {}),
                 "itemIds": item_ids,
                 "templateId": _TEMPLATE_ID,
                 "from": "policy",
-                "inputs": {"ent": ent_id, "policy": item_ids[0], "issue": issue},
+                "inputs": {"ent": ent_id or "", "policy": item_ids[0], "issue": issue},
                 "notice": text,
             },
         },

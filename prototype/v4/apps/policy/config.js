@@ -18,6 +18,8 @@ window.JK_APPCFG.policy = {
     rent: ['年房租 / 物业费', '万元', 1e4], dataPurchase: ['数据产品采购额', '万元', 1e4], computePurchase: ['算力采购额', '万元', 1e4],
     datasetInvest: ['数据集建设投入', '万元', 1e4], digitalInvest: ['数字化投入', '万元', 1e4], renovation: ['新建 / 改造投入', '万元', 1e4],
     sceneInvest: ['场景项目投入', '万元', 1e4], firstSale: ['首台套合同额', '万元', 1e4], area: ['经营面积', '㎡', 1],
+    insurancePremium: ['出口信用保险保费', '万元', 1e4], financingContractAmount: ['当年相关业务合同金额', '万元', 1e4],
+    exportAmount: ['出口额', '万元', 1e4],
     employees: ['参保人数', '人', 1], age: ['年龄', '岁', 1], yearsInZone: ['入区经营年限', '年', 1],
   },
   /* 待确认项“填入示例”时用的值（接口单位） */
