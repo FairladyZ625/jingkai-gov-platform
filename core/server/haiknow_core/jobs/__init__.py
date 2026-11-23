@@ -14,11 +14,11 @@ def install(app, platform, current_user):
 
     @router.post('', status_code=202)
     def submit(body: SubmitBody, user=Depends(current_user)):
-        return service.submit(user, body.model_dump())
+        return service.submit(user, body.model_dump(), public=True)
 
     @router.get('')
     def jobs(app: str | None = None, project: str | None = None, status: str | None = None, user=Depends(current_user)):
-        return service.list(user, app_id=app, project=project, status=status)
+        return service.list(user, app_id=app, project=project, status=status, public=True)
 
     @router.get('/notifications')
     def notifications(app: str | None = None, user=Depends(current_user)):
@@ -30,7 +30,7 @@ def install(app, platform, current_user):
 
     @router.get('/{jid}')
     def get(jid: str, app: str | None = None, user=Depends(current_user)):
-        return service.get(user, jid, app_id=app)
+        return service.get(user, jid, app_id=app, public=True)
 
     @router.post('/{jid}/cancel')
     def cancel(jid: str, app: str | None = None, user=Depends(current_user)):

@@ -50,12 +50,12 @@ def test_request_error_envelope_and_cooldown(unstable, monkeypatch):
         response = c.get('/api/apps/bad-app' + path)
         assert response.status_code == 500
         error = response.json()['error']
-        assert error['code'] == 'app_error' and error['app'] == 'bad-app'
+        assert error['code'] == 'APP_ERROR' and error['app'] == 'bad-app'
         assert error['requestId'] and 'private' not in response.text and 'Traceback' not in response.text
         ids.append(error['requestId'])
     assert len(set(ids)) == 3
     response = c.get('/api/apps/bad-app/ok')
-    assert response.status_code == 503 and response.json()['error']['code'] == 'app_unavailable'
+    assert response.status_code == 503 and response.json()['error']['code'] == 'APP_UNAVAILABLE'
     assert 'Retry-After' in response.headers
     assert 'bad-app' in c.get('/api/health').json()['unavailable']
     assert c.get('/api/apps/sample-app/records').status_code == 200

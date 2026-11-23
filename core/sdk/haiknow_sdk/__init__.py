@@ -25,7 +25,7 @@ from .ai import AI
 from .resources import DataError, DataFiles, Records, Reviews, Artifacts, Notifications
 
 ACTIONS = ("view", "operate", "approve", "admin")
-SDK_VERSION = "1.0.0"
+SDK_VERSION = "2.0.0"
 
 __all__ = ["ACTIONS", "SDK_VERSION", "AppContext", "User", "app_context", "require", "PermissionDenied", "ModelError", "DataError"]
 
