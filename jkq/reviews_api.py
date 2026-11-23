@@ -50,7 +50,15 @@ def list_pending(service, user):
                 if error.code != 'not_found':
                     raise
                 continue
-            items.append({**review_view(review), 'project': record['project']})
+            item = {**review_view(review), 'project': record['project']}
+            if app == 'document' and record['type'] == 'document-draft':
+                item['title'] = record['data']['content']['title']
+                item['approver'] = (
+                    'approve' in service.rbac.actions(user, app)
+                    and user.id not in (review['submitter'], record['submitter'])
+                    and review['assignee'] in (None, user.id)
+                )
+            items.append(item)
         return {'items': items}
 
 

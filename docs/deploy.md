@@ -1,5 +1,7 @@
 # 部署演示环境
 
+面向全新 Linux 服务器的分步说明（服务器要求、环境变量表、启动、备份、日志与常见问题）见仓库根目录 [README.md 的「部署到服务器」](../README.md#部署到服务器)。下文是同一套 `deploy/` 文件的运维补充，包括首次启动细节、持有任务续跑验收和公网 pytest。
+
 本说明供有权限的运维人员在专用 Linux 演示机执行。需要 Git、Python 3、GNU Make、flock、curl 7.71+、支持时区的 systemd 和支持 config --no-env-resolution 的 Docker Compose。约定独立检出位于 /opt/jkq-demo，持久目录位于 /var/lib/jkq-demo。域名 A/AAAA 应指向此机，放行 TCP 80、443，供 Caddy 签发证书并对外提供 HTTPS。
 
 ## 首次启动

@@ -1,4 +1,8 @@
-const { expect, test, subpath, openLogin, login } = require('./workspace');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { expect, test, openLogin, login } = require('./workspace');
+
+const fileEntry = pathToFileURL(path.resolve(__dirname, '../index.html')).href;
 
 const panel = (page, id) => page.locator('.pview.on[data-view="' + id + '"]');
 const reply = (page, text) => page.locator('#chatcol .msg.ai .txt').filter({ hasText: text }).first();
@@ -84,7 +88,8 @@ for (const [index, [name, check]] of segments.entries()) {
   test(String(index + 1).padStart(2, '0') + ' ' + name, async ({ page }) => {
     if (index === 7) test.setTimeout(95_000);
     if (index === 11) await page.addInitScript(() => localStorage.setItem('jk4-theme2', 'dark'));
-    await openLogin(page, subpath);
+    await page.context().setOffline(true);
+    await openLogin(page, fileEntry);
     await login(page);
     expect(await page.evaluate(() => JK_DEMO_SCRIPT.map(segment => segment.title))).toEqual(segments.map(([title]) => title));
 

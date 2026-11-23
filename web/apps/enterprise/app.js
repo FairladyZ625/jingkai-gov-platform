@@ -20,7 +20,7 @@
       accepts: [{ kind: '企业资料', ext: ['xlsx', 'xls', 'csv', 'pdf', 'doc', 'docx', 'txt', 'jpg', 'png'], match: /企业|台账|走访|名单|营业执照|公司|有限/ }],
       intents: [
         { id: 'enterprise.find', action: 'find', examples: ['查一下纸鹿二号智驾', '打开书香里文化的一企一档', '纸鹿二号智驾走访前摘要'], keywords: ['查一下', '一企一档', '档案', '摘要', '企业情况'], slots: { ent: 'enterprise' }, plan: ['打开企业管理', '找到企业', '打开一企一档', '生成 30 秒速览'] },
-        { id: 'enterprise.visit', action: 'visit', examples: ['给书香里加一条走访记录', '记一次走访', '整理书香里的走访'], keywords: ['走访', '记录走访', '拜访'], slots: { ent: 'enterprise' }, plan: ['打开一企一档', '填写走访记录', 'AI 提取更新建议', '等你确认写入'] },
+        { id: 'enterprise.visit', requires: 'operate', action: 'visit', examples: ['给书香里加一条走访记录', '记一次走访', '整理书香里的走访'], keywords: ['走访', '记录走访', '拜访'], slots: { ent: 'enterprise' }, plan: ['打开一企一档', '填写走访记录', 'AI 提取更新建议', '等你确认写入'] },
         { id: 'enterprise.filter', action: 'filter', examples: ['打开企业台账筛选高新企业', '台账里只看人工智能企业', '列出所有人工智能企业'], keywords: ['台账', '筛选', '列出', '只看'], plan: ['打开台账', '按条件筛选', '报出数量'] },
         { id: 'enterprise.alerts', action: 'alerts', examples: ['资质快到期的企业有哪些', '哪些企业很久没走访了', '超过 90 天没走访的重点企业', '哪些企业好久没去了', '有哪些企业很久没去看了'], keywords: ['到期', '没走访', '久未', '提醒', '预警', '好久没去', '很久没去', '没去过', '多久没去', '没去看', '好久没走访'], plan: ['打开企业管理', '查看提醒', '列出企业'] },
         { id: 'enterprise.issues', action: 'issues', examples: ['看看企业诉求办理进度', '打开诉求看板'], keywords: ['诉求', '看板', '办理进度'], plan: ['打开诉求看板', '汇总各状态'] },
@@ -37,6 +37,8 @@
     mount(el, ctx) {
       const { ui, api, perms } = ctx; const E = api.enterprise; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canOp = perms.can('operate') && !perms.isPartner;
+      const viewPolicy = () => perms.can('view', 'policy');
+      const matchPolicy = () => viewPolicy() && perms.can('operate', 'policy');
       const S = { tab: 'flow', step: 0, entId: null, prof: null, ptab: 'base', alert: '', q: '', visit: null, notes: '', vtype: C.visitTypes[0], decided: {}, issueId: null, lq: '', ltag: '', lind: '', lalert: false, lsort: 'lastVisit', sel: new Set(), brief: null };
       let ENTS = [], ALERTS = [], ISSUES = [], FACETS = { industries: [], tags: [], servicers: [] }, loaded = false, loadErr = null;
       const $ = (s) => el.querySelector(s);
@@ -54,8 +56,21 @@
       }
       async function refreshLists() { const [l, a, i] = await Promise.all([E.list({ sort: 'lastVisit' }), E.alerts(), E.issues()]); ENTS = l.items; ALERTS = a.items; ISSUES = i.items; }
       async function openProfile(id) { S.entId = id; S.prof = null; S.brief = null; S.step = 1; S.ptab = 'base'; S.visit = null; S.decided = {}; body(); try { S.prof = await E.get(id); } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; } body(); briefPolicies(); }
-      async function briefPolicies() { try { if (!perms.can('view', 'policy') || !api.policy) return; const r = await api.policy.match({ entId: S.entId }); S.brief = r.summary; const b = $('#ebpol'); if (b) b.innerHTML = polLine(); } catch (e) { /* 政策匹配不可用时不显示 */ } }
-      const polLine = () => (S.brief ? `<b class="num">${S.brief.ok}</b> 项可核对${S.brief.check ? ` · ${S.brief.check} 项待确认` : ''} <button class="link" data-act="toPolicy">去看 →</button>` : '<span class="meta">核对中…</span>');
+      async function briefPolicies() {
+        if (!matchPolicy()) return;
+        const entId = S.entId;
+        let summary;
+        try { summary = (await api.policy.match({ entId })).summary; } catch { summary = false; }
+        if (S.entId !== entId) return;
+        S.brief = summary;
+        const b = $('#ebpol'); if (b) b.innerHTML = polLine();
+      }
+      function polLine() {
+        if (!viewPolicy()) return '当前角色没有政策事项库查看权限';
+        if (!matchPolicy()) return '仅可查看政策事项库，不能按企业匹配。';
+        if (S.brief === false) return '暂时无法核对';
+        return S.brief ? `<b class="num">${S.brief.ok}</b> 项可核对${S.brief.check ? ` · ${S.brief.check} 项待确认` : ''} <button class="link" data-act="toPolicy">去看 →</button>` : '<span class="meta">核对中…</span>';
+      }
 
       /* ---------- 框架 ---------- */
       function render() {
@@ -100,7 +115,7 @@
         const r = S.prof; if (!r) { $('#es').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel" style="height:120px"></div></div>'; foot(back(), ''); return; }
         const e = r.item; const openIssues = r.issues.filter((i) => i.status !== '已办结'); const lastV = r.visits[0];
         const q0 = (e.qualifications || [])[0];
-        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)} · ${esc(e.creditCode)}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${e.tags.slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
+        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short || e.name)}</div><div class="meta clip">${esc(e.name)}${e.creditCode ? ' · ' + esc(e.creditCode) : ''}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${(e.tags || []).slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
           <div class="card ent-brief" data-op="enterprise.brief"><div class="card-h"><span class="t-3">${icon('sparkles')}</span><span class="ttl">30 秒速览</span><span class="sp"></span><span class="meta">走访前看这里</span></div>
             <div class="ent-kv4">
               <div><div class="meta">做什么</div><div>${esc(e.products || e.industry)}</div></div>
@@ -111,15 +126,18 @@
             </div></div>
           <div class="seg" style="margin:var(--s4) 0 var(--s3)">${C.profileTabs.map(([k, l]) => `<button class="${S.ptab === k ? 'on' : ''}" data-ptab="${k}" data-op="enterprise.ptab-${k}">${esc(l)}</button>`).join('')}</div>
           <div class="card" id="eptab">${profileTab(r)}</div>`;
-        foot(back(), `<button class="btn" data-act="toPolicy" data-op="enterprise.to-policy">能申请哪些政策</button>${canOp ? `<button class="btn primary" data-act="toVisit" data-op="enterprise.to-visit">${icon('edit')}记一次走访</button>` : ''}`);
+        foot(back(), `${viewPolicy() ? `<button class="btn" data-act="toPolicy" data-op="enterprise.to-policy">${matchPolicy() ? '能申请哪些政策' : '查看政策事项库'}</button>` : ''}${canOp ? `<button class="btn primary" data-act="toVisit" data-op="enterprise.to-visit">${icon('edit')}记一次走访</button>` : ''}`);
       }
+      // 外部协作者拿到的是后端打码投影：未返回的字段不渲染原值，联系人、营收按无权查看显示。
+      const dash = (v) => (v == null || v === '' ? '<span class="meta">—</span>' : esc(v));
+      const NO_ACCESS = '<span class="mask">已打码 · 无权查看</span>';
       const kv = (k, v, verify) => `<div class="ent-kv"><span class="meta">${esc(k)}</span><span>${v}</span>${verify ? tag(verify, 'verify', { cls: 'plain' }) : '<span></span>'}</div>`;
       function profileTab(r) {
         const e = r.item; const fs = e.fieldStatus || {};
-        if (S.ptab === 'base') return kv('主体类型', esc(e.subjectType)) + kv('成立日期', esc(e.established)) + kv('入区经营', `<span class="num">${e.yearsInZone}</span> 年`) + kv('规模 / 人数', `${esc(e.scale)} · <span class="num">${e.employees}</span> 人`, fs.employees) + kv('注册地址', esc(e.regAddr)) + ((e.formerNames || []).length ? kv('曾用名', esc(e.formerNames.join('、'))) : '') +
-          kv('联系人', (e.contacts || []).map((c) => `${esc(c.name)}<span class="meta">（${esc(c.title)}）</span> <span class="num ${e.masked ? 'mask' : ''}">${esc(c.phone)}</span>`).join('<br>')) + kv('服务专员', esc(e.servicer));
+        if (S.ptab === 'base') return kv('主体类型', dash(e.subjectType)) + kv('成立日期', dash(e.established)) + kv('入区经营', e.yearsInZone == null ? dash() : `<span class="num">${e.yearsInZone}</span> 年`) + kv('规模 / 人数', `${dash(e.scale)} · <span class="num">${dash(e.employees)}</span> 人`, fs.employees) + kv('注册地址', dash(e.regAddr)) + ((e.formerNames || []).length ? kv('曾用名', esc(e.formerNames.join('、'))) : '') +
+          kv('联系人', !Array.isArray(e.contacts) ? NO_ACCESS : e.contacts.map((c) => `${esc(c.name)}<span class="meta">（${esc(c.title)}）</span> <span class="num ${e.masked ? 'mask' : ''}">${esc(c.phone)}</span>`).join('<br>')) + kv('服务专员', esc(e.servicer));
         if (S.ptab === 'biz') { const rv = e.revenue || {}; const am = e.amounts || {};
-          return kv('营业收入', e.masked ? '<span class="mask">受限字段</span>' : `<b class="num">${esc(rv.value)}</b> ${esc(rv.unit)} <span class="meta">${esc(rv.period)} · ${esc(rv.source)}</span>`, e.masked ? '' : rv.verify) +
+          return kv('营业收入', e.masked || !e.revenue ? '<span class="mask">受限字段</span>' : `<b class="num">${esc(rv.value)}</b> ${esc(rv.unit)} <span class="meta">${esc(rv.period)} · ${esc(rv.source)}</span>`, e.masked || !e.revenue ? '' : rv.verify) +
             (am.rent != null ? kv('年房租', `<span class="num">${ui.fmtMoney(am.rent)}</span>`, fs.amounts) : '') + (am.area != null ? kv('经营面积', `<span class="num">${am.area}</span> ㎡`, fs.amounts) : '') +
             Object.entries(am).filter(([k]) => !['rent', 'area'].includes(k)).map(([k, v]) => kv({ dataPurchase: '数据采购额', computePurchase: '算力采购额', renovation: '改造投入', digitalInvest: '数字化投入', sceneInvest: '场景投入', datasetInvest: '数据集投入', firstSale: '首台套合同额' }[k] || k, `<span class="num">${ui.fmtMoney(v)}</span>`, fs.amounts)).join('') +
             (e.qualifications || []).map((q) => kv('资质', `${esc(q.name)} <span class="meta">有效期至 ${esc(q.validTo)}</span>`, q.verify)).join('') + (e.license || []).filter((l) => !(e.qualifications || []).some((q) => q.name === l)).map((l) => kv('许可', esc(l))).join(''); }
@@ -180,19 +198,29 @@
           <select class="select" style="width:130px" id="lind" data-op="enterprise.list-ind"><option value="">全部行业</option>${FACETS.industries.map((t) => `<option ${S.lind === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
           <label class="check"><input type="checkbox" id="lal" data-op="enterprise.list-alert" ${S.lalert ? 'checked' : ''}>只看有提醒</label></div><div id="ltb"><div class="skel-list"><div class="skel"></div></div></div>`;
         const go = () => renderTable();
-        let tm; $('#lq').oninput = (ev) => { clearTimeout(tm); tm = setTimeout(() => { S.lq = ev.target.value; go(); }, 200); };
+        let tm; $('#lq').oninput = (ev) => { S.lq = ev.target.value; clearTimeout(tm); tm = setTimeout(go, 200); };
         $('#ltag').onchange = (ev) => { S.ltag = ev.target.value; go(); }; $('#lind').onchange = (ev) => { S.lind = ev.target.value; go(); }; $('#lal').onchange = (ev) => { S.lalert = ev.target.checked; go(); };
         go();
       }
+      let tableRequest = 0;
       async function renderTable() {
         const box = $('#ltb'); if (!box) return;
-        let r; try { r = await E.list({ q: S.lq.trim(), tag: S.ltag, industry: S.lind, alert: S.lalert ? 1 : '', sort: S.lsort }); } catch (e) { box.innerHTML = ui.empty({ icon: 'alert', title: '加载失败', desc: e.message }); return; }
-        S.listIds = r.items.map((e) => e.id); S.tableKey = [S.lq.trim(), S.ltag, S.lind, S.lalert, S.lsort].join('|'); const alertIds = new Set(ALERTS.map((a) => a.entId));
-        box.innerHTML = `<div class="row" style="margin-bottom:var(--s2)"><span class="meta" data-op="enterprise.list-count">${r.total} 家${S.sel.size ? ` · 已选 ${S.sel.size}` : ''}</span><span class="sp"></span>
+        const params = { q: S.lq.trim(), tag: S.ltag, industry: S.lind, alert: S.lalert ? 1 : '', sort: S.lsort };
+        const key = [params.q, params.tag, params.industry, S.lalert, params.sort].join('|');
+        const request = ++tableRequest;
+        const current = () => request === tableRequest && box === $('#ltb');
+        let r; try { r = await E.list(params); } catch (e) { if (current()) box.innerHTML = ui.empty({ icon: 'alert', title: '加载失败', desc: e.message }); return; }
+        if (!current()) return;
+        const filtered = !!(params.q || params.tag || params.industry || params.alert);
+        const emptyLedger = !r.total && !filtered;
+        S.listIds = r.items.map((e) => e.id); S.tableKey = key; const alertIds = new Set(ALERTS.map((a) => a.entId));
+        box.innerHTML = `<div class="row wrap" style="margin-bottom:var(--s2)"><span class="meta" data-op="enterprise.list-count">${r.total} 家${S.sel.size ? ` · 已选 ${S.sel.size}` : ''}</span><span class="sp"></span>
             <select class="select sm" style="width:120px;height:28px" id="lsort"><option value="lastVisit" ${S.lsort === 'lastVisit' ? 'selected' : ''}>最久未走访</option><option value="revenue" ${S.lsort === 'revenue' ? 'selected' : ''}>营收</option><option value="name" ${S.lsort === 'name' ? 'selected' : ''}>名称</option></select>
-            ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
+            ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>${emptyLedger ? '<button class="btn sm primary" data-act="newEnt" data-op="enterprise.new">新建企业</button>' : ''}` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
           ${r.items.length ? `<div class="card flat ent-tbl scroll"><table class="tbl"><thead><tr><th style="width:32px"><input type="checkbox" class="pol-ck" data-selall></th><th>企业</th><th>行业</th><th class="r">人数</th><th class="r">营收(万元)</th><th>服务专员</th><th class="r">最近走访</th></tr></thead><tbody>
-            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked ? 'mask' : ''}">${esc(e.revenue.value)}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
+            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short || e.name)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked || !e.revenue ? 'mask' : ''}">${e.revenue ? esc(e.revenue.value) : '***'}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : emptyLedger
+            ? ui.empty({ icon: 'inbox', title: '还没有企业', desc: canOp ? '可以导入台账或新建企业。' : '暂时没有可查看的企业。' })
+            : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
         $('#lsort') && ($('#lsort').onchange = (ev) => { S.lsort = ev.target.value; renderTable(); });
       }
 
@@ -264,7 +292,7 @@
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.entId ? `${entOf(S.entId).short}最近有什么情况？` : '哪些企业很久没走访了？');
         if (a === 'newEnt') return newEntModal();
-        if (a === 'toPolicy') return ctx.nav.open('policy', 'match', { entId: S.entId, run: true });
+        if (a === 'toPolicy' && viewPolicy()) return matchPolicy() ? ctx.nav.open('policy', 'match', { entId: S.entId, run: true }) : ctx.nav.open('policy', 'items');
         if (a === 'toVisit') { S.step = 2; S.visit = null; body(); return; }
         if (a === 'sample') { S.notes = C.visitSamples[S.entId] || C.visitSamples._default; step2(); return; }
         if (a === 'voice') return voiceInput();
@@ -285,14 +313,18 @@
       async function opOpen(id, run) {
         gotoTab('flow'); if (S.step !== 0) { S.step = 0; S.q = ''; body(); }
         const e = entOf(id);
-        if (run) { await run.fill('[data-op="enterprise.q"]', e.short); await run.wait(`[data-op="enterprise.ent-${id}"]`); await run.click(`[data-op="enterprise.ent-${id}"]`); await run.wait(() => S.prof && S.prof.item.id === id && el.querySelector('[data-op="enterprise.brief"]')); }
+        if (run) { await run.fill('[data-op="enterprise.q"]', e.short); await run.wait(`[data-op="enterprise.ent-${id}"]`); await run.click(`[data-op="enterprise.ent-${id}"]`); if (S.entId !== id) await openProfile(id); await run.wait(() => S.prof && S.prof.item.id === id && el.querySelector('[data-op="enterprise.brief"]')); }
         else await openProfile(id);
       }
       const actions = {
         async find({ ent, text } = {}, run) {
           await ready(); const id = resolveEnt(ent, text); if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (run) await run.step(1); await opOpen(id, run);
-          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结'); run.done(`${e.short}${e.example ? "（**示例企业**）" : ""}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }, ...(canOp ? [{ label: '记一次走访', say: `给${e.short}加一条走访记录` }] : [])]); }
+          if (run) { await run.step(3); await run.highlight('[data-op="enterprise.brief"]'); const e = S.prof.item; const oi = S.prof.issues.filter((i) => i.status !== '已办结');
+            const next = matchPolicy() ? [{ label: '能申请哪些政策', say: `${e.short}能申请哪些支持？` }] : viewPolicy() ? [{ label: '查看政策事项库（只读）', open: 'policy', route: 'items' }] : [];
+            if (canOp) next.push({ label: '记一次走访', say: `给${e.short}加一条走访记录` });
+            run.done(`${e.short}${e.example ? "（**示例企业**）" : ""}：${e.industry}，${e.employees} 人；最近走访 ${e.lastVisit}；在办诉求 ${oi.length} 件`, next);
+          }
           return S.prof;
         },
         async visit({ ent, text, notes } = {}, run) {

@@ -1,18 +1,22 @@
 /* =====================================================================
  * 【可改】平台外观与文案（改完刷新页面即可）
  * ===================================================================== */
-const jkUseMock = new URLSearchParams(window.location?.search).get('api') === 'mock';
-const jkModuleMode = !jkUseMock && /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock';
+const jkUseMock = typeof URLSearchParams !== 'undefined' &&
+  new URLSearchParams(window.location?.search).get('api') === 'mock';
+const jkHttpModules = !jkUseMock && /^https?:$/.test(window.location?.protocol)
+  ? { platform: 'http', kb: 'http', policy: 'http', enterprise: 'http', meeting: 'http', document: 'http' }
+  : {};
 
 window.JK_CONFIG = {
   platformName: '经开智能体工作站',
   orgName: '北京经开区 · AI 工作组',
+  showDevPlan: false,              // 显示侧栏「开发计划」入口
   defaultTheme: 'light',            // 'dark' | 'light'
   stateKey: 'jk4-state-r1',        // 改这个值 = 所有浏览器数据重新开始
   /* 首页：问候下面的 3 条建议（点一下就让 AI 去办） */
   homeSuggestions: [
-    { icon: 'policy', app: 'policy', text: '帮我查一下星河智驾能申报哪些政策' },
-    { icon: 'meeting', app: 'meeting', text: '把昨天文化企业座谈会整理成纪要' },
+    { icon: 'policy', app: 'policy', requires: 'operate', text: '帮我查一下纸鹿二号智驾能申报哪些政策' },
+    { icon: 'meeting', app: 'meeting', requires: 'operate', text: '把昨天文化企业座谈会整理成纪要', httpText: '把园区服务清单的合成录音整理成纪要' },
     { icon: 'book', app: 'kb', text: '数据券补贴最高能拿多少？' },
   ],
   /* 登录页“一键登录”的演示账号（正式环境删除这段即可） */
@@ -27,6 +31,7 @@ window.JK_CONFIG = {
   /* AI 操作速度：正常演示 1，一键演示时用 demoSpeed */
   operatorSpeed: 1,
   demoSpeed: 1.6,
+  demoReadMs: 2400,                // 未单独编排的结果页沿用片尾字幕的停留；可调整，播放中可随时暂停阅读
   // mock 模式下只选择展示与审计使用的模型，不发网络请求。
   modelRouting: {
     defaultChannel: 'cloud', // 公开请求的自动路由，可切换为 local
@@ -56,19 +61,12 @@ window.JK_CONFIG = {
       { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
     ],
   },
-  /* HTTP 页面连接业务后端。以 ?api=mock 打开演示，file:// 继续离线。 */
+  /* 接口默认使用浏览器内模拟后端。HTTP 页面将 platform 与 kb 切到真实后端；?api=mock 或 file:// 继续使用模拟数据。 */
   api: {
     mode: 'mock',
     baseUrl: 'http://127.0.0.1:8080',
     timeoutMs: 20000,
-    modules: {
-      platform: jkModuleMode,
-      kb: jkModuleMode,
-      policy: jkModuleMode,
-      enterprise: jkModuleMode,
-      meeting: jkModuleMode,
-      document: jkModuleMode,
-    },
+    modules: jkHttpModules,
   },
 };
 

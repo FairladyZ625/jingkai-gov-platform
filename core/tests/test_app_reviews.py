@@ -49,7 +49,7 @@ def generic_submit(c, record, **kw):
 def assert_app_required(response):
     assert response.status_code == 409, response.text
     error = response.json()['error']
-    assert error['code'] == 'invalid_state'
+    assert error['code'] == 'INVALID_STATE'
     assert '请在应用内处理' in error['message']
     assert error['appId'] == 'managed-app' and error['appUrl'] == '#/app/managed-app'
 
@@ -94,10 +94,10 @@ def test_plain_generic_flow_and_independent_reviewer_rules(review_apps):
     c = review_apps
     login(c, 'samplereviewer')
     own = save(c, 'plain-app')
-    assert generic_submit(c, own, assignee='samplereviewer').json()['error']['code'] == 'self_review'
+    assert generic_submit(c, own, assignee='samplereviewer').json()['error']['code'] == 'SELF_REVIEW'
     review = generic_submit(c, own).json()
     response = c.post(f"/api/v1/reviews/{review['id']}/decisions", json={'version': 1, 'decision': 'confirm'})
-    assert response.status_code == 403 and response.json()['error']['code'] == 'self_review'
+    assert response.status_code == 403 and response.json()['error']['code'] == 'SELF_REVIEW'
     login(c, 'sampleoperator')
     record = save(c, 'plain-app')
     sent = generic_submit(c, record, assignee='samplereviewer')
@@ -113,11 +113,11 @@ def test_managed_sdk_keeps_scope_assignee_and_self_review_rules(review_apps):
     c = review_apps
     login(c, 'samplereviewer')
     own = save(c)
-    assert sdk_submit(c, own).json()['error']['code'] == 'self_review'
+    assert sdk_submit(c, own).json()['error']['code'] == 'SELF_REVIEW'
     review = sdk_submit(c, own, assignee=None).json()
     path = f"/api/apps/managed-app/decision/{review['id']}"
     self_result = c.post(path, json={'version': 1, 'decision': 'confirm'})
-    assert self_result.status_code == 403 and self_result.json()['error']['code'] == 'self_review'
+    assert self_result.status_code == 403 and self_result.json()['error']['code'] == 'SELF_REVIEW'
     login(c, 'sampleadmin')
     hidden = save(c, project='limited-project')
     login(c, 'sampleoperator')
@@ -152,7 +152,7 @@ def test_preview_decide_requires_current_source_version_without_side_effects(rev
     ])
     assert stale.status_code == 409, stale.text
     error = stale.json()['error']
-    assert error['code'] == 'stale_version'
+    assert error['code'] == 'STALE_VERSION'
     assert error['recordId'] == source['id'] and error['currentVersion'] == 2
     # 无副作用：决定、记录状态、审计都不写。
     assert c.get('/api/v1/reviews?assignee=me').json()['items'][0]['decisions'] == []
@@ -180,7 +180,7 @@ def test_preview_decide_checks_status_and_read_scope(review_apps):
     ])
     assert wrong_status.status_code == 409, wrong_status.text
     error = wrong_status.json()['error']
-    assert error['code'] == 'invalid_state'
+    assert error['code'] == 'INVALID_STATE'
     assert error['recordId'] == source['id'] and error['status'] == 'draft'
 
     # 不存在与越权引用都按不存在处理，不泄露来源是否存在。
@@ -190,7 +190,7 @@ def test_preview_decide_checks_status_and_read_scope(review_apps):
     for record_id in ['no-such-record', hidden['id']]:
         missing = preview_decide(c, review, require=[{'recordId': record_id, 'version': 1}])
         assert missing.status_code == 404, missing.text
-        assert missing.json()['error']['code'] == 'not_found'
+        assert missing.json()['error']['code'] == 'NOT_FOUND'
 
     # 同项目内的其他应用记录可以显式 appId 引用；省略 appId 默认取待办所属应用。
     login(c, 'sampleoperator')

@@ -4,9 +4,9 @@
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 SEED = ROOT / "data/seed"
-OUTPUT = ROOT / "prototype/v4/config/mock-data.js"
+OUTPUT = ROOT / "web/config/mock-data.js"
 
 
 def read_seed(name):
@@ -22,7 +22,7 @@ def main():
     examples = read_seed("policy-examples")
     real = read_seed("real-policies")
     source = [
-        "/* 由 prototype/v4/mock/build_mock.py 生成。请编辑 data/seed/ 中的 JSON。 */",
+        "/* 由 web/mock/build_mock.py 生成。请编辑 data/seed/ 中的 JSON。 */",
         "(() => {",
         f"const demo = {dump(demo)};",
         f"const examples = {dump(examples)};",

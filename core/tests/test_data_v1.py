@@ -14,7 +14,7 @@ def test_v1_identity_and_unauthenticated(make_client):
     c = make_client()
     r = c.get('/api/v1/me')
     assert r.status_code == 401
-    assert r.json()['error']['code'] == 'unauthenticated'
+    assert r.json()['error']['code'] == 'UNAUTHENTICATED'
     login(c, 'sampleoperator')
     assert c.get('/api/v1/me').json()['projects'] == ['sample-project']
     assert len(c.get('/api/v1/projects').json()['companies'][0]['projects']) == 1
@@ -30,7 +30,7 @@ def test_versions_conflict_and_server_identity(make_client):
     assert changed.status_code == 200 and changed.json()['version'] == 2
     conflict = c.put(f"{BASE}/{r['id']}", json={'baseVersion': 1, 'data': {}})
     assert conflict.status_code == 409
-    assert conflict.json()['error']['code'] == 'version_conflict'
+    assert conflict.json()['error']['code'] == 'VERSION_CONFLICT'
     assert conflict.json()['error']['currentVersion'] == 2
     assert c.get(f"{BASE}/{r['id']}/versions/1").json()['data'] == {'ok': True}
     assert c.put(f"{BASE}/{r['id']}", json={'data': {}}).status_code == 422
@@ -44,7 +44,7 @@ def test_scope_hides_records_and_files(make_client):
     login(c, 'sampleoperator')
     for url in [f"{BASE}/{r['id']}", f"{BASE}/{r['id']}/versions/1", f"/api/v1/files/{f['fileId']}", f"/api/v1/files/{f['fileId']}/content"]:
         result = c.get(url)
-        assert result.status_code == 404 and result.json()['error']['code'] == 'not_found'
+        assert result.status_code == 404 and result.json()['error']['code'] == 'NOT_FOUND'
     assert c.get(BASE, params={'project': 'limited-project'}).status_code == 404
     assert record(c, project='limited-project').status_code == 404
 
@@ -72,8 +72,8 @@ def test_invalid_product_files_and_server_errors(make_client, monkeypatch):
     login(c, 'sampleoperator')
     assert record(c, product='research-product').status_code == 422
     assert record(c, files=['missing-file']).status_code == 404
-    assert c.post('/api/v1/files', data={}).json()['error']['code'] == 'invalid_request'
-    assert c.get('/api/v1/missing').json()['error']['code'] == 'not_found'
+    assert c.post('/api/v1/files', data={}).json()['error']['code'] == 'INVALID_REQUEST'
+    assert c.get('/api/v1/missing').json()['error']['code'] == 'NOT_FOUND'
     assert c.post(BASE, content='{', headers={'Content-Type': 'application/json'}).status_code == 422
     def fail(*args, **kw):
         raise RuntimeError('内部数据库细节')
@@ -81,5 +81,5 @@ def test_invalid_product_files_and_server_errors(make_client, monkeypatch):
     with TestClient(c.app, raise_server_exceptions=False) as client:
         login(client, 'sampleoperator')
         r = client.get(BASE)
-        assert r.status_code == 500 and r.json()['error']['code'] == 'internal_error'
+        assert r.status_code == 500 and r.json()['error']['code'] == 'INTERNAL_ERROR'
         assert '内部数据库细节' not in r.text

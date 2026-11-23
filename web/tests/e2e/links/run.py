@@ -1,11 +1,9 @@
 """从仓库根目录运行。只使用临时数据库、公开种子编号和随机测试凭据。"""
 import argparse
-import json
 import os
 from pathlib import Path
 import secrets
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -17,43 +15,26 @@ import httpx
 def create_app():
     from jkq.app import create_app as default_app
     app = default_app()
-    if os.environ.get('T41_TEST_MOUNT_POLICY') == '1':
+    if os.environ.get('T41_TEST_MOUNT_POLICY') == '1' and not any(
+        getattr(route, 'path', '').startswith('/api/apps/policy') for route in app.routes
+    ):
         from apps.policy.api.policy_routes import router
         app.include_router(router, prefix='/api/apps/policy')
     return app
 
 
-def seed_company(client, data_dir):
-    # 企业 API 生成随机编号，政策后端仅按公开演示编号查画像。
-    # 仅在本次空库内复制一份真实 API 创建的版本，关联到 E001。
-    result = client.post('/api/apps/enterprise/companies', json={
-        'name': '政策联调示例企业', 'short': '联调示例', 'subjectType': '企业',
-    })
-    result.raise_for_status()
-    ident = result.json()['item']['id']
-    for path in data_dir.rglob('*'):
-        if not path.is_file():
-            continue
-        with path.open('rb') as data:
-            if data.read(16) != b'SQLite format 3\x00':
-                continue
-        with sqlite3.connect(path) as db:
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='v1_versions'").fetchone():
-                continue
-            row = json.loads(db.execute('SELECT document FROM v1_versions WHERE record_id=?', (ident,)).fetchone()[0])
-            row['id'] = 'E001'
-            db.execute("INSERT INTO v1_records VALUES ('E001','enterprise',1)")
-            db.execute("INSERT INTO v1_versions VALUES ('E001',1,?)", (json.dumps(row),))
-            db.execute("INSERT INTO v1_states VALUES ('E001',1,'draft')")
-            return
-    raise RuntimeError('隔离实例未初始化企业台账')
+def seed_company(client):
+    response = client.get('/api/apps/enterprise/companies')
+    response.raise_for_status()
+    if not any(item.get('id') == 'E001' for item in response.json().get('items', [])):
+        raise RuntimeError('隔离实例未初始化企业台账 E001')
 
 
 def verify(temp, args):
     root = Path.cwd()
     dbdir = temp / 'data'
     # 隔离验证只保留系统和浏览器依赖所需的环境，避免启用外部模型服务。
-    names = ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'SYSTEMROOT', 'PLAYWRIGHT_BROWSERS_PATH', 'T41_SCREENSHOT_DIR')
+    names = ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'SYSTEMROOT', 'PLAYWRIGHT_BROWSERS_PATH', 'PLAYWRIGHT_CHROME_PATH', 'T41_SCREENSHOT_DIR')
     env = {name: os.environ[name] for name in names if name in os.environ}
     for role in ('ADMIN', 'LEADER', 'MEMBER', 'PARTNER'):
         env[f'JKQ_DEMO_{role}_PASSWORD'] = secrets.token_urlsafe()
@@ -90,7 +71,7 @@ def verify(temp, args):
                     raise RuntimeError('隔离实例未在限定时间内就绪')
                 res = client.post('/api/v1/auth/login', json={'username': 'admin', 'password': env['T41_PASSWORD']})
                 res.raise_for_status()
-                seed_company(client, dbdir)
+                seed_company(client)
                 if args.check == 'contract':
                     meeting = client.post('/api/apps/meeting/meetings', data={
                         'title': '公开契约测试会议', 'source': 'demo',
@@ -106,7 +87,7 @@ def verify(temp, args):
                         command.append('--allow-writes')
                     results.append(subprocess.run(command, env=env).returncode)
                 return max(results)
-            return subprocess.run(['web/node_modules/.bin/playwright', 'test', '-c',
+            return subprocess.run(['node', 'web/node_modules/@playwright/test/cli.js', 'test', '-c',
                                    'web/tests/e2e/links/playwright.config.cjs',
                                    *args.spec], env=env).returncode
         finally:

@@ -58,6 +58,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Web 冒烟和 12 段演示
+        run: |
+          npm --prefix web ci
+          (cd web && npx --no-install playwright install --with-deps chromium)
+          npm --prefix web run test:smoke
+          npm --prefix web run test:smoke:mock
+          npm --prefix web run test:e2e
+          node --test tests/data/real-supplement.test.cjs
       - name: 前端冒烟
         run: |
           if test -d tests/demo; then
@@ -93,8 +101,8 @@ jobs:
           node-version: 22
       - name: 检查离线脚本与种子一致
         run: |
-          python3 prototype/v4/mock/build_mock.py
-          git diff --exit-code -- prototype/v4/config/mock-data.js
+          python3 web/mock/build_mock.py
+          git diff --exit-code -- web/config/mock-data.js
           python3 scripts/check_names.py
       - name: 演示数据契约与离线浏览器
         working-directory: tests/demo-data
@@ -103,3 +111,20 @@ jobs:
           npm test
           npx --no-install playwright install --with-deps chromium
           npm run test:browser
+
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test web/tests/contract/*.test.cjs
+      - run: npm --prefix web run contract
+      - name: Chromium 混合会话
+        run: |
+          npm --prefix web ci
+          (cd web && npx --no-install playwright install --with-deps chromium)
+          node --test web/tests/contract/browser.cjs

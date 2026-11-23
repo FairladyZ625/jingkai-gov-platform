@@ -5,5 +5,10 @@ module.exports = defineConfig({
   testMatch: 'http-smoke.spec.cjs',
   reporter: 'list',
   outputDir: '../node_modules/.cache/playwright-http',
-  use: { channel: 'chromium', viewport: { width: 1440, height: 900 } },
+  use: {
+    ...(process.env.PLAYWRIGHT_CHROME_PATH
+      ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROME_PATH } }
+      : { channel: 'chromium' }),
+    viewport: { width: 1440, height: 900 },
+  },
 });

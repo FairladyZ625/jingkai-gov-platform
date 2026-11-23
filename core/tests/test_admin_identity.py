@@ -11,6 +11,12 @@ from test_platform import login
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_anonymous_admin_apps(make_client):
+    response = make_client().get('/api/admin/apps')
+    assert response.status_code == 401
+    assert response.json()['error']['code'] == 'UNAUTHENTICATED'
+
+
 @pytest.fixture
 def owner(make_client, monkeypatch):
     monkeypatch.delenv('HAIKNOW_DEMO_LOGIN')
@@ -204,4 +210,4 @@ def test_every_admin_route_denies_non_admin(make_client):
     ]:
         r = c.request(method, '/api/admin/' + path, **({'json': body} if body is not None else {}))
         assert r.status_code == 403, (method, path, r.text)
-        assert r.json()['error']['code'] == 'forbidden'
+        assert r.json()['error']['code'] == 'FORBIDDEN'

@@ -26,14 +26,24 @@ const test = base.extend({
 
 async function openLogin(page, url) {
   const demo = new URL(url);
-  demo.searchParams.set('api', 'mock');
+  if (/^https?:$/.test(demo.protocol)) demo.searchParams.set('api', 'mock');
   await page.goto(demo.href);
   await expect(page.getByRole('heading', { name: '登录', exact: true })).toBeVisible();
   expect(await page.evaluate(() => JK_CONFIG.api.mode)).toBe('mock');
 }
 
 async function login(page) {
-  await page.locator('[data-u="wangmin"]').click();
+  const card = page.locator('[data-u="wangmin"]');
+  if (await card.count()) {
+    await card.click();
+  } else {
+    const password = await page.evaluate(
+      () => (window.JK_CONFIG?.demoAccounts || []).find(a => a.username === 'wangmin')?.password || '',
+    );
+    await page.locator('[data-op="login.user"]').fill('wangmin');
+    await page.locator('[data-op="login.pass"]').fill(password);
+    await page.locator('[data-op="login.go"]').click();
+  }
   await expect(page.locator('.hello')).toContainText('王敏');
 }
 

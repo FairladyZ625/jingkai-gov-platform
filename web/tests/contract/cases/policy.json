@@ -6,7 +6,7 @@
       "response": {"item": "@policyItem"},
       "params": {"id": "PI-03"} },
     { "method": "POST", "path": "/api/apps/policy/match",
-      "response": {"profile": {"subjectType": "string", "tags": ["string"], "license": ["string"]}, "results": ["@matchResult"], "summary": {"ok": "number", "check": "number", "no": "number"}},
+      "response": {"profile": {"subjectType": "string", "tags": ["string"], "license": ["string"], "yearsInZone": "number", "regInZone": "boolean", "employees": "number"}, "results": ["@matchResult"], "summary": {"ok": "number", "check": "number", "no": "number"}},
       "body": {"entId": "{{fixture.enterpriseId}}"} },
     { "method": "POST", "path": "/api/apps/policy/calc",
       "response": {"item": "string", "rule": "string", "result": "?@calc", "note": "string"},

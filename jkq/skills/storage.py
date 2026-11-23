@@ -66,7 +66,7 @@ class Skills:
         edit = "operate" in actions and (manager or (shared and share["perm"] == "edit"))
         return manager or shared or review, edit
 
-    def load(self, user, sid, *, edit=False, deleted=False):
+    def load(self, user, sid, *, edit=False, deleted=False, review_target=False):
         self.records.app(user, "skills", "operate" if edit else "view")
         doc = self.records.get_record(user, "skills", sid)
         item = doc["data"]
@@ -87,7 +87,7 @@ class Skills:
         action = "skill.delete" if deleted else "skill.restore_deleted"
         return self.save(user, doc, {"deleted": deleted}, action=action)
 
-    def history(self, doc):
+    def history(self, user, doc):
         # 一个内容版本的删除、撤销和分享可产生多个存储修订，只展示内容快照。
         with self.store._lock:
             rows = self.store._db.execute(
@@ -110,7 +110,7 @@ class Skills:
         return {**{k: v for k, v in item.items() if k != "deleted"},
                 "id": doc["id"], "mine": item["authorId"] == user.id,
                 "canEdit": self.access(user, item)[1],
-                "versions": list(self.history(doc).values()) if history else []}
+                "versions": list(self.history(user, doc).values()) if history else []}
 
     def create(self, user, body, source=None):
         self.records.app(user, "skills", "operate")
@@ -147,7 +147,7 @@ class Skills:
             version = body.get("v")
             if not isinstance(version, str):
                 invalid("请选择要恢复的版本")
-            snapshot = self.history(doc).get(version)
+            snapshot = self.history(user, doc).get(version)
             if snapshot is None:
                 raise SkillError(404, "NOT_FOUND", "技能版本不存在")
             fields = content_fields(snapshot)

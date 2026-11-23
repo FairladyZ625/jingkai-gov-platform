@@ -15,6 +15,8 @@ from starlette.requests import Request
 from haiknow_sdk import DataError, ModelError
 from haiknow_sdk.ai import AIError
 
+from ..error_codes import public_error_code
+
 
 STATES = ('queued', 'running', 'done', 'failed', 'cancelling', 'cancelled')
 TERMINAL = ('done', 'failed', 'cancelled')
@@ -142,8 +144,24 @@ class JobService:
         self.store.audit(doc['appId'], actor or doc['submitter'], 'job.' + action,
                          {'jobId': doc['id'], 'attempt': doc['attempt']}, connection=self.store._db)
 
-    def _finish(self, doc, status, *, result=None, error=None, actor=None):
+    def _data_error_code(self, doc, code):
+        entry = self.platform.apps.get(doc['appId'])
+        return public_error_code(code, app_dir=entry.dir if entry else None)
+
+    def _view(self, doc, *, public):
+        # doc 是本次从 SQLite 解码的快照。HTTP 和 Python SDK 都隐藏内部存储字段。
+        http_code = doc.pop('errorHttpCode', None)
+        if public and (error := doc.get('error')):
+            if http_code is None:
+                # 无来源的旧记录按所属应用的精确登记解释。
+                http_code = self._data_error_code(doc, error['code'])
+            doc['error'] = {**error, 'code': http_code}
+        return doc
+
+    def _finish(self, doc, status, *, result=None, error=None, http_code=None, actor=None):
         doc.update(status=status, result=result, error=error, finishedAt=time.time())
+        if http_code is not None:
+            doc['errorHttpCode'] = http_code
         for step in doc['steps']:
             if step['status'] == 'running':
                 step.update(status='cancelled' if status == 'cancelled' else 'failed', finishedAt=time.time())
@@ -154,7 +172,7 @@ class JobService:
         self.store._db.execute('insert into v1_job_notifications values (?,?,?,?)',
                                (nid, doc['id'], doc['attempt'], encode(note)))
 
-    def submit(self, user, body):
+    def submit(self, user, body, *, public=False):
         try:
             body = SubmitBody.model_validate(body).model_dump()
         except ValidationError as e:
@@ -170,7 +188,7 @@ class JobService:
                 doc = json.loads(row[1])
                 if row[0] != request:
                     raise DataError('invalid_state', '防重复编号已用于其他内容，请换编号', jobId=doc['id'])
-                return doc
+                return self._view(doc, public=public)
             operation = self.operations.get((app_id, body['operation']))
             if operation is None:
                 raise DataError('invalid_request', '任务操作未登记')
@@ -182,13 +200,13 @@ class JobService:
             self._save(doc, 'submit')
             return doc
 
-    def get(self, user, jid, *, app_id=None):
+    def get(self, user, jid, *, app_id=None, public=False):
         with self.store._lock:
             doc = self._load(jid)
             self._authorize(user, doc, app_id=app_id)
-            return doc
+        return self._view(doc, public=public)
 
-    def list(self, user, *, app_id=None, project=None, status=None):
+    def list(self, user, *, app_id=None, project=None, status=None, public=False):
         if app_id is not None:
             self.platform.data.app(user, app_id)
         if project is not None:
@@ -210,7 +228,7 @@ class JobService:
                         raise
                     continue
                 items.append(doc)
-            return {'items': items}
+        return {'items': [self._view(doc, public=public) for doc in items]}
 
     def cancel(self, user, jid, *, app_id=None):
         with self.store._lock, self.store._db:
@@ -234,6 +252,7 @@ class JobService:
             self._operation(doc)
             doc.update(status='queued', attempt=doc['attempt'] + 1, error=None, result=None,
                        startedAt=None, finishedAt=None)
+            doc.pop('errorHttpCode', None)
             self._save(doc, 'retry', actor=user.id)
             return doc
 
@@ -316,6 +335,7 @@ class JobService:
             self.stopping.wait(.02)
 
     def _run(self, jid):
+        http_code = None
         try:
             with self.store._lock:
                 doc = self._load(jid)
@@ -345,6 +365,7 @@ class JobService:
                 error = e.error
             elif isinstance(e, (AIError, ModelError)):
                 error = {'code': e.kind, 'message': str(e), 'retryable': getattr(e, 'retryable', False)}
+                http_code = e.kind.upper()
             else:
                 logging.getLogger('haiknow').error('后台任务 %s 失败：%s', jid, type(e).__name__)
                 error = DataError('internal_error', '任务执行失败，请联系管理员').error
@@ -353,5 +374,7 @@ class JobService:
             doc = self._load(jid)
             # 正在执行的同步调用无法撤回；等调用返回后才确认取消。
             if doc['status'] == 'cancelling':
-                status, result, error = 'cancelled', None, None
-            self._finish(doc, status, result=result, error=error)
+                status, result, error, http_code = 'cancelled', None, None, None
+            elif error is not None and http_code is None:
+                http_code = self._data_error_code(doc, error['code'])
+            self._finish(doc, status, result=result, error=error, http_code=http_code)

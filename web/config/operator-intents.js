@@ -8,7 +8,8 @@ window.JK_PLATFORM_INTENTS = [
     run: async (s, run, hk) => {
       const def = Object.values(JK.registry).find((d) => [d.manifest.name, d.manifest.short, d.manifest.id].some((n) => n && s.text.includes(n))) || Object.values(JK.registry).find((d) => s.text.includes(d.manifest.name.slice(0, 2)));
       if (!def) return run.done('没找到这个应用。左侧“应用”里可以直接点开。');
-      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, (def.manifest.starters || []).slice(0, 2).map((t) => ({ label: t, say: t })));
+      if (!hk.canViewApp(def.manifest.id)) return run.fail('当前身份没有这个应用的查看权限');
+      await run.step(1); await hk.openApp(def.manifest.id); run.done(`已打开「${def.manifest.name}」。`, hk.startersFor(def.manifest.id).slice(0, 2).map((t) => ({ label: t, say: t })));
     } },
   { id: 'inbox', title: '打开收件箱', examples: ['看看有什么要我审签的', '打开收件箱', '我有哪些待办'], keywords: ['收件箱', '要我审', '待我', '审签', '待办事项'], plan: ['打开收件箱', '列出待我处理'],
     run: async (s, run, hk) => { await hk.openBuiltin('inbox'); await run.step(1); const n = hk.inboxCount(); run.done(n ? `有 **${n} 件**等你处理，已在右侧列出。` : '收件箱是空的，暂时没有要你处理的事。'); } },
@@ -16,7 +17,9 @@ window.JK_PLATFORM_INTENTS = [
     run: async (s, run, hk) => { await hk.openBuiltin('admin', 'users'); await run.step(1); await run.click('[data-op="admin.add-user"]'); await run.step(2);
       await run.fill('[data-op="admin.u-name"]', '张晓'); await run.fill('[data-op="admin.u-username"]', 'zhangxiao'); await run.select('[data-op="admin.u-role"]', 'member');
       await run.step(3); const a = await run.ask('账号信息已填好（张晓 · 经办人员），确认创建吗？', ['确认创建', '先不建']);
-      if (a !== '确认创建') return run.done('好的，没有创建。表单保留在右侧。'); await run.click('[data-op="admin.u-save"]'); run.done('已创建账号 **zhangxiao**，初始密码 jk123456，已写入审计日志。'); } },
+      if (a !== '确认创建') return run.done('好的，没有创建。表单保留在右侧。');
+      await run.click('[data-op="admin.u-save"]'); await run.wait('[data-op="admin.u-created"]', 8000);
+      run.done('已创建账号 **zhangxiao**。口令请在结果弹窗手动查看，不在对话中显示。'); } },
   { id: 'admin-grant', title: '调整权限', examples: ['外部协作者能看哪些应用', '给外部协作者开放知识库', '调整角色权限'], keywords: ['权限', '授权', '能看哪些'], plan: ['打开管理后台', '进入角色与授权', '定位到对应角色'], needsAdmin: true,
     run: async (s, run, hk) => { await hk.openBuiltin('admin', 'grants'); await run.step(1); await run.step(2); await run.highlight('[data-op="admin.grant-partner"]', '外部协作者这一列'); run.done('这一列是外部协作者的授权：点“查/操”即刻生效，并写入审计。'); } },
   { id: 'audit', title: '查看审计日志', examples: ['看看最近谁改了台账', '打开审计日志', '操作留痕'], keywords: ['审计', '留痕', '谁改了', '操作记录'], plan: ['打开管理后台', '进入审计日志'], needsAdmin: true,
@@ -32,5 +35,5 @@ window.JK_PLATFORM_INTENTS = [
   { id: 'demo', title: '一键演示', examples: ['演示一遍', '一键演示', '给我演示所有功能'], keywords: ['演示'], plan: ['准备演示'],
     run: async (s, run, hk) => { run.done('好，开始一键演示。'); setTimeout(() => hk.startDemo(), 300); } },
   { id: 'reset', title: '重置演示数据', examples: ['重置演示数据', '恢复初始数据'], keywords: ['重置', '恢复初始'], plan: ['等你确认', '重置数据'],
-    run: async (s, run, hk) => { const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
+    run: async (s, run, hk) => { if (window.JKHttp.mode() !== 'mock') return run.fail('部署实例不能从网页重置，请联系宿主管理员'); const a = await run.ask('会清空本机所有修改（新增的账号、走访、公文等），确认重置吗？', ['确认重置', '取消']); if (a !== '确认重置') return run.done('已取消。'); await run.step(1); await hk.reset(); } },
 ];

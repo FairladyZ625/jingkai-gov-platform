@@ -7,6 +7,7 @@ import os
 import re
 
 from .stats import facet_values, facets, metadata, passages, stats, suggest
+from .evidence import profile, strength
 
 WORDS = re.compile(r"[\u3400-\u9fff]+|(?:(?![\u3400-\u9fff])[^\W_])+", re.UNICODE)
 CAP_TERMS = ("最高", "不超过", "上限")
@@ -46,9 +47,20 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
             expanded.update(tokens(synonym))
     singles = tuple(t for t in terms if len(t) == 1 and "\u3400" <= t <= "\u9fff")
     rows, df, length, npassages = [], Counter(), 0, 0
-    for doc in docs:
+    query = profile(q)
+    seen = set()
+    for doc in sorted(docs, key=lambda d: d["id"]):
         if not matches(doc, filters or {}):
             continue
+        url = doc["source"].get("url")
+        if url:
+            # 两套公开种子可能给相同官网快照不同 id。只合并同版本完整原文；
+            # 不以标题/结果摘要代替来源身份，也不跨授权筛选或效力状态合并。
+            identity = (url, doc.get("version", 1), doc["title"], doc["text"], doc["status"], doc.get("expire"),
+                        doc.get("example", False), doc["space"] == "enterprise")
+            if identity in seen:
+                continue
+            seen.add(identity)
         title, title_size = indexed(doc["title"], singles)
         title_terms = [t for t in expanded if title[t]]
         snippets = []
@@ -70,31 +82,34 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
         norm = 1.2 * (0.25 + 0.75 * (size or 1) / average)
         return sum(weights[t] * frequencies[t] * 2.2 / (frequencies[t] + norm) for t in found)
 
-    best = {}
+    best, qualities = {}, {}
     for doc, title, title_size, title_terms, snippets in rows:
         title_score = bm25(title, title_size or 1, title_terms)
         picked = None
         for snippet, frequencies, size, found in snippets:
             body = bm25(frequencies, size, found)
             original = sum(t in terms for t in found)
-            key = (original, len(found) - original, body)
+            quality = strength(query, doc["title"], snippet) if query.attribute and (found or title_terms) else 0
+            key = (quality, original, len(found) - original, body)
             if picked is None or key > picked[0]:
                 picked = (key, snippet, body)
         if picked is None:
             coverage, snippet, body = (0, 0), doc["title"], 0
         else:
-            coverage, snippet, body = picked[0][:2], picked[1], picked[2]
+            coverage, snippet, body = picked[0][1:3], picked[1], picked[2]
         # 标题只轻微影响文档排序；片段选择优先覆盖原查询词，再看同义扩充。
         score = body + 0.25 * title_score
         if (coverage != (0, 0) or title_terms) and (
             doc["id"] not in best or (coverage, score) > (best[doc["id"]][3], best[doc["id"]][0])
         ):
             best[doc["id"]] = (score, snippet, doc, coverage)
+            qualities[doc["id"]] = picked[0][0] if picked else 0
 
     def rank(hit):
         score, _, doc, coverage = hit
         expired = doc["status"] == "已失效"
-        return (-coverage[0], -coverage[1], -score * (0.6 if expired else 1), expired, doc["id"])
+        return (-qualities[doc["id"]], -coverage[0], -coverage[1], -score * (0.6 if expired else 1),
+                expired, doc["id"])
 
     ranked = sorted(best.values(), key=rank)
     if embed and ranked:
@@ -110,7 +125,24 @@ def search(docs, q, *, filters=None, sort="rel", limit=8, embed=None):
     hits = []
     for hit in ranked[:min(limit, 50)]:
         score, snippet, doc, coverage = hit
-        hits.append(dict(metadata(doc), chunk=0, snippet=snippet, score=-rank(hit)[2]))
+        entry = dict(metadata(doc), chunk=0, snippet=snippet, score=-rank(hit)[3])
+        # API 仍按文档计数。详情 chunkList[0] 是全文，用版本内原句序号和原文
+        # 为列表保留其他命中条款，点击时用原句定位，不能把序号当作详情 chunk。
+        other, seen_text = [], {snippet}
+        for i, sentence in enumerate(passages(doc), 1):
+            if sentence == snippet and "passage" not in entry:
+                entry["passage"] = i
+            if sentence in seen_text:
+                continue
+            seen_text.add(sentence)
+            freq, size = indexed(sentence, singles)
+            found = [t for t in terms if freq[t]]
+            if found:
+                quality = strength(query, doc["title"], sentence) if query.attribute else 0
+                other.append(((quality, len(found), bm25(freq, size, found)), i, sentence))
+        entry["relatedPassages"] = [dict(passage=i, chunk=0, snippet=s)
+                                    for _, i, s in sorted(other, key=lambda h: h[0], reverse=True)[:3]]
+        hits.append(entry)
     return dict(hits=hits, total=len(ranked), terms=terms, facets=facets(hit[2] for hit in ranked))
 
 
@@ -199,6 +231,7 @@ def install(app, platform, current_user, visible_spaces=None):
 
     class Query(BaseModel):
         q: str = ""
+        scope: Optional[str] = None
         space: str = ""
         sort: Literal["rel", "date"] = "rel"
         limit: int = Field(default=8, ge=1)
@@ -226,6 +259,8 @@ def install(app, platform, current_user, visible_spaces=None):
                                                details=dict(app="kb", need="view"))}, status_code=403)
         if body.space:
             filters["space"] = body.space
+        if body.scope is not None:
+            docs = [d for d in docs if f"{d['id']}@v{d.get('version', 1)}" == body.scope]
         if not WORDS.search(body.q):
             return JSONResponse({"error": dict(code="INVALID_QUERY", message="请输入有效的检索词",
                                                details={})}, status_code=400)

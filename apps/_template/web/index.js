@@ -206,7 +206,7 @@ export async function mount(el, ctx) {
         });
         editing = null;
       } catch (e) {
-        if (e.code === 'version_conflict') {
+        if (e.code === 'VERSION_CONFLICT') {
           const latest = await ctx.api(`/records/${editing.id}`);
           editing.version = latest.version;
         }

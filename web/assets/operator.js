@@ -25,13 +25,18 @@
   }
 
   /* ---------- 词典 ---------- */
-  Op.loadDict = async function () {
-    const H = window.JKHttp; const d = Op.dict;
+  Op.loadDict = async function (canView) {
+    // 每次身份刷新都替换词典；旧请求只持有旧对象，不可能填回新身份。
+    const H = window.JKHttp, d = Op.dict = {enterprise: [], meeting: [], policy: [], doc: []};
     const grab = async (path, map) => { try { const r = await H.get(path); return (r.items || []).map(map).filter(Boolean); } catch (e) { return []; } };
-    d.enterprise = await grab('/api/apps/enterprise/companies', (e) => ({ id: e.id, name: e.name, short: e.short || e.name, names: [e.name, e.short, ...(e.alias || e.formerNames || [])].filter(Boolean) }));
-    d.meeting = await grab('/api/apps/meeting/meetings', (m) => ({ id: m.id, title: m.title, names: [m.title, m.short].filter(Boolean) }));
-    d.policy = await grab('/api/apps/policy/items', (p) => ({ id: p.id, title: p.title, names: [p.title, p.short].filter(Boolean) }));
-    d.doc = await grab('/api/apps/document/documents', (x) => ({ id: x.id, title: x.title, names: [x.title].filter(Boolean) }));
+    await Promise.all([
+      ['enterprise','enterprise','companies', e => ({ id: e.id, name: e.name, short: e.short || e.name, names: [e.name, e.short, ...(e.alias || e.formerNames || [])].filter(Boolean) })],
+      ['meeting','meeting','meetings', m => ({ id: m.id, title: m.title, names: [m.title, m.short].filter(Boolean) })],
+      ['policy','policy','items', p => ({ id: p.id, title: p.title, names: [p.title, p.short].filter(Boolean) })],
+      ['doc','document','documents', x => ({ id: x.id, title: x.title, names: [x.title].filter(Boolean) })],
+    ].map(async ([key, app, resource, map]) => {
+      if (canView?.(app, 'view')) d[key] = await grab(`/api/apps/${app}/${resource}`, map);
+    }));
   };
   function findIn(list, text) {
     let best = null, bl = 0;
@@ -155,8 +160,8 @@
       async ask(q, options = ['确认', '取消']) {
         r.check(); if (cur >= 0) card.set(cur, 'wait');
         const p = new Promise((res) => { r._askRes = res; card.ask(q, options, (o) => res(o)); });
-        if (Op.demo) setTimeout(() => card.pick(options[0]), 1400 / Op.speed);
-        const ans = await p; r._askRes = null; r.check(); if (cur >= 0) card.set(cur, 'run'); return ans;
+        const cancelPick = Op.demo && window.JKDemo?.scheduleChoice(() => card.pick(options[0]));
+        const ans = await p; if (cancelPick) cancelPick(); r._askRes = null; r.check(); if (cur >= 0) card.set(cur, 'run'); return ans;
       },
       done(summary, next, extra) { if (r.finished) return; r.check(); onDone?.(); r.finished = true; for (let k = 0; k < steps.length; k++) card.set(k, 'done'); card.finish('done'); const sens = appId === 'enterprise' ? { model: 'Qwen3-32B（本地）', routeNote: '涉及企业台账，已自动走本地模型，数据不出局' } : {}; if (summary || next) Op.hooks.postAI({ text: summary || '已完成。', next: next || [], ...sens, ...(extra || {}) }); JK.bus.emit('op:done', { appId }); },
       fail(msg) { if (r.finished) return; if (r.stopped || !isCurrent()) return r.markStopped(); r.finished = true; if (cur >= 0) card.set(cur, 'fail'); card.finish('fail'); Op.hooks.postAI({ text: `没能完成：${msg}。你可以在右侧自己接着操作。` }); JK.bus.emit('op:done', { appId, fail: true }); },

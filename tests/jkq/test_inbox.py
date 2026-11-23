@@ -195,7 +195,7 @@ class BadgeMismatch(AssertionError):
 
 def test_sidebar_badge_counts_inbox_rows():
     playwright = pytest.importorskip('playwright.sync_api')
-    entry = Path(__file__).resolve().parents[2] / 'prototype/v4/index.html'
+    entry = Path(__file__).resolve().parents[2] / 'web/index.html'
     with playwright.sync_playwright() as pw:
         with pw.chromium.launch() as browser:
             page = browser.new_page(viewport={'width': 1440, 'height': 900})

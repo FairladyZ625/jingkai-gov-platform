@@ -18,7 +18,7 @@ def test_demo_intent(example):
 
 
 def test_demo_fixture_contains_twelve_distinct_script_utterances():
-    prototype = ROOT / "prototype/v4"
+    prototype = ROOT / "web"
     scripts = [prototype / "config/demo-script.js", *prototype.glob("apps/*/app.js"),
                prototype / "apps/kb/config.js"]
     source = "\n".join(path.read_text(encoding="utf-8") for path in scripts)

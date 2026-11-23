@@ -22,7 +22,7 @@ function boot({ stored = null, prepare } = {}) {
   };
   const ctx = vm.createContext({ window: {}, localStorage, URLSearchParams, setTimeout: (fn) => fn() });
   const run = (file) => {
-    let source = read('prototype/v4/' + file);
+    let source = read('web/' + file);
     if (file === 'mock/mock-api.js' && process.env.JK_POLICY_MUTATION === 'fixed-count') {
       assert.ok(source.includes('核对了 ${total} 项事项'));
       source = source.replace('核对了 ${total} 项事项', '核对了 18 项事项');

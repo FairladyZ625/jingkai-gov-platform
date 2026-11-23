@@ -15,7 +15,7 @@ from starlette.formparsers import MultiPartParser
 from .minutes import minutes_for, public_todos
 from .transcription import (
     DEMO_AUDIO, MEETING_LOCK, MEETING_TYPES, OPERATION, RECORD_TYPE, Options,
-    __haiknow_jobs__, attach_job, meeting_record,
+    __haiknow_jobs__, attach_job, demo_parts, meeting_record, transcribe_part,
 )
 
 
@@ -23,6 +23,10 @@ PROJECT = 'jkq'
 MAX_AUDIO_BYTES = 64 * 1024 * 1024
 BEIJING = timezone(timedelta(hours=8))
 DEMO_URL = '/api/apps/meeting/transcription/demo'
+DEMO_SAMPLE_ID = 'park-service-v1'
+DEMO_SAMPLE_TITLE = '【合成演示】园区服务清单核对'
+DEMO_SAMPLE_TYPE = '专题推进会'
+LEGACY_DEMO_TITLE = '【示例】文化企业座谈会录音_1117'
 WEB_PAGE = Path(__file__).resolve().parents[1] / 'web' / 'transcription.html'
 SIMPLE_AUDIO_SIGNATURES = {
     'amr': (b'#!AMR\n', b'#!AMR-WB\n'),
@@ -84,9 +88,34 @@ def job_view(job):
     }
 
 
+def is_demo_sample(data):
+    if data.get('source') != 'demo' or data.get('file') != DEMO_AUDIO.name:
+        return False
+    if data.get('sampleId') == DEMO_SAMPLE_ID:
+        return True
+    # 只整理系统自动生成的无编辑副本。不同纪要、待办、参会人仍是独立会议。
+    if (data.get('title') != LEGACY_DEMO_TITLE or data.get('minutesEdit') or data.get('todos')
+            or data.get('participants') or data.get('place') or data.get('host')):
+        return False
+    transcript = data.get('transcript')
+    return not transcript or (DEMO_AUDIO.is_file() and transcript == [
+        line for part in demo_parts() for line in transcribe_part(part, hotwords=[], step_key='legacy')])
+
+
+def preferred_sample(records):
+    return max(
+        (record for record in records if is_demo_sample(record['data'])),
+        key=lambda record: (bool(record['data'].get('transcript')), bool(record['data'].get('jobId')),
+                            record['data'].get('sampleId') == DEMO_SAMPLE_ID),
+        default=None,
+    )
+
+
 def meeting_view(ctx, record):
     data = record['data']
     item = {key: value for key, value in data.items() if key != 'minutesEdit'}
+    if is_demo_sample(data):
+        item.update(sampleId=DEMO_SAMPLE_ID, title=DEMO_SAMPLE_TITLE, type=DEMO_SAMPLE_TYPE)
     item.update(id=record['id'], todos=public_todos(data))
     item['status'] = 'done' if item.get('transcript') else 'new'
     if item.get('jobId'):
@@ -202,6 +231,9 @@ def audio_upload(file):
 def list_meetings(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0),
                   ctx=Depends(app_context)):
     records = ctx.records.list(project=PROJECT, type=RECORD_TYPE)['items']
+    sample = preferred_sample(records)
+    if sample:
+        records = [row for row in records if row['id'] == sample['id'] or not is_demo_sample(row['data'])]
     items = []
     for record in records[offset:offset + limit]:
         item = meeting_view(ctx, record)
@@ -217,6 +249,17 @@ def list_meetings(limit: int = Query(50, ge=1, le=100), offset: int = Query(0, g
 @router.post('/meetings', status_code=201)
 async def create_meeting(request: Request, ctx=Depends(require('operate'))):
     form, file = await read_meeting_form(request)
+    sample_id = str(form.get('sampleId') or '')
+    if sample_id:
+        if sample_id != DEMO_SAMPLE_ID or form.get('source') != 'demo' or file is not None:
+            raise DataError('invalid_request', '合成示例不接受自定义录音')
+        with MEETING_LOCK:
+            records = ctx.records.list(project=PROJECT, type=RECORD_TYPE)['items']
+            current = preferred_sample(records)
+            if current:
+                return JSONResponse({'item': meeting_view(ctx, current)}, status_code=200)
+            return save_meeting(ctx, DEMO_SAMPLE_TITLE, DEMO_SAMPLE_TYPE, [], 'demo',
+                                DEMO_AUDIO.name, DEMO_AUDIO.read_bytes(), sample_id=DEMO_SAMPLE_ID)
     title = str(form.get('title') or '').strip()
     type = str(form.get('type') or MEETING_TYPES[0])
     participants = form.get('participants')
@@ -231,6 +274,10 @@ async def create_meeting(request: Request, ctx=Depends(require('operate'))):
         name, audio = DEMO_AUDIO.name, DEMO_AUDIO.read_bytes()
     else:
         raise DataError('invalid_request', '请上传录音，或选择演示录音')
+    return save_meeting(ctx, title, type, people, source, name, audio)
+
+
+def save_meeting(ctx, title, type, people, source, name, audio, *, sample_id=None):
     saved = ctx.data_files.save(name, audio, project=PROJECT, purpose='meeting_audio')
     data = {
         'title': title, 'type': type, 'participants': people, 'source': source,
@@ -239,12 +286,16 @@ async def create_meeting(request: Request, ctx=Depends(require('operate'))):
         'file': saved['name'], 'fileId': saved['fileId'], 'size': saved['size'],
         'transcript': [], 'topics': [], 'todos': [],
     }
+    if sample_id:
+        data['sampleId'] = sample_id
     record = ctx.records.save(project=PROJECT, type=RECORD_TYPE, data=data, files=[saved['fileId']])
     return {'item': meeting_view(ctx, record)}
 
 
 def meeting_detail(ctx, record):
-    return {'item': meeting_view(ctx, record), 'minutes': minutes_for(record['data'])}
+    item = meeting_view(ctx, record)
+    projected = {**record['data'], 'title': item['title'], 'type': item['type']}
+    return {'item': item, 'minutes': minutes_for(projected)}
 
 
 @router.get('/meetings/{meeting_id}')

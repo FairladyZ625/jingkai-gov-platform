@@ -19,7 +19,11 @@ test('八个模块的清单与接口规范 §7 的 117 个方法和路径逐项�
   for (const [, module, section] of sections) {
     const { routes } = require('./cases/' + module + '.json');
     const expected = [...section.matchAll(/^\| (GET|POST|PUT|PATCH|DELETE) \| \x60([^\n]+)\x60 \|$/gm)]
-      .map(([, method, path]) => method + ' ' + path);
+      .map(([, method, path]) => {
+        // §7 暂缺后缀，§3.6、Web adapter 与后端路由一致使用 /restore。
+        if (module === 'kb' && method === 'POST' && path === '/api/v1/kb/docs/{id}') path += '/restore';
+        return method + ' ' + path;
+      });
     assert.deepEqual(routes.map(({ method, path }) => method + ' ' + path).sort(), expected.sort(), module);
     total += routes.length;
   }
@@ -35,6 +39,11 @@ test('响应断言拒绝缺失字段、错误类型和扁平错误响应', () =>
   verify({ status: 404, body: { error } }, contract, {});
   assert.throws(() => verify({ status: 404, body: error }, contract, {}), /缺少必需字段/);
   assert.throws(() => verify({ status: 404, body: { error: { ...error, details: [] } } }, contract, {}), /应为 object/);
+  const optional = { response: { 'optional?': 'string', nullable: '?string', byRole: { $values: ['string'] } } };
+  verify({ status: 200, body: { nullable: null, byRole: { member: ['view'] } } }, optional, {});
+  assert.throws(() => verify({ status: 200, body: { byRole: {} } }, optional, {}), /缺少必需字段.*nullable/);
+  assert.throws(() => verify({ status: 200, body: { optional: null, nullable: null, byRole: {} } }, optional, {}), /optional 应为 string/);
+  assert.throws(() => verify({ status: 200, body: { nullable: null, byRole: { member: [1] } } }, optional, {}), /member\[0\] 应为 string/);
 });
 
 async function listen(server) {
@@ -50,7 +59,9 @@ test('真实 HTTP 传输只执行所选 platform 用例，并转发会话 Cookie
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined;
     requests.push([req.method, req.url, req.headers.cookie]);
-    const response = await mock.request(req.method, req.url, body);
+    const response = req.url === '/api/v1/me' && !req.headers.cookie
+      ? { status: 401, body: { error: { code: 'UNAUTHENTICATED', message: '需要登录', details: {} } } }
+      : await mock.request(req.method, req.url, body);
     if (req.url === '/api/v1/auth/login' && response.status === 200) res.setHeader('Set-Cookie', 'contract-session=example; Path=/; HttpOnly');
     res.writeHead(response.status, { 'Content-Type': 'application/json' }).end(JSON.stringify(response.body));
   });
@@ -62,16 +73,17 @@ test('真实 HTTP 传输只执行所选 platform 用例，并转发会话 Cookie
   const status = await main(['--base', base, '--module', 'platform', '--allow-writes'], {
     CONTRACT_USERNAME: mock.credentials.username,
     CONTRACT_PASSWORD: mock.credentials.password,
-    CONTRACT_RESETTABLE_TARGET: new URL(base).host,
+    CONTRACT_RESETTABLE_TARGET: base,
   }, line => lines.push(line), line => errors.push(line));
   assert.equal(status, 0, errors.join('\n'));
   assert.deepEqual(lines, [
     '契约模式：HTTP（含写入，结束后重置演示数据）；模块：platform',
-    'platform: 37/37，错误样例 1/1', '已请求演示数据重置', '合计 37/37，错误样例 1/1',
+    'platform: 37/37，错误样例 1/1', '已重置演示数据', '合计 37/37，错误样例 1/1',
   ]);
-  // 安全前置登录 1 次 + 38 条用例 + 结束时重新登录并重置 2 次。
-  assert.equal(requests.length, 41);
-  assert.deepEqual(requests[0].slice(0, 2), ['POST', '/api/v1/auth/login']);
+  assert.deepEqual(requests.slice(0, 3).map(request => request.slice(0, 2)), [
+    ['POST', '/api/v1/auth/login'], ['GET', '/api/v1/auth/session'], ['POST', '/api/v1/demo/reset'],
+  ]);
+  assert.equal(requests.filter(([, url]) => url === '/api/v1/auth/login').length, 3);
   assert.deepEqual(requests.at(-1).slice(0, 2), ['POST', '/api/v1/demo/reset']);
   assert.equal(requests.find(([, url]) => url === '/api/v1/me')[2], 'contract-session=example');
   assert.ok(requests.every(([, url]) => url.startsWith('/api/v1/')));

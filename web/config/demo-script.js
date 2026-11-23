@@ -17,7 +17,7 @@ window.JK_DEMO_SCRIPT = [
   { title: '技能中心', steps: [{ caption: '⑥ 技能中心：把常用做法做成技能，分享给同事' }, { newChat: true }, { appDemo: 'skills' }] },
   { title: '电脑操作', steps: [{ caption: '⑦ 电脑操作：AI 替你去其它系统填报，提交前停下等你确认' }, { newChat: true }, { appDemo: 'computer' }] },
   { title: '审签', steps: [{ caption: '⑧ 换成审签领导李阳：刚送审的通知在收件箱里，一键通过' }, { login: 'liyang' }, { open: 'inbox' }, { wait: 1600 }, { click: '[data-op^="inbox.approve."]' }, { wait: 1200 }] },
-  { title: '外部协作者', steps: [{ caption: '⑨ 外部协作者何军：只看授权应用，电话营收自动打码' }, { login: 'hejun' }, { wait: 1200 }, { say: '查一下纸鹿二号智驾' }, { wait: 1500 }] },
+  { title: '外部协作者', steps: [{ caption: '⑨ 外部协作者何军：只看授权应用，电话营收自动打码' }, { login: 'hejun' }, { wait: 1200 }, { say: '查一下知行应用' }, { wait: 1500 }] },
   { title: '管理后台', steps: [{ caption: '⑩ 管理员：账号、授权、模型、审计，改动立即生效' }, { login: 'admin' }, { open: 'admin', tab: 'grants' }, { wait: 1800 }, { open: 'admin', tab: 'models' }, { wait: 1400 }, { open: 'admin', tab: 'audit' }, { wait: 1600 }] },
-  { title: '浅色主题', steps: [{ caption: '深色、浅色两套主题都可用' }, { theme: 'light' }, { wait: 1800 }, { theme: 'dark' }, { login: 'wangmin' }, { caption: '演示结束 · 可以随便点，右下角头像菜单可“重置演示数据”' }, { wait: 2400 }] },
+  { title: '浅色主题', steps: [{ caption: '深色、浅色两套主题都可用' }, { theme: 'light' }, { wait: 1800 }, { theme: 'dark' }, { login: 'wangmin' }, { caption: window.JK_CONFIG?.api?.mode === 'mock' ? '演示结束 · 可以随便点，左侧栏底部头像菜单可“重置演示数据”' : '演示结束 · 可以从左侧栏继续查看已授权的应用' }, { wait: 2400 }] },
 ];

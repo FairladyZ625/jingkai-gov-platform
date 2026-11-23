@@ -177,6 +177,22 @@ def test_anonymous_session_and_private_endpoints(instance):
     assert not store.audit_list()
 
 
+def test_v1_session_trailing_slash_never_redirects(instance):
+    build, _ = instance
+    client, _ = build()  # 回环 HTTP 模拟 HTTPS 反代之后的应用连接。
+    assert client.base_url.scheme == 'http'
+    for signed_in in (False, True):
+        if signed_in:
+            response(login(client), 200)
+        canonical = response(client.get(SESSION, follow_redirects=False), 200)
+        aliased = client.get(SESSION + '/', follow_redirects=False)
+        assert response(aliased, 200) == canonical
+        assert 'location' not in aliased.headers
+        assert (canonical['user'] is not None) == signed_in
+    assert SESSION in client.get('/openapi.json').json()['paths']
+    assert SESSION + '/' not in client.get('/openapi.json').json()['paths']
+
+
 def test_change_password_revokes_other_sessions_and_old_password(instance):
     build, _ = instance
     client, _ = build()
@@ -271,6 +287,39 @@ def test_production_role_always_404_and_demo_sessions_are_rejected(instance):
     response(prod.post(LOGOUT), 200)
     response(prod.post(LOGIN, json={'username': 'operator', 'password': TEST_PASSWORD}), 200)
     response(prod.get(ADMIN), 200)
+
+
+@pytest.mark.parametrize('role', ['partner', 'member', 'leader', 'admin'])
+def test_deployed_demo_cannot_reassign_its_role(instance, monkeypatch, role):
+    monkeypatch.setenv('JKQ_DEPLOY_RUNTIME', '1')
+    build, _ = instance
+    client, store = build()
+    before = response(login(client, role), 200)
+    error(client.put(ROLE, json={'role': 'admin' if role != 'admin' else 'member'}), 403, 'FORBIDDEN')
+    after = response(client.get(ME), 200)
+    assert (after['user'], after['grants']) == (before['user'], before['grants'])
+    denied = [r for r in store.audit_list() if r['action'] == 'permission.denied']
+    assert len(denied) == 1 and denied[0]['user'] == before['user']['id']
+    assert denied[0]['detail'] == {'operation': 'auth.role'}
+
+
+def test_deployed_dict_endpoints_enforce_the_same_view_grants(instance, monkeypatch, tmp_path):
+    from jkq.app import create_app as create_instance
+    monkeypatch.setenv('JKQ_DEPLOY_RUNTIME', '1')
+    monkeypatch.setenv('JKQ_DEMO_MODE', '1')
+    monkeypatch.setenv('HAIKNOW_APPS_DIR', str(ROOT / 'apps'))
+    monkeypatch.setenv('JKQ_ENTERPRISE_PRIVATE_DB', str(tmp_path / 'fixture.sqlite'))
+    paths = {'meeting': 'meetings', 'document': 'documents', 'policy': 'items', 'enterprise': 'companies'}
+    with TestClient(create_instance()) as client:
+        for role in ('partner', 'member', 'leader', 'admin'):
+            grants = response(login(client, role), 200)['grants']
+            for app, resource in paths.items():
+                r = client.get(f'/api/apps/{app}/{resource}')
+                if role == 'partner' and app in ('meeting', 'document'):
+                    assert 'view' not in grants[app]
+                    assert r.status_code == 403 and r.json()['error']['code'] == 'FORBIDDEN'
+                else:
+                    assert 'view' in grants[app] and r.status_code == 200
 
 
 def test_demo_role_switch_requires_a_demo_identity(instance):

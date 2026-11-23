@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -134,22 +135,37 @@ def test_conversation_routes_return_errors_through_instance(client):
     assert_error(client.get(f"{CONVERSATIONS}/{cid}"), 404, "NOT_FOUND")
 
 
-def test_job_route_uses_jingkai_view_and_sdk_falls_back(client):
-    client.app.state.platform.jobs.operations[("sample-app", "transcribe")] = ("1", None)
-    login(client, "sampleoperator")
-    response = client.post(JOBS, json={
-        "appId": "sample-app", "project": "jkq", "operation": "transcribe",
-        "input": {"ref": "audio-1"}, "idempotencyKey": "instance-wiring",
-    })
-    assert response.status_code == 202, response.text
-    job_id = response.json()["id"]
-    job = client.get(f"{JOBS}/{job_id}").json()["job"]
-    assert {key: job[key] for key in ("id", "kind", "ref", "status")} == {
-        "id": job_id, "kind": "transcribe", "ref": "audio-1", "status": "running",
-    }
-    sdk = client.get(f"{JOBS}/{job_id}?app=sample-app")
-    assert sdk.status_code == 200, sdk.text
-    assert "job" not in sdk.json() and sdk.json()["id"] == job_id
+def test_job_route_uses_jingkai_view_and_sdk_falls_back(client, monkeypatch):
+    started, release = Event(), Event()
+
+    def transcribe(_execution, _body):
+        started.set()
+        assert release.wait(timeout=10), "测试未释放样例长任务"
+        return {}
+
+    monkeypatch.setitem(
+        client.app.state.platform.jobs.operations, ("sample-app", "transcribe"), ("1", transcribe)
+    )
+    try:
+        login(client, "sampleoperator")
+        response = client.post(JOBS, json={
+            "appId": "sample-app", "project": "jkq", "operation": "transcribe",
+            "input": {"ref": "audio-1"}, "idempotencyKey": "instance-wiring",
+        })
+        assert response.status_code == 202, response.text
+        job_id = response.json()["id"]
+        # 等操作真正开始，并在两个视图读取完毕前保持运行，避免依赖调度时序。
+        assert started.wait(timeout=5), "样例长任务未启动"
+        job = client.get(f"{JOBS}/{job_id}").json()["job"]
+        assert {key: job[key] for key in ("id", "kind", "ref", "status")} == {
+            "id": job_id, "kind": "transcribe", "ref": "audio-1", "status": "running",
+        }
+        sdk = client.get(f"{JOBS}/{job_id}?app=sample-app")
+        assert sdk.status_code == 200, sdk.text
+        assert "job" not in sdk.json() and sdk.json()["id"] == job_id
+        assert sdk.json()["status"] == "running"
+    finally:
+        release.set()
     assert_error(client.get(f"{JOBS}/missing"), 404, "NOT_FOUND")
 
 

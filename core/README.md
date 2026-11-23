@@ -33,7 +33,7 @@ HAIKNOW_DATA_DIR="$(mktemp -d)" PYTHONPATH=core/server:core/sdk \
 
 管理员可通过 `/api/v1/admin/ai/providers/{id}` 保存服务商元数据，通过 `/api/v1/admin/ai/routes/{capability}` 保存能力路由。服务商 ID 使用小写字母、数字和连字符。以 `example` 为例，由运维注入 `HAIKNOW_PROVIDER_EXAMPLE_BASE_URL` 与 `HAIKNOW_PROVIDER_EXAMPLE_API_KEY`。带连字符的 ID 将连字符换成下划线。只有管理员填写的基础地址与环境固定地址一致时，网关才会发出该凭据。管理 API 拒收凭据实值，查询只返回配置状态及掩码。路由配置与模型调用审计使用同一个模型字段。
 
-Codex CLI 仅用于公开合成文本的本机联调。它在独立临时目录以只读、临时会话运行，关闭 shell、hooks 和网页搜索。平台通过标准输入传递文本，CLI 自行管理登录。
+Codex CLI 仅用于公开合成文本的本机联调。它在独立临时目录以只读、临时会话运行，关闭 shell、hooks 和网页搜索。平台通过标准输入传递文本，CLI 自行管理登录。经开区实例使用独立的模型目录和启用开关。通过实例 API 选模型、验证真实回答与工具事件的步骤见[本机 Codex CLI 对话](../jkq/README.md#本机-codex-cli-对话)。
 
 升级 SQLite 时，v14 保留服务商元数据、路由和用量，清除旧的模型凭据列与停用的飞书加密字段。升级时生成的新备份保留原 schema 及业务数据，将这两列置空。此前已生成的历史备份与主密钥文件由实例运维按保留策略处置。旧服务商应重新通过环境配置凭据。
 

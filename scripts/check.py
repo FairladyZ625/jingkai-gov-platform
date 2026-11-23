@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "core" / "server"), str(ROOT / "core" / "sdk")]
 
 from haiknow_core import manifest as mf  # noqa: E402
+from haiknow_core.manifest_ext import validate_extensions  # noqa: E402
 
 # 本机开着代理时，测试内起的 HTTP/WS 服务只监听回环，不该走代理。
 LOOPBACK_NO_PROXY = ("127.0.0.1", "localhost", "::1")
@@ -119,8 +120,8 @@ RULES = {
     "CHK-WEB-05": "用 SDK 组件的 class；确需动态样式时由底座在 STYLE_ALLOWED 登记",
     "CHK-ERR-01": "界面文案不拼错误码；错误一律经 errorMessage(err) 或 ctx.preview.errors.message(err) 转成中文再展示",
     "CHK-ERR-02": "不直接展示 err.message；改用 ctx.preview.errors.message(err)（平台页面用 errorMessage(err)）",
-    "CHK-ERR-03": "在 apps/<id>/web/errors.json 登记 {\"码\": \"中文提示\"}；键用小写下划线，不得与平台码重名，值必须是中文",
-    "CHK-ERR-04": "在 core/sdk/js/preview/errors.js 的 PLATFORM_ERROR_MESSAGES 补齐该码的中文提示，并保持与 docs/specs/平台接口v1.md 一致",
+    "CHK-ERR-03": "在 apps/<id>/web/errors.json 登记 {\"码\": \"中文提示\"}；键用大写 SNAKE_CASE 或已支持的小写拼写，引用时须精确匹配，不得与平台码重名，值必须是中文",
+    "CHK-ERR-04": "在 core/sdk/js/preview/errors.js 的 PLATFORM_ERROR_MESSAGES 补齐该码的中文提示，并保持与 docs/接口规范.md 一致",
     "CHK-TEST-01": "新建 apps/<id>/tests/test_*.py，至少覆盖一条完整流程",
     "CHK-TEST-02": "加一条断言 403 或 PermissionDenied 的无权限用例",
     "CHK-TEST-03": "按失败用例修；本地用 python scripts/check.py --app <id> 复现",
@@ -213,12 +214,16 @@ def _registered_owners(app_id: str) -> list[str] | None:
     return None
 
 
-def _status(d: Path) -> str:
+def _app_manifest(d: Path) -> dict:
     try:
         m = json.loads((d / "app.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return "idea"
-    return m.get("status", "idea") if isinstance(m, dict) else "idea"
+        return {}
+    return m if isinstance(m, dict) else {}
+
+
+def _status(d: Path) -> str:
+    return _app_manifest(d).get("status", "idea")
 
 
 def _key_line(raw: str, key: str) -> int | None:
@@ -234,7 +239,11 @@ def _manifest_line(raw: str, msg: str) -> int | None:
 
 
 def check_manifest(r: Report, only: str | None) -> None:
-    for d in app_dirs(only):
+    directories = app_dirs(only)
+    template = ROOT / "apps" / "_template"
+    if only == "_template" or (only is None and template.is_dir()):
+        directories.append(template)
+    for d in directories:
         f = d / "app.json"
         where = rel(f)
         if not f.is_file():
@@ -249,18 +258,24 @@ def check_manifest(r: Report, only: str | None) -> None:
         if not isinstance(m, dict):
             r.rule("CHK-APP-02", where, "顶层必须是 JSON 对象，不能是数组或其他类型")
             continue
-        for e in mf.validate(m, d.name):
+        base = {**m, "id": "sample-template"} if d == template and m.get("id") == "__APP_ID__" else m
+        for e in mf.validate(base, d.name):
             code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
             r.rule(code, where, e, line=_manifest_line(raw, e))
+        for e in validate_extensions(m, required=d == template):
+            code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
+            r.rule(code, where, f"应用 {m.get('id', d.name)} {e}", line=_manifest_line(raw, e))
         # 新应用必须声明 SDK 主版本；平台运行时仍把旧应用的缺省值按 "1" 处理。
         if "sdk" not in m:
-            r.rule("CHK-APP-03", where, '缺少字段 sdk（新应用写 "sdk": "1"；旧应用由平台按 1 兼容运行）')
+            r.rule("CHK-APP-03", where, '缺少字段 sdk（新应用写 "sdk": "2"；旧应用由平台按 1 兼容运行）')
         if m.get("kind") == "module" and not (d / "web" / "index.js").is_file():
             r.rule("CHK-APP-05", rel(d / "web"), "module 型应用缺少 web/index.js")
         owner = m.get("owner")
         owner_line = _key_line(raw, "owner")
         if isinstance(owner, str) and not owner.strip():
             r.rule("CHK-APP-03", where, "字段 owner 不能为空（填 GitLab 用户名）", line=owner_line)
+        if d == template:
+            continue  # 模板不单独登记 CODEOWNERS；生成实际应用时登记。
         registered = _registered_owners(d.name)
         if registered is None:
             r.rule("CHK-APP-06", where, f"CODEOWNERS 未登记 /apps/{d.name}/，改动找不到评审人", line=owner_line)
@@ -407,9 +422,9 @@ ERR_SHOWN_CODE = re.compile(
 ERR_BADGE_CODE = re.compile(r"""\bbadge\s*\(\s*[^,()\n]*\.code\s*[,)]""")
 ERR_CODE_CMP = re.compile(r"""\.code\s*[=!]==?\s*(['"])([A-Za-z0-9_]+)\1""")
 HAN = re.compile(r"[\u4e00-\u9fff]")
-CODE_KEY = re.compile(r"[a-z][a-z0-9_]*")
+CODE_KEY = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 PLATFORM_ERRORS_JS = Path("core/sdk/js/preview/errors.js")
-PLATFORM_API_DOC = Path("docs/specs/平台接口v1.md")
+PLATFORM_API_DOC = Path("docs/接口规范.md")
 
 
 def _blank_js_comments(text: str) -> str:
@@ -690,14 +705,15 @@ def _component_issue_codes():
                 yield node.args[0].value, rel(f)
 
 
-def _backend_codes(tree: ast.AST):
+def _backend_codes(tree: ast.AST, platform: dict):
     """应用后端抛出的自定义错误码：DataError("码", ...) 和错误体里常量形式的 "code": "码"。"""
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             fn = node.func
             name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else ""
             if name == "DataError" and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                yield node.lineno, node.args[0].value
+                code = node.args[0].value
+                yield node.lineno, code.upper() if code in platform else code
         elif isinstance(node, ast.Dict):
             for k, v in zip(node.keys, node.values):
                 if isinstance(k, ast.Constant) and k.value == "code" and isinstance(v, ast.Constant) and isinstance(v.value, str):
@@ -714,6 +730,26 @@ def _scan_error_display(r: Report, f: Path) -> None:
         r.rule("CHK-ERR-01", where, "把错误码拼进或直接展示在界面文案里", line=line)
     for pos in _error_state_code_calls(text):
         r.rule("CHK-ERR-01", where, "ErrorState 传了 code，界面会显示「错误码：xxx」", line=line_of(text, pos))
+
+
+def _documented_platform_codes(text: str):
+    # 只认完整的内联错误对，示例字段与普通状态说明不参与登记。
+    text = re.sub(r"^```[^\n]*\n.*?^```[^\n]*$", "", text, flags=re.M | re.S)
+    for span in re.findall(r"`([^`\n]+)`", text):
+        match = re.fullmatch(r"([A-Z][A-Z0-9_]*)\s+[45]\d{2}|[45]\d{2}\s+([A-Z][A-Z0-9_]*)", span)
+        if match:
+            yield match[1] or match[2]
+
+    # §1 平台表在离线 mock 清单之前。其它章节也有带 HTTP 状态的示例表。
+    section = re.search(r"^## 1\. [^\n]*\n(.*?)(?=^## |^离线 mock|\Z)", text, re.M | re.S)
+    if section:
+        for block in section[1].split("\n\n"):
+            lines = block.strip().splitlines()
+            if lines and re.match(r"^\|\s*错误码\s*\|\s*HTTP\s*\|", lines[0]):
+                for row in lines[2:]:
+                    match = re.match(r"^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|\s*[45](?:\d{2}|xx)(?:\s*/\s*[45]\d{2})*\s*\|", row)
+                    if match:
+                        yield match[1]
 
 
 def check_errors(r: Report, only: str | None) -> None:
@@ -735,21 +771,24 @@ def check_errors(r: Report, only: str | None) -> None:
             continue
         reg_where = rel(d / "web" / "errors.json")
         for code, text in registry.items():
-            if not CODE_KEY.fullmatch(str(code)):
-                r.rule("CHK-ERR-03", reg_where, f"错误码 {code!r} 须是小写字母、数字、下划线，且以字母开头")
-            elif platform and code in platform:
+            if not (CODE_KEY.fullmatch(code) or re.fullmatch(r"[a-z][a-z0-9_]*", code)):
+                r.rule("CHK-ERR-03", reg_where, f"错误码 {code!r} 须使用大写 SNAKE_CASE 或小写自定义码")
+            if platform and code.lower() in platform:
                 r.rule("CHK-ERR-03", reg_where, f"{code} 是平台码，不能在应用里重新登记；直接使用平台提示")
             if not (isinstance(text, str) and HAN.search(text)):
                 r.rule("CHK-ERR-03", reg_where, f"{code} 的提示必须是中文")
-        known = set(registry) | set(platform or {})
+        known = set(registry) | {key.upper() for key in platform or {}}
         for f in sorted((d / "api").rglob("*.py")) if (d / "api").is_dir() else []:
             try:
                 tree = ast.parse(f.read_text(encoding="utf-8"), filename=rel(f))
             except SyntaxError:
                 continue  # 语法错误由 CHK-APP-13 报
-            for line, code in _backend_codes(tree):
+            for line, code in _backend_codes(tree, platform or {}):
                 if code not in known:
                     r.rule("CHK-ERR-03", rel(f), f"自定义错误码 {code} 未在 {reg_where} 登记中文提示", line=line)
+        # SDK 1 在应用比较错误码之前将已知平台码转为小写。
+        if _app_manifest(d).get("sdk", "1") == "1":
+            known.update(platform or {})
         for f in sorted((d / "web").rglob("*.js")) if (d / "web").is_dir() else []:
             js = _blank_js_comments(f.read_text(encoding="utf-8"))
             for m in ERR_CODE_CMP.finditer(js):
@@ -768,20 +807,20 @@ def check_errors(r: Report, only: str | None) -> None:
     wanted: dict[str, str] = {}
     doc = ROOT / PLATFORM_API_DOC
     if doc.is_file():
-        for code in re.findall(r"^\|\s*\d{3}\s*\|\s*`([a-z][a-z0-9_]*)`", doc.read_text(encoding="utf-8"), re.M):
-            wanted.setdefault(code, str(PLATFORM_API_DOC))
+        for code in _documented_platform_codes(doc.read_text(encoding="utf-8")):
+            wanted.setdefault(code.lower(), str(PLATFORM_API_DOC))
     server = ROOT / "core" / "server"
     patterns = (
-        r"\b(?:DataError|AIError)\(\s*['\"]([a-z][a-z0-9_]*)['\"]",
-        r"\bIdentityError\(\s*\d+\s*,\s*['\"]([a-z][a-z0-9_]*)['\"]",
-        r"\b(?:_error|v1_error)\(\s*\d+\s*,\s*['\"]([a-z][a-z0-9_]*)['\"]",
-        r"['\"]code['\"]\s*:\s*['\"]([a-z][a-z0-9_]*)['\"]",
+        r"\b(?:DataError|AIError)\(\s*['\"]([A-Za-z][A-Za-z0-9_]*)['\"]",
+        r"\bIdentityError\(\s*\d+\s*,\s*['\"]([A-Za-z][A-Za-z0-9_]*)['\"]",
+        r"\b(?:_error|v1_error)\(\s*\d+\s*,\s*['\"]([A-Za-z][A-Za-z0-9_]*)['\"]",
+        r"['\"]code['\"]\s*:\s*['\"]([A-Za-z][A-Za-z0-9_]*)['\"]",
     )
     for f in sorted(server.rglob("*.py")) if server.is_dir() else []:
         src = f.read_text(encoding="utf-8")
         for pat in patterns:
             for m in re.finditer(pat, src):
-                wanted.setdefault(m.group(1), rel(f))
+                wanted.setdefault(m.group(1).lower(), rel(f))
     for code, source in sorted(wanted.items()):
         if code not in platform:
             r.rule("CHK-ERR-04", where, f"{source} 使用了错误码 {code}，码表里没有它的中文提示")
