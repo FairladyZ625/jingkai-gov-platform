@@ -25,6 +25,9 @@ for (const [code, expected] of [
   ['BAD_PASSWORD', '原密码不正确'],
   ['WEAK_PASSWORD', '新密码至少需要 6 位'],
   ['WRITE_CONFIRMATION_REQUIRED', '请先确认写入操作，再提交执行结果'],
+  ['NOT_IMPLEMENTED', '本期暂不支持将技能升级为小应用'],
+  ['INVALID_SKILL_DRAFT', '模型返回的草稿格式有误，请重试'],
+  ['TOOL_UNAVAILABLE', '业务工具当前不可用，请稍后重试'],
 ]) {
   for (const message of ['', 'Request failed']) assert.equal(errorMessage(err(message, { code })), expected);
 }

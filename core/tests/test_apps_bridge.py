@@ -289,14 +289,14 @@ def test_chat_write_creates_one_pending_review_without_touching_business_records
     }
 
 
-@pytest.mark.parametrize(("args", "status", "code"), [
-    ({**ARGS, "title": "需要审批角色"}, 403, "FORBIDDEN"),
-    ({"project": "limited-project", "title": "样例"}, 404, "NOT_FOUND"),
-    ({"project": "sample-project"}, 422, "invalid_request"),
-    ({"project": "sample-project", "title": ""}, 422, "invalid_request"),
-    ({"project": "sample-project", "title": "样例", "content": "字" * 2001}, 422, "invalid_request"),
+@pytest.mark.parametrize(("args", "status", "code", "outcome"), [
+    ({**ARGS, "title": "需要审批角色"}, 403, "FORBIDDEN", "FORBIDDEN"),
+    ({"project": "limited-project", "title": "样例"}, 404, "NOT_FOUND", "NOT_FOUND"),
+    ({"project": "sample-project"}, 422, "INVALID_REQUEST", "invalid_request"),
+    ({"project": "sample-project", "title": ""}, 422, "INVALID_REQUEST", "invalid_request"),
+    ({"project": "sample-project", "title": "样例", "content": "字" * 2001}, 422, "INVALID_REQUEST", "invalid_request"),
 ])
-def test_write_tool_checks_business_input_and_scope_before_review(api, args, status, code):
+def test_write_tool_checks_business_input_and_scope_before_review(api, args, status, code, outcome):
     client, reviews = api
     login(client, "sampleoperator")
     for path in (f"{BASE}/create_record", f"/api/v1/chat-fixture/{APP}/create_record"):
@@ -304,7 +304,7 @@ def test_write_tool_checks_business_input_and_scope_before_review(api, args, sta
     assert reviews.items == {}
     assert client.get(f"/api/apps/{APP}/records").json()["items"] == []
     rows = tool_audit(client)
-    assert {(row["detail"]["via"], row["detail"]["outcome"]) for row in rows} == {("ui", code), ("chat", code)}
+    assert {(row["detail"]["via"], row["detail"]["outcome"]) for row in rows} == {("ui", outcome), ("chat", outcome)}
     assert len(rows) == 2
 
 
@@ -324,7 +324,7 @@ def test_chat_write_requires_registered_preflight_and_checks_target_record(api):
     for path in (f"{BASE}/update_record", chat):
         assert_error(client.post(path, json={"args": args}), 404, "NOT_FOUND")
     platform.apps[APP].manifest["tools"][-1]["endpoint"] = f"PUT /api/apps/{APP}/records/{{rid}}"
-    assert_error(client.post(chat, json={"args": args}), 500, "internal_error")
+    assert_error(client.post(chat, json={"args": args}), 500, "INTERNAL_ERROR")
     assert reviews.items == {}
     login(client, "sampleadmin")
     assert client.get(f"/api/apps/{APP}/records/{target['id']}").json() == target
@@ -358,16 +358,16 @@ def test_unavailable_app_checks_permissions_before_availability_and_audits(api, 
     login(client, "partner")
     for path in paths:
         assert_error(client.post(path, json={"args": ARGS}), 403, "FORBIDDEN")
-    assert_error(client.get(f"/api/v1/apps/{APP}/records"), 503, "app_unavailable")
-    assert_error(client.get(f"/api/apps/{APP}/records"), 503, "app_unavailable")
+    assert_error(client.get(f"/api/v1/apps/{APP}/records"), 503, "APP_UNAVAILABLE")
+    assert_error(client.get(f"/api/apps/{APP}/records"), 503, "APP_UNAVAILABLE")
 
     login(client, "sampleoperator")
     detail_response = client.get(detail)
-    assert_error(detail_response, 503, "app_unavailable")
+    assert_error(detail_response, 503, "APP_UNAVAILABLE")
     if unavailable == "circuit":
         assert int(detail_response.headers["retry-after"]) > 0
     for path in paths:
-        assert_error(client.post(path, json={"args": ARGS}), 503, "app_unavailable")
+        assert_error(client.post(path, json={"args": ARGS}), 503, "APP_UNAVAILABLE")
 
     rows = tool_audit(client)
     assert len(rows) == 4
@@ -418,7 +418,7 @@ def test_unknown_tools_and_invalid_request_do_not_execute(api):
         assert_error(client.post(f"{BASE}/{target}", json={"args": {}}), 404, "TOOL_NOT_FOUND")
     assert_error(client.post("/api/v1/apps/unknown/tools/unknown", json={"args": {}}), 404, "NOT_FOUND")
     for args in ([], None, "sample"):
-        assert_error(client.post(f"{BASE}/list_records", json={"args": args}), 422, "invalid_request")
+        assert_error(client.post(f"{BASE}/list_records", json={"args": args}), 422, "INVALID_REQUEST")
     assert reviews.items == {}
 
 
@@ -430,7 +430,7 @@ def test_path_args_are_bound_to_current_app_and_used_by_real_router(api):
     assert response.status_code == 200 and response.json()["result"]["id"] == record["id"]
     for value in ("..", "../records", "%2f", None):
         assert_error(
-            client.post(f"{BASE}/get_record", json={"args": {"rid": value}}), 422, "invalid_request",
+            client.post(f"{BASE}/get_record", json={"args": {"rid": value}}), 422, "INVALID_REQUEST",
         )
 
 
@@ -439,7 +439,7 @@ def test_missing_review_integration_fails_without_business_write(api):
     client.app.state.apps_bridge.review_sink = None
     login(client, "sampleoperator")
     response = client.post(f"/api/v1/chat-fixture/{APP}/create_record", json={"args": ARGS})
-    assert_error(response, 500, "internal_error")
+    assert_error(response, 500, "INTERNAL_ERROR")
     assert reviews.items == {}
     assert client.get(f"/api/apps/{APP}/records").json()["items"] == []
     assert [row["detail"]["outcome"] for row in tool_audit(client)] == ["internal_error"]
@@ -498,7 +498,7 @@ def test_template_marker_cannot_authorize_an_unregistered_business_route(api):
     login(client, "sampleoperator")
     assert_error(client.post(f"{BASE}/create_record", json={"args": ARGS}), 403, "FORBIDDEN")
     path = f"/api/v1/chat-fixture/{APP}/create_record"
-    assert_error(client.post(path, json={"args": ARGS}), 500, "internal_error")
+    assert_error(client.post(path, json={"args": ARGS}), 500, "INTERNAL_ERROR")
     assert reviews.items == {}
     assert client.get(f"/api/apps/{APP}/records").json()["items"] == []
 
