@@ -15,6 +15,7 @@ from .errors import AIError, TRANSPORT_ERRORS, transport_error
 
 Chunk = TypeVar('Chunk')
 MOCK_CONTENT = '[模拟模型] 已收到输入。'
+SUCCESSFUL_FINISH_REASONS = ('stop', 'length', 'content_filter', 'tool_calls', 'function_call')
 
 
 @dataclass
@@ -29,11 +30,22 @@ class Channel(Generic[Chunk]):
 
 
 class ChatRequest(dict):
-    """结构化消息调用。流式通道随请求传递，序列化时仅包含模型参数。"""
+    """结构化消息调用。流式通道和工具校验只在网关内部使用。"""
 
-    def __init__(self, payload, events=None):
+    def __init__(self, payload, events=None, *, validate_tool_call=None):
         super().__init__(payload)
         self.events = events
+        self.validate_tool_call = validate_tool_call
+
+    def validate_message(self, message):
+        if self.validate_tool_call is not None:
+            for call in message['tool_calls']:
+                try:
+                    self.validate_tool_call(call)
+                except AIError as error:
+                    error.retryable = False
+                    raise
+        return message
 
 
 def chat_message(message):
@@ -75,11 +87,19 @@ def _sse(delta, finish=None):
 
 
 async def request(provider, model, payload, timeout, channel: Channel[str], *,
-                  transport=None, trust_env=None):
+                  transport=None, trust_env=None, on_start=None):
     if channel.cancelled.is_set():
         raise AIError('timeout', '本轮已中断。')
+
+    def start():
+        if not channel.started:
+            channel.started = True
+            if on_start is not None:
+                on_start()
+
     if provider['kind'] == 'mock':
         message = mock_message(provider)
+        start()
         channel.send(_sse({'content': message.get('content')}))
         calls = message.get('tool_calls') or []
         if calls:
@@ -97,6 +117,13 @@ async def request(provider, model, payload, timeout, channel: Channel[str], *,
         complete = False
         # classification 只用于平台出站策略，不传上游；路由模型始终由能力中心决定。
         body = {k: v for k, v in payload.items() if k not in ('classification', 'model', 'stream')}
+        request_options = body.pop('stream_options', None)
+        stream_options = request_options.copy() if isinstance(request_options, dict) else {}
+        stream_options.pop('include_usage', None)
+        if provider.get('stream_usage', provider['kind'] in ('openai', 'deepseek', 'local')):
+            stream_options['include_usage'] = True
+        if stream_options:
+            body['stream_options'] = stream_options
         options = {'transport': transport} if transport is not None else {}
         async with httpx.AsyncClient(timeout=timeout, trust_env=trust_env, **options) as client:
             async with client.stream('POST', provider['base_url'] + '/chat/completions',
@@ -111,12 +138,29 @@ async def request(provider, model, payload, timeout, channel: Channel[str], *,
                         break
                     try:
                         value = json.loads(data)
-                        if not isinstance(value, dict) or 'error' in value or not isinstance(value.get('choices'), list):
+                        if not isinstance(value, dict):
                             raise ValueError('无效流')
-                        complete |= any(c.get('finish_reason') is not None for c in value['choices'])
-                    except (ValueError, TypeError, AttributeError):
+                    except ValueError:
                         raise AIError('provider_error', '模型服务商流式响应格式无效。') from None
-                    channel.send('data: ' + data + '\n\n')
+                    if 'error' in value:
+                        start()
+                        raise AIError('provider_error', '模型服务商中断了流式生成。')
+                    choices = value.get('choices')
+                    if not isinstance(choices, list) or any(
+                        not isinstance(choice, dict)
+                        or (not isinstance(choice.get('delta'), dict) and choice.get('finish_reason') is None)
+                        for choice in choices
+                    ):
+                        raise AIError('provider_error', '模型服务商流式响应格式无效。')
+                    if choices:
+                        start()
+                        reasons = [choice.get('finish_reason') for choice in choices]
+                        if any(reason is not None and reason not in SUCCESSFUL_FINISH_REASONS for reason in reasons):
+                            raise AIError('provider_error', '模型服务商中断了流式生成。')
+                        complete |= any(reason in SUCCESSFUL_FINISH_REASONS for reason in reasons)
+                    # 空 choices 的用量块不能确定上游已经开始生成。
+                    if channel.started:
+                        channel.send('data: ' + data + '\n\n')
         if not complete:
             raise AIError('provider_error', '模型流在完成前中断，已收到的进展已保留。')
         channel.send('data: [DONE]\n\n')
@@ -147,6 +191,7 @@ async def request(provider, model, payload, timeout, channel: Channel[str], *,
     except httpx.HTTPStatusError as exc:
         error = AIError('provider_error', '模型服务商调用失败，请检查配置或稍后重试。')
         error.status_code = exc.response.status_code
+        error.retryable = error.status_code >= 500
         raise error from None
 
 
@@ -157,10 +202,9 @@ async def chat_events(provider, model, payload, timeout, events, *, route_note='
     usage = chat_usage(None)
     meta = {'model': model, 'routeNote': route_note}
 
-    def emit(event, data):
+    def start():
         if not events.started:
             events.send(('meta', meta))
-        events.send((event, data))
 
     def receive(frame):
         nonlocal usage
@@ -178,7 +222,7 @@ async def chat_events(provider, model, payload, timeout, events, *, route_note='
                 if not isinstance(content, str):
                     raise ValueError('无效文本增量')
                 text.append(content)
-                emit('delta', {'text': content})
+                events.send(('delta', {'text': content}))
             for call in delta.get('tool_calls') or []:
                 index = call['index']
                 if type(index) is not int or index < 0:
@@ -187,21 +231,19 @@ async def chat_events(provider, model, payload, timeout, events, *, route_note='
                 for key, value in (call.get('function') or {}).items():
                     if key in function and value is not None:
                         function[key] += value
-                if not events.started:
-                    events.send(('meta', meta))
 
     try:
-        await request(provider, model, payload, timeout, Channel(receive, events.cancelled), **options)
+        await request(provider, model, payload, timeout, Channel(receive, events.cancelled),
+                      on_start=start, **options)
         message = chat_message({
             'content': ''.join(text) if text or not fragments else None,
             'tool_calls': [{'function': function} for _, function in sorted(fragments.items())],
         })
     except (ValueError, KeyError, TypeError, AttributeError):
         raise AIError('provider_error', '模型服务商流式响应格式无效。') from None
-    if not events.started:
-        events.send(('meta', meta))
+    payload.validate_message(message)
     for call in message['tool_calls']:
-        emit('tool', call)
+        events.send(('tool', call))
     if provider['kind'] == 'mock':
         usage = {'input': 0, 'output': 0}
     return {**message, 'usage': usage, 'mock': provider['kind'] == 'mock'}
