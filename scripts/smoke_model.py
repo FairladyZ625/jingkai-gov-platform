@@ -12,10 +12,12 @@ sys.path[:0] = [str(ROOT), str(ROOT / "core/server"), str(ROOT / "core/sdk")]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", help="配置中的模型标识，或 codex-cli。默认优先使用 JKQ_MODEL_PROVIDER，再按配置顺序选择。")
+    parser.add_argument("--provider", help="配置中的模型标识。Codex CLI 仅接受显式 --provider codex-cli。"
+                        "默认按 JKQ_MODEL_PROVIDER 和配置顺序选择 HTTP 服务。")
     args = parser.parse_args()
+    codex_requested = args.provider == "codex-cli"
     provider_id = args.provider or os.getenv("JKQ_MODEL_PROVIDER", "").strip()
-    if provider_id == "codex-cli":
+    if codex_requested:
         import shutil
 
         if shutil.which("codex") is None:
@@ -35,17 +37,18 @@ def main():
     )
 
     try:
-        if provider_id == "codex-cli":
-            content = codex_smoke(os.getenv("JKQ_CODEX_MODEL_NAME"))
+        if codex_requested:
+            content = codex_smoke(os.getenv("JKQ_CODEX_MODEL_NAME", "").strip() or None)
         else:
             config = load_config()
+            http_models = [item for item in config.models if item.kind in ("openai", "deepseek")]
             if args.provider:
-                candidates = [item for item in config.models if item.id == args.provider and item.kind != "mock"]
+                candidates = [item for item in http_models if item.id == args.provider]
                 if not candidates:
                     parser.error("请选择已登记的 OpenAI 兼容 provider 或 codex-cli。")
             else:
                 candidates = sorted(
-                    (item for item in config.models if item.enabled and item.kind != "mock"),
+                    (item for item in http_models if item.enabled),
                     key=lambda item: item.id != provider_id,
                 )
             invalid = False

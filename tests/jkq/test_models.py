@@ -27,6 +27,7 @@ LOCAL_URL = "https://local.example.test/v1"
 def model_client(make_client, isolated_platform, monkeypatch):
     for key in os.environ.keys() & {
         "JKQ_MODEL_PROVIDER",
+        *(f"JKQ_CODEX_MODEL_{key}" for key in ("ENABLED", "NAME", "TIMEOUT", "MAX_CONCURRENCY")),
         *(f"JKQ_{provider}_MODEL_{option}"
           for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "LOCAL_BACKUP", "OVERSEAS")
           for option in ("BASE_URL", "NAME", "API_KEY", "CONFIDENTIAL_BASE_URL")),
