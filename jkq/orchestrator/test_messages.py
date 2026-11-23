@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
@@ -14,7 +15,7 @@ from starlette.requests import ClientDisconnect
 
 from jkq.app import create_app
 from jkq.conversations.store import ConversationStore
-from jkq.orchestrator.persistence import completed_reply, finish_turn, start_turn
+from jkq.orchestrator.persistence import finish_turn, start_turn
 from jkq.orchestrator.ports import ModelTurn, ToolCall
 from jkq.orchestrator.routes import install
 from jkq.settings import REPO_ROOT
@@ -25,6 +26,8 @@ OWNER = "sampleoperator"
 PASSWORD = "demo-pass"
 POLICY_RESULT = {"results": [{"id": "PI-01", "title": "演示条款", "level": "check"}]}
 SOURCES = [{"id": "KB-1", "title": "公开演示政策", "snippet": "该示例用于测试出处。", "n": 1}]
+KB_ANSWER = "“该示例用于测试出处。”[1]"
+KB_NO_MATCH = {"outcome": "no_match", "confidence": "none", "citations": []}
 
 
 class ScriptedGateway:
@@ -47,6 +50,7 @@ class BridgeStub:
             "kb.search": False, "kb.import": True, "test.publish": True, "document.submit": True,
         }
         self.calls = []
+        self.kb_classes = []
         self.preflights = []
         self.reviews = []
         self.write_errors = {}
@@ -55,7 +59,7 @@ class BridgeStub:
             "policy.search": {"items": [{"id": "PI-01"}]},
             "enterprise.get": {"item": {"id": "E002"}},
             "enterprise.search": {"items": [{"id": "E002"}]},
-            "kb.ask": {"confidence": "high", "answer": "政策原文见 [1]。", "citations": SOURCES},
+            "kb.ask": {"outcome": "answered", "confidence": "high", "answer": KB_ANSWER, "citations": SOURCES},
         }
 
     def tools(self, user):
@@ -67,6 +71,7 @@ class BridgeStub:
 
     async def call_from_chat(self, request, app_id, tool, args):
         assert request.session.get("uid") == self.owner
+        assert tool != "kb.ask", "密级不能经旧工具接口传递"
         if self.catalog[tool]:
             failure = self.write_errors.get(tool)
             if failure and failure.code == "FORBIDDEN":
@@ -77,10 +82,19 @@ class BridgeStub:
             self.reviews.append((app_id, tool, args))
             return {"tool": tool, "result": {"status": "pending", "reviewId": "TEST-REVIEW"}}
         self.calls.append((app_id, tool, args))
+        return {"tool": tool, "result": self._result(tool)}
+
+    async def ask_from_chat(self, request, question, *, classification):
+        assert request.session.get("uid") == self.owner
+        self.calls.append(("kb", "kb.ask", {"q": question}))
+        self.kb_classes.append(classification)
+        return self._result("kb.ask")
+
+    def _result(self, tool):
         result = self.results[tool]
         if isinstance(result, Exception):
             raise result
-        return {"tool": tool, "result": result}
+        return result
 
 
 @pytest.fixture
@@ -212,7 +226,7 @@ def test_model_tool_name_and_args_sequence_snapshot(connected):
         ("enterprise", "enterprise.search", {"q": "星河"}),
         ("policy", "policy.match", {"entId": "E002"}),
     ]
-    assert reply["content"] == "找到企业。请查看适用政策。"
+    assert reply["content"] == "查询结果见卡片。"
     assert [card["type"] for card in reply["cards"]] == ["enterprise-list", "policy-match"]
     assert (reply["model"], reply["routeNote"]) == ("configured-local", "走本地")
     assert [payload["model"] for payload in gateway.requests] == ["configured-route"] * 3
@@ -228,7 +242,8 @@ def test_model_tool_name_and_args_sequence_snapshot(connected):
 @pytest.mark.parametrize("confidence", ["high", "none"])
 def test_kb_uses_citations_or_reports_no_source_without_model(connected, confidence):
     client, url, bridge, gateway = connected
-    bridge.results["kb.ask"]["confidence"] = confidence
+    if confidence == "none":
+        bridge.results["kb.ask"] = KB_NO_MATCH
     text = "知识库里有没有关于火星基地的政策？"
     reply = client.post(url, json={"text": text}).json()["reply"]
     assert bridge.calls == [("kb", "kb.ask", {"q": text})]
@@ -242,58 +257,133 @@ def test_kb_uses_citations_or_reports_no_source_without_model(connected, confide
         assert reply["cards"][0]["deepLink"] == {"app": "kb", "params": {"fileId": "KB-1"}}
 
 
-def test_model_selected_kb_cannot_substitute_its_answer(connected):
+def test_model_selected_kb_cannot_substitute_its_answer(instance_client, monkeypatch):
+    monkeypatch.setattr("jkq.orchestrator.routes.install", partial(install, classification="public"))
+    client = instance_client()
+    bridge, gateway = BridgeStub(_owner(client)), ScriptedGateway()
+    client.app.state.apps_bridge, client.app.state.chat_gateway = bridge, gateway
+    cid = client.post(BASE, json={}).json()["item"]["id"]
+    url = f"{BASE}/{cid}/messages"
+    args = {"q": "相关背景", "classification": "public", "dataClass": "public"}
+    gateway.script = [
+        ModelTurn(calls=(ToolCall("enterprise.get", {"id": "E002"}),)),
+        ModelTurn(("模型草稿",), (ToolCall("kb.ask", args),)),
+    ]
+    bridge.results["kb.ask"] = KB_NO_MATCH
+    reply = client.post(url, json={"text": "多说一点相关的背景", "classification": "public"}).json()["reply"]
+    assert reply["content"].count("知识库里没有找到能回答这个问题的原文。") == 1
+    assert "模型草稿" not in reply["content"]
+    assert reply["toolCalls"][-1] == {"tool": "kb.ask", "args": {"q": "相关背景"}, "status": "ok"}
+    assert bridge.kb_classes == ["confidential"]
+    assert [request["classification"] for request in gateway.requests] == ["public", "confidential"]
+
+
+def test_legacy_bridge_cannot_receive_kb_question_without_classification(connected, monkeypatch):
     client, url, bridge, gateway = connected
-    gateway.script = [ModelTurn(("模型草稿",), (ToolCall("kb.ask", {"q": "相关背景"}),))]
-    bridge.results["kb.ask"] = {"confidence": "none"}
-    reply = client.post(url, json={"text": "多说一点相关的背景"}).json()["reply"]
+    monkeypatch.delattr(BridgeStub, "ask_from_chat")
+    reply = client.post(url, json={"text": "数据券申报单位须在经开区注册满一年吗"}).json()["reply"]
+    assert reply["content"] == "未能完成请求，知识库暂不可用。"
+    assert reply["toolCalls"][0]["status"] == "error"
+    assert not bridge.calls and not gateway.requests
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_unclassified_input_never_releases_gateway_draft(connected, stream):
+    client, url, bridge, _ = connected
+    calls = []
+    text = "经开区的领券门槛卡户籍还是缴税"
+
+    async def bypass_gateway(request, *, on_delta, **payload):
+        calls.append(on_delta)
+        if on_delta is not None:
+            await on_delta("注册半年就能领券。")
+        return ModelTurn(("注册半年就能领券。",))
+
+    client.app.state.chat_gateway = bypass_gateway
+    bridge.results["kb.ask"] = KB_NO_MATCH
+    response = client.post(url, json={"text": text, "stream": stream})
+    assert response.status_code == 200
+    assert "注册半年" not in response.text
+    reply = list(_events(response.text))[-1][1]["reply"] if stream else response.json()["reply"]
     assert reply["content"] == "知识库里没有找到能回答这个问题的原文。"
-    assert reply["toolCalls"][0]["status"] == "ok"
-    assert len(gateway.requests) == 1
+    assert calls == [None]
+    assert bridge.calls == [("kb", "kb.ask", {"q": text})]
 
 
 @pytest.mark.parametrize(("text", "app"), [
     ("怎么拿到数据券？", None),
     ("亦庄高企首认补助标准", None),
+    ("数据券申报单位须在经开区注册满一年吗", None),
+    ("这数据券咋弄啊", None),
     ("这里的申请条件是什么", "kb"),
+    ("信息技术产业局职责", "kb"),
+    ("导入知识库需要哪些资料", "kb"),
 ])
 def test_knowledge_question_preempts_model_plain_text(connected, text, app):
     client, url, bridge, gateway = connected
     gateway.script = [ModelTurn(("没有出处的模型回答。",))]
     reply = client.post(url, json={"text": text, "app": app}).json()["reply"]
-    assert reply["content"] == "政策原文见 [1]。"
+    assert reply["content"] == KB_ANSWER
     assert reply["citations"]
     assert bridge.calls == [("kb", "kb.ask", {"q": text})]
     assert not gateway.requests
 
 
-def test_knowledge_followup_does_not_bypass_grounding(connected):
-    client, url, bridge, gateway = connected
+def test_knowledge_followup_keeps_trusted_classification(instance_client, monkeypatch):
+    monkeypatch.setattr("jkq.orchestrator.routes.install", partial(install, classification="public"))
+    client = instance_client()
+    bridge, gateway = BridgeStub(_owner(client)), ScriptedGateway()
+    client.app.state.apps_bridge = bridge
+    client.app.state.chat_gateway = gateway
+    cid = client.post(BASE, json={}).json()["item"]["id"]
+    url = f"{BASE}/{cid}/messages"
     previous = "数据券申报条件是什么？"
-    client.post(url, json={"text": previous})
-    text = "那什么时候结束？"
-    reply = client.post(url, json={"text": text}).json()["reply"]
-    assert reply["citations"]
+    first = client.post(url, json={"text": previous, "classification": "confidential"}).json()
+    text = "那要卡到哪天"
+    second = client.post(url, json={"text": text, "classification": "public"}).json()
+    assert first["reply"]["citations"] and second["reply"]["citations"]
+    assert bridge.kb_classes == [first["user"]["classification"], second["user"]["classification"]] == [
+        "confidential", "confidential",
+    ]
     assert bridge.calls[-1] == ("kb", "kb.ask", {"q": f"{previous}\n{text}"})
     assert not gateway.requests
 
 
-def test_explicit_kb_import_uses_registered_action(connected):
+@pytest.mark.parametrize("app", [None, "kb"])
+def test_kb_import_uses_registered_action(connected, app):
     client, url, bridge, gateway = connected
     args = {"id": "F-1"}
     gateway.script = [ModelTurn(calls=(ToolCall("kb.import", args),))]
-    reply = client.post(url, json={"text": "把这份政策原文导入知识库", "app": "kb"}).json()["reply"]
-    assert gateway.requests[0]["tools"] == ["kb.ask", "kb.import"]
+    reply = client.post(url, json={"text": "把这份政策原文导入知识库", "app": app}).json()["reply"]
+    if app == "kb":
+        assert gateway.requests[0]["tools"] == ["kb.import"]
     assert reply["toolCalls"][0]["status"] == "pending"
     assert bridge.reviews == [("kb", "kb.import", args)]
     assert not bridge.calls and not reply["citations"]
+
+
+def test_explicit_kb_import_cannot_run_a_misdeclared_write_tool(connected):
+    client, url, bridge, gateway = connected
+    bridge.catalog["kb.import"] = False
+    gateway.script = [ModelTurn(calls=(ToolCall("kb.import", {"id": "F-1"}),))]
+    reply = client.post(url, json={"text": "导入这份文档", "app": "kb"}).json()["reply"]
+    assert reply["toolCalls"][0]["status"] == "error"
+    assert not bridge.calls and not bridge.reviews
 
 
 @pytest.mark.parametrize(("failure", "message"), [
     (DataError("FORBIDDEN", "内部错误详情"), "未能完成请求，当前账号没有权限。"),
     (TimeoutError("内部错误详情"), "未能完成请求，工具响应超时。"),
     (RuntimeError("内部错误详情"), "未能完成请求，工具服务暂不可用。"),
-    ({"confidence": "high", "answer": "无引用答案", "citations": []}, "未能完成请求，工具返回了无法使用的结果。"),
+    ({"outcome": "unavailable", "confidence": "none", "citations": []},
+     "知识库暂时无法提供有出处的回答，请稍后再试。"),
+    ({"confidence": "none", "citations": []}, "未能完成请求，工具返回了无法使用的结果。"),
+    ({"outcome": "answered", "confidence": "high", "answer": "无引用答案", "citations": []},
+     "未能完成请求，工具返回了无法使用的结果。"),
+    ({"outcome": "answered", "confidence": "high", "answer": "无法从原文证明的结论。[1]", "citations": SOURCES},
+     "未能完成请求，工具返回了无法使用的结果。"),
+    ({"outcome": "answered", "confidence": "high", "answer": KB_ANSWER, "citations": [{**SOURCES[0], "id": ""}]},
+     "未能完成请求，工具返回了无法使用的结果。"),
 ])
 def test_tool_failure_is_200_and_never_uses_model_to_recover(connected, failure, message):
     client, url, bridge, gateway = connected
@@ -319,6 +409,15 @@ def test_explicit_app_skips_rule_and_filters_available_tools(connected):
     assert response.json()["reply"]["intent"] == "enterprise"
     assert gateway.requests[0]["tools"] == ["enterprise.get", "enterprise.search"]
     assert bridge.calls == [("enterprise", "enterprise.get", {"id": "E002"})]
+
+
+def test_explicit_non_kb_app_does_not_fallback_to_kb_or_model_text(connected):
+    client, url, bridge, gateway = connected
+    gateway.script = [ModelTurn(("注册半年就能领券。",))]
+    reply = client.post(url, json={"text": "数据券申报单位须在经开区注册满一年吗", "app": "enterprise"}).json()["reply"]
+    assert gateway.requests[0]["tools"] == ["enterprise.get", "enterprise.search"]
+    assert reply["content"] == "请说明要在当前应用中查询或办理的事项。"
+    assert not reply["toolCalls"] and not bridge.calls
 
 
 def test_model_cannot_call_tools_outside_the_user_supplied_app(connected):
@@ -429,19 +528,20 @@ def _events(data):
 def test_sse_sends_model_deltas_and_cards_and_finishes_persisted_reply(connected):
     client, url, bridge, gateway = connected
     gateway.script = [
-        ModelTurn(calls=(ToolCall("enterprise.get", {"id": "E002"}),)),
-        ModelTurn(("查询", "完成。"), model="configured-local"),
+        ModelTurn(calls=(ToolCall("enterprise.get", {"id": "E002"}),), model="routing-model"),
+        ModelTurn(("模型草稿，不应作为业务结果发布。",), model="configured-local"),
     ]
     with client.stream("POST", url, json={"text": "查一查业务记录", "stream": True}) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         events = list(_events(response.read().decode()))
-    assert [name for name, _ in events] == ["meta", "tool", "delta", "delta", "card", "done"]
-    assert [data["text"] for name, data in events if name == "delta"] == ["查询", "完成。"]
+    assert [name for name, _ in events] == ["meta", "tool", "meta", "delta", "card", "done"]
+    assert [data["model"] for name, data in events if name == "meta"] == ["routing-model", "configured-local"]
+    assert [data["text"] for name, data in events if name == "delta"] == ["查询结果见卡片。"]
     assert events[-2][1]["deepLink"] == {"app": "enterprise", "params": {"entId": "E002"}}
     done = events[-1][1]
     assert (done["messageId"], done["reply"]["content"], done["reply"]["incomplete"]) == (
-        events[0][1]["messageId"], "查询完成。", False,
+        events[0][1]["messageId"], "查询结果见卡片。", False,
     )
     assert client.get(url.removesuffix("/messages")).json()["messages"] == [done["user"], done["reply"]]
 
@@ -474,11 +574,12 @@ def test_first_model_delta_reaches_client_before_gateway_finishes(connected):
         received = asyncio.Event()
         emitted = []
 
-        async def paused_gateway(request, *, on_delta, **payload):
+        async def paused_gateway(request, *, on_delta, on_meta, **payload):
+            await on_meta("configured-local", None)
             await on_delta("模型首段")
             await asyncio.wait_for(received.wait(), timeout=1)
             await on_delta("及尾段")
-            return ModelTurn(model="configured-local")
+            return ModelTurn(route_note="完成后确认路由")
 
         async def send(message):
             data = message.get("body", b"")
@@ -488,10 +589,14 @@ def test_first_model_delta_reaches_client_before_gateway_finishes(connected):
                 received.set()
 
         client.app.state.chat_gateway = paused_gateway
-        await _drive_stream(client, url, "帮我简单说明", send)
+        await _drive_stream(client, url, "你好", send)
         assert [name for name, _ in emitted] == ["meta", "delta", "delta", "done"]
+        assert emitted[0][1]["model"] == "configured-local"
+        assert emitted[0][1]["routeNote"] is None
         assert emitted[1][1]["text"] == "模型首段"
         assert emitted[-1][1]["reply"]["content"] == "模型首段及尾段"
+        assert emitted[-1][1]["reply"]["model"] == "configured-local"
+        assert emitted[-1][1]["reply"]["routeNote"] == "完成后确认路由"
 
     asyncio.run(run())
     assert client.get(url.removesuffix("/messages")).json()["messages"][-1]["content"] == "模型首段及尾段"
@@ -505,14 +610,16 @@ def test_gateway_failure_after_first_delta_leaves_message_incomplete(connected):
         raise TimeoutError()
 
     client.app.state.chat_gateway = broken_gateway
-    response = client.post(url, json={"text": "帮我简单说明", "stream": True})
-    assert [name for name, _ in _events(response.text)] == ["meta", "delta", "error"]
+    response = client.post(url, json={"text": "你好", "stream": True})
+    events = list(_events(response.text))
+    assert [name for name, _ in events] == ["meta", "delta", "error"]
+    assert events[-1][1] == {"code": "PROVIDER_ERROR", "message": "模型回复中断，请重试。"}
     assert client.get(url.removesuffix("/messages")).json()["messages"][-1]["incomplete"] is True
 
 
 @pytest.mark.parametrize("spec", ["2.3", "2.4"])
 @pytest.mark.parametrize("last_frame", ["delta", "done"])
-def test_sse_disconnect_keeps_incomplete_assistant(connected, spec, last_frame):
+def test_sse_disconnect_preserves_last_committed_assistant(connected, spec, last_frame):
     client, url, bridge, gateway = connected
     sent = []
 
@@ -526,9 +633,8 @@ def test_sse_disconnect_keeps_incomplete_assistant(connected, spec, last_frame):
             if data.startswith(f"event: {last_frame}\n".encode()):
                 sent.extend(_events(data.decode()))
                 if last_frame == "done":
-                    cid = url.split("/")[-2]
-                    history = client.app.state.conversations.detail(bridge.owner, cid)["messages"]
-                    assert history[-1]["incomplete"] is True
+                    history = await asyncio.to_thread(client.get, url.removesuffix("/messages"))
+                    assert history.json()["messages"][-1] == sent[-1][1]["reply"]
                 disconnect.set()
                 if spec == "2.4":
                     raise OSError("fixture closed the socket")
@@ -546,14 +652,79 @@ def test_sse_disconnect_keeps_incomplete_assistant(connected, spec, last_frame):
     asyncio.run(drive_asgi())
     expected = ["meta", "tool", "delta"] + (["card", "done"] if last_frame == "done" else [])
     assert [name for name, _ in sent] == expected
+    assert sent[0][1] == {"messageId": sent[0][1]["messageId"], "model": None, "routeNote": None}
     history = client.get(url.removesuffix("/messages")).json()["messages"]
     assert len(history) == 2
     assert history[0]["role"] == "user"
     assistant = history[1]
     assert assistant["role"] == "assistant"
-    assert assistant["incomplete"] is True
     assert assistant["id"] == sent[0][1]["messageId"]
-    assert assistant["content"] == ""
+    if last_frame == "delta":
+        assert assistant["incomplete"] is True
+        assert assistant["content"] == ""
+    else:
+        assert assistant == sent[-1][1]["reply"]
+        assert assistant["incomplete"] is False
+
+
+@pytest.mark.parametrize("spec", ["2.3", "2.4"])
+def test_sse_done_is_already_observable_in_history_at_send(connected, spec):
+    client, url, bridge, gateway = connected
+    events = []
+
+    async def send(message):
+        if data := message.get("body"):
+            events.extend(_events(data.decode()))
+            if events[-1][0] == "done":
+                assert message["more_body"] is False
+                done = events[-1][1]
+                history = await asyncio.to_thread(client.get, url.removesuffix("/messages"))
+                assert history.json() == {
+                    "item": done["conversation"], "messages": [done["user"], done["reply"]],
+                }
+                assert done["reply"]["incomplete"] is False
+
+    asyncio.run(_drive_stream(client, url, "数据券申报单位须在经开区注册满一年吗", send, spec=spec))
+    assert [kind for kind, _ in events] == ["meta", "tool", "delta", "card", "done"]
+    assert not gateway.requests
+
+
+@pytest.mark.parametrize(("failure", "code"), [("delete", "NOT_FOUND"), ("write", "INTERNAL_ERROR")])
+def test_sse_persistence_failure_has_error_and_no_done(connected, monkeypatch, failure, code):
+    client, url, bridge, gateway = connected
+    conversation_url = url.removesuffix("/messages")
+    store = client.app.state.conversations
+    audit = store._audit
+    events = []
+
+    def fail_audit(owner, cid, action, **details):
+        if action == "message.complete":
+            raise sqlite3.OperationalError("测试事务写入失败")
+        audit(owner, cid, action, **details)
+
+    if failure == "write":
+        monkeypatch.setattr(store, "_audit", fail_audit)
+
+    async def send(message):
+        if data := message.get("body"):
+            events.extend(_events(data.decode()))
+            if events[-1][0] == "card" and failure == "delete":
+                deleted = await asyncio.to_thread(client.delete, conversation_url)
+                assert deleted.status_code == 204
+            if events[-1][0] == "error":
+                assert message["more_body"] is False
+
+    asyncio.run(_drive_stream(client, url, "书香里文化能申请哪些支持？", send))
+    assert [kind for kind, _ in events] == ["meta", "tool", "delta", "card", "error"]
+    message = "会话或待完成的消息已不存在。" if failure == "delete" else "回复保存失败，请稍后重试。"
+    assert events[-1][1] == {"code": code, "message": message}
+    if failure == "delete":
+        assert client.get(conversation_url).status_code == 404
+        assert client.post(f"{conversation_url}/restore").status_code == 200
+    assistant = client.get(conversation_url).json()["messages"][-1]
+    assert assistant["incomplete"] is True
+    assert assistant["content"] == "" and assistant["cards"] == []
+    assert not gateway.requests
 
 
 def test_invalid_and_unauthorized_requests_do_not_write_or_call_tools(connected):
@@ -580,8 +751,8 @@ def test_concurrent_turns_preserve_pairs_and_finalize_independently(tmp_path):
     cid = store.create(OWNER)["id"]
     with ThreadPoolExecutor(max_workers=2) as executor:
         first, second = executor.map(lambda text: start_turn(store, OWNER, cid, text, []), ["甲", "乙"])
-    finish_turn(store, OWNER, cid, second, completed_reply(store, OWNER, cid, second, {"content": "乙的回复"}))
-    finish_turn(store, OWNER, cid, first, completed_reply(store, OWNER, cid, first, {"content": "甲的回复"}))
+    finish_turn(store, OWNER, cid, second, {"content": "乙的回复"})
+    finish_turn(store, OWNER, cid, first, {"content": "甲的回复"})
     messages = store.detail(OWNER, cid)["messages"]
     observed = {
         (messages[i]["content"], messages[i + 1]["content"], messages[i + 1]["incomplete"])
@@ -589,3 +760,32 @@ def test_concurrent_turns_preserve_pairs_and_finalize_independently(tmp_path):
     }
     assert observed == {("甲", "甲的回复", False), ("乙", "乙的回复", False)}
     assert len(store.platform.audit_list("conversations")) == 7
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_gateway_without_on_meta_parameter_still_handles_sync_and_stream(connected, stream):
+    client, url, bridge, _ = connected
+
+    async def legacy_gateway(request, *, messages, tools, model, classification, on_delta=None):
+        if messages[-1]["role"] == "tool":
+            return ModelTurn(deltas=("工具结果已生成。",), model="legacy-local", route_note="旧签名直连")
+        return ModelTurn(calls=(ToolCall("policy.match", {"entId": "E001"}),))
+
+    client.app.state.chat_gateway = legacy_gateway
+    response = client.post(url, json={"text": "看看相关政策支持", "stream": stream})
+    assert response.status_code == 200
+    assert bridge.calls == [("policy", "policy.match", {"entId": "E001"})]
+    if stream:
+        events = list(_events(response.text))
+        assert [name for name, _ in events] == ["meta", "tool", "meta", "delta", "card", "done"]
+        assert events[2][1]["model"] == "legacy-local"
+        assert events[2][1]["routeNote"] == "旧签名直连"
+        assert events[-1][1]["reply"]["content"] == "查询结果见卡片。"
+        assert events[-1][1]["reply"]["model"] == "legacy-local"
+        assert events[-1][1]["reply"]["routeNote"] == "旧签名直连"
+    else:
+        reply = response.json()["reply"]
+        assert reply["content"] == "查询结果见卡片。"
+        assert reply["toolCalls"] == [{"tool": "policy.match", "args": {"entId": "E001"}, "status": "ok"}]
+        assert reply["model"] == "legacy-local"
+        assert reply["routeNote"] == "旧签名直连"
