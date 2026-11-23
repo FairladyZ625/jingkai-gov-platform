@@ -51,7 +51,6 @@ def reward_notice(spec, inputs, extra):
     materials = "、".join(policy.get("materials") or ())
     content = templates.mock_draft(spec, inputs, [])
     content["title"] = f"关于开展{policy['title']}申报工作的通知"
-    content["to"] = (inputs.get("to") or "").strip() or content["to"]
     content["paragraphs"] = [
         f"根据{basis}有关规定，现将{policy['title']}申报有关事项通知如下。",
         f"一、申报对象。{_line(conditions, '申报对象及资格条件')}。",

@@ -31,6 +31,7 @@ def test_member_drafts_reward_notice_from_policy_snapshot(server):
         assert item["policyId"] == policy_id
         assert item["versions"][0]["by"].endswith("（政策模板初稿）")
         assert policy["title"] in content["title"]
+        assert content["to"] == "【待补：主送机关】"
         body = "\n".join(content["paragraphs"])
         assert policy_id not in body and "PI-03" not in body
         assert policy["docNo"] in body and policy["docTitle"] in body
