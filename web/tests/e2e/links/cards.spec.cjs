@@ -40,7 +40,7 @@ test('对话 SSE 卡片打开四个业务应用的具体对象', async ({ page }
     });
   });
   const composer = page.locator('#chatcol textarea');
-  await composer.fill('请打开示例业务对象');
+  await composer.fill('请列出示例业务对象');
   await composer.press('Enter');
 
   const button = type => page.locator(`[data-reply-card="${type}"]`).getByRole('button', { name: '打开应用' });
