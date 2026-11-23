@@ -22,11 +22,12 @@ function injectFaults() {
   }
   if (innerWidth === 1440 && theme === 'light') {
     const switchUser = JKShell.switchUser;
-    JKShell.switchUser = async function (user) {
-      await switchUser.call(this, user);
+    JKShell.switchUser = async function (user, ...rest) {
+      const switched = await switchUser.call(this, user, ...rest);
       if (user === 'hejun' && state.i === 9) {
         queueMicrotask(() => { throw new Error('第 10 段执行中的异常'); });
       }
+      return switched;
     };
   }
   if (innerWidth === 1280 && theme === 'dark') {
@@ -55,10 +56,10 @@ test('浏览器故障只归入发生时的段落，演示命令退出 1', async 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jingkai-demo-errors-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const demo = path.join(root, 'tests/demo');
-  const prototype = path.join(root, 'prototype/v4');
+  const prototype = path.join(root, 'web');
   await fs.mkdir(demo, { recursive: true });
   await Promise.all([
-    fs.cp(path.resolve(__dirname, '../../prototype/v4'), prototype, { recursive: true }),
+    fs.cp(path.resolve(__dirname, '../../web'), prototype, { recursive: true }),
     ...['run.cjs', 'checks.cjs'].map(file => fs.copyFile(path.join(__dirname, file), path.join(demo, file))),
   ]);
   await fs.appendFile(path.join(prototype, 'assets/demo.js'), '\n(' + injectFaults.toString() + ')();\n');

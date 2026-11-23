@@ -104,7 +104,7 @@ def test_cross_project_subject_records_versions_files_revocation_and_audit(make_
         f'/api/v1/files/{file_b}', f'/api/v1/files/{file_b}/content',
     ]:
         denied = client.get(url)
-        assert denied.status_code == 404 and denied.json()['error']['code'] == 'not_found'
+        assert denied.status_code == 404 and denied.json()['error']['code'] == 'NOT_FOUND'
     local = client.get(f'/api/apps/{APP_ID}/preview/records', params={'subject': 'SUP-SAMPLE-01'})
     assert local.status_code == 200 and [row['id'] for row in local.json()['items']] == [in_a['id']]
 
@@ -165,7 +165,7 @@ def test_cross_project_grants_validate_manifest_and_admin(make_client, tmp_path)
         'appId': APP_ID, 'subjectField': 'unknownField', 'subjectValue': None,
         'principalType': 'role', 'principalId': 'sampleoperator',
     })
-    assert invalid.status_code == 422 and invalid.json()['error']['code'] == 'invalid_request'
+    assert invalid.status_code == 422 and invalid.json()['error']['code'] == 'INVALID_REQUEST'
 
 
 def test_user_grant_scopes_subject_and_revoke_is_immediate(make_client, tmp_path):
@@ -184,7 +184,7 @@ def test_user_grant_scopes_subject_and_revoke_is_immediate(make_client, tmp_path
     assert client.delete(f'/api/admin/cross-project-grants/{grant.json()["id"]}').status_code == 200
     login(client, 'sampleoperator')
     denied = client.get(f'{BASE}/{record["id"]}')
-    assert denied.status_code == 404 and denied.json()['error']['code'] == 'not_found'
+    assert denied.status_code == 404 and denied.json()['error']['code'] == 'NOT_FOUND'
     assert client.get(f'/api/v1/files/{file_id}/content').status_code == 404
 
 
@@ -212,7 +212,7 @@ def test_deleting_and_recreating_role_does_not_restore_old_cross_project_grant(m
 
     login(client, 'sampleoperator')
     denied = client.get(f'{BASE}/{record["id"]}')
-    assert denied.status_code == 404 and denied.json()['error']['code'] == 'not_found'
+    assert denied.status_code == 404 and denied.json()['error']['code'] == 'NOT_FOUND'
 
 
 def test_another_apps_subject_grant_does_not_expose_original_app_file(make_client, tmp_path):
@@ -260,4 +260,4 @@ def test_another_apps_subject_grant_does_not_expose_original_app_file(make_clien
 
     login(client, 'sampleoperator')
     denied = client.get(f'/api/v1/files/{file_id}/content')
-    assert denied.status_code == 404 and denied.json()['error']['code'] == 'not_found'
+    assert denied.status_code == 404 and denied.json()['error']['code'] == 'NOT_FOUND'

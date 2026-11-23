@@ -7,6 +7,8 @@ const kinds = {
   string: value => typeof value === 'string',
   boolean: value => typeof value === 'boolean',
   array: Array.isArray,
+  json: value => value !== undefined,
+  'string[]': value => Array.isArray(value) && value.every(item => typeof item === 'string'),
 };
 
 const errorShape = { error: { code: 'string', message: 'string', details: 'object' } };
@@ -37,7 +39,14 @@ function shape(value, schema, models, label = '响应') {
     return;
   }
   assert.ok(kinds.object(value), `${label} 应为对象`);
-  for (const [key, field] of Object.entries(schema)) {
+  for (const [name, field] of Object.entries(schema)) {
+    if (name === '$values') {
+      for (const [key, item] of Object.entries(value)) shape(item, field, models, `${label}.${key}`);
+      continue;
+    }
+    const optional = name.endsWith('?');
+    const key = optional ? name.slice(0, -1) : name;
+    if (optional && !Object.hasOwn(value, key)) continue;
     assert.ok(Object.hasOwn(value, key), `缺少必需字段 ${label}.${key}`);
     shape(value[key], field, models, `${label}.${key}`);
   }

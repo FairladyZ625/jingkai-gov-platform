@@ -30,7 +30,7 @@ function detailError(status, detail, extra = {}) {
 }
 
 function envelope(status, code, message, extra = {}) {
-  return json({ error: { code, message, retryable: false, ...extra } }, status);
+  return json({ error: { code: code.toUpperCase(), message, retryable: false, ...extra } }, status);
 }
 
 function text(body) {

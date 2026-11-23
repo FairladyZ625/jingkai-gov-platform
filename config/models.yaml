@@ -30,5 +30,11 @@ models:
     provider: 海外 OpenAI 兼容服务
     env: JKQ_OVERSEAS_MODEL
     enabled: false
+  # 仅 JKQ_CODEX_MODEL_ENABLED=1 时部署，保留现有模型的自动路由优先级。
+  - id: codex-cli
+    kind: codex-cli
+    group: 本地部署
+    provider: Codex CLI
+    env: JKQ_CODEX_MODEL
 
 confidential_providers: [local]

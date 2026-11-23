@@ -24,16 +24,17 @@
   const S = () => X.state();
   const me = () => X.me();
   const pub = (u) => { const { password, ...rest } = u; return rest; };
+  const validPassword = (value) => typeof value === 'string' && value.length >= 6 && value.length <= 1024;
   const needAdmin = () => { if (!X.can('*', 'admin')) X.err(403, 'FORBIDDEN', '需要管理员权限'); };
   const log = (action) => X.audit('账号与权限', action);
 
   /* ---------- 会话 ---------- */
   X.first('POST', '/api/v1/auth/login', (b) => {
     const u = S().users.find((x) => x.username === (b.username || '').trim());
-    if (!u || u.password !== b.password) X.err(401, 'BAD_CREDENTIALS', '账号或密码不正确');
+    if (typeof u?.password !== 'string' || u.password !== b.password) X.err(401, 'BAD_CREDENTIALS', '账号或密码不正确');
     if (u.status !== 'active') X.err(403, 'ACCOUNT_DISABLED', '该账号已停用，请联系管理员');
     S().session = { userId: u.id, at: X.now() }; S().me = u.id; u.lastLogin = X.now();
-    log('登录'); return { user: pub(u), role: X.roleOf(u), grants: effective(u) };
+    log('登录'); return { user: pub(u) };
   });
   X.first('POST', '/api/v1/auth/logout', () => { if (S().session) log('退出登录'); S().session = null; return { ok: true }; });
   X.first('GET', '/api/v1/auth/session', () => ({ user: S().session ? pub(me()) : null }));
@@ -47,17 +48,21 @@
   X.first('POST', '/api/v1/admin/users', (b) => {
     needAdmin(); if (!b.username || !b.name) X.err(400, 'INVALID', '请填写账号和姓名');
     if (S().users.some((u) => u.username === b.username)) X.err(409, 'DUPLICATE', '账号已存在');
-    if (S().users.filter((u) => u.status === 'active').length >= S().org.seats) X.err(409, 'SEATS_FULL', `席位已满（${S().org.seats} 个）`);
-    const u = { id: 'u-' + b.username, username: b.username, password: b.password || 'jk123456', name: b.name, deptId: b.deptId || 'd-qyfw', title: b.title || '经办', role: b.role || 'member', status: 'active', lastLogin: '—' };
+    if (b.password !== undefined && !validPassword(b.password)) X.err(400, 'INVALID_REQUEST', '登录口令长度须为 6 至 1024 位');
+    if (b.password && S().users.filter((u) => u.status === 'active').length >= S().org.seats) X.err(409, 'SEATS_FULL', `席位已满（${S().org.seats} 个）`);
+    const u = { id: 'u-' + b.username, username: b.username, password: b.password || null, name: b.name, deptId: b.deptId || 'd-qyfw', title: b.title || '经办', role: b.role || 'member', status: b.password ? 'active' : 'disabled', lastLogin: '—' };
     u.dept = deptPath(S(), u.deptId); S().users.push(u); S().org.used = S().users.filter((x) => x.status === 'active').length;
     log(`新增账号 · ${u.name}（${X.roleOf(u).name}）`); return { item: pub(u) };
   });
   X.first('PATCH', '/api/v1/admin/users/:id', (b, p) => {
     needAdmin(); const u = S().users.find((x) => x.id === p.id); if (!u) X.err(404, 'NOT_FOUND', '用户不存在');
     if (u.id === me().id && (b.status === 'disabled' || (b.role && b.role !== 'admin'))) X.err(400, 'SELF_LOCK', '不能停用自己或取消自己的管理员角色');
+    const rotate = validPassword(b.resetPassword);
+    if (b.resetPassword !== undefined && b.resetPassword !== false && !rotate) X.err(400, 'INVALID_REQUEST', '请提供新口令');
+    if (b.status === 'active' && !u.password && !rotate) X.err(400, 'INVALID_REQUEST', '启用账号前须设置登录口令');
     const changes = [];
     ['name', 'title', 'deptId', 'role', 'status'].forEach((k) => { if (b[k] !== undefined && b[k] !== u[k]) { changes.push(k === 'role' ? `角色→${(S().roles.find((r) => r.id === b.role) || {}).name}` : k === 'status' ? (b.status === 'active' ? '启用' : '停用') : k === 'deptId' ? '调整部门' : '修改' + k); u[k] = b[k]; } });
-    if (b.resetPassword) { u.password = 'jk123456'; changes.push('重置密码'); }
+    if (rotate) { u.password = b.resetPassword; changes.push('重置密码'); }
     u.dept = deptPath(S(), u.deptId); S().org.used = S().users.filter((x) => x.status === 'active').length;
     if (u.status !== 'active' && S().session && S().session.userId === u.id) S().session = null;
     log(`${u.name}：${changes.join('、') || '无变化'}`); return { item: pub(u) };
@@ -86,14 +91,27 @@
 
   /* ---------- 统一鉴权（每个请求先过这里；与 haiknow 服务端判定一致） ---------- */
   const appOf = (p) => { let m = /^\/api\/apps\/(\w+)\//.exec(p); if (m) return m[1]; if (/^\/api\/v1\/kb\//.test(p)) return 'kb'; if (/^\/api\/v1\/(skills|builder)/.test(p)) return 'skills'; return null; };
-  A.guard = (method, p) => {
+  A.guard = (method, p, body) => {
     if (/^\/api\/v1\/auth\//.test(p)) return;
-    if (!S().session) X.err(401, 'UNAUTHENTICATED', '登录已失效，请重新登录');
+    if (!S().session && !X.hasHttpPrincipal()) X.err(401, 'UNAUTHENTICATED', '登录已失效，请重新登录');
     if (/^\/api\/v1\/admin\//.test(p) || (method === 'PATCH' && /^\/api\/v1\/models\//.test(p))) { needAdmin(); return; }
     const app = appOf(p); if (!app) return;
-    const read = method === 'GET' || /\/(search|match|calc|compare)$/.test(p);
+    const read = method === 'GET' || /\/(search|match|calc|compare)$/.test(p) ||
+      (X.hasHttpPrincipal() && method === 'POST' && p === '/api/v1/kb/ask');
     const act = read ? 'view' : 'operate';
     if (!X.can(app, act)) X.err(403, 'FORBIDDEN', `你的角色没有「${APP_NAMES[app]}」的${act === 'view' ? '查看' : '操作'}权限`);
+    // 这类跨模块效果不可只凭源模块的授权执行，尤其不能把模拟结果当成线上回执。
+    if (X.hasHttpPrincipal()) {
+      if (method === 'POST' && p === '/api/apps/policy/match' && body?.entId && !X.can('policy', 'operate'))
+        X.err(403, 'FORBIDDEN', '无权使用企业台账进行匹配');
+      if (method === 'POST' && /^\/api\/apps\/meeting\/meetings\/[^/]+\/link$/.test(p) && !X.can('enterprise', 'operate'))
+        X.err(403, 'FORBIDDEN', '没有企业台账的操作权限');
+      // 平台收件箱仍走 HTTP，模拟文稿不能生成只有当前浏览器看得到的待办。
+      if (method === 'POST' && /^\/api\/apps\/document\/drafts\/[^/]+\/submit$/.test(p))
+        X.err(409, 'MIXED_REVIEW_UNSUPPORTED', '模拟公文不能送审，请在真实公文模块中起草并送审。');
+      if (app === 'skills' && (method === 'POST' && /\/(trial|run)$/.test(p) || /^\/api\/v1\/skills\/jobs\//.test(p)))
+        X.err(501, 'MIXED_JOB_UNSUPPORTED', '跨模块技能任务需要完整 HTTP 服务或独立离线演示');
+    }
   };
 
   /* ---------- 前端判定（界面显示 / 隐藏用；真正拦截在上面 guard） ---------- */

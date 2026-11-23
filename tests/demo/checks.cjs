@@ -8,7 +8,7 @@ const labels = [
   ['技能中心', '新技能创建与发布、同事技能运行'],
   ['电脑操作', '申报提交前确认、提交回执、通知入库'],
   ['审签', '李阳通过本次送审单、对应文稿已定稿'],
-  ['外部协作者', '何军首次打开 E002，响应电话与营收脱敏、可见联系人电话打码'],
+  ['外部协作者', '何军首次打开 E020，响应电话与营收脱敏、可见联系人电话打码'],
   ['管理后台', '授权矩阵、模型与能力路由、审计日志'],
   ['浅色主题', '浅色切换、恢复深色并返回王敏、结束字幕'],
 ];
@@ -72,9 +72,10 @@ function installChecks() {
   }
 
   const e002 = JK_DATA.enterprises.find(e => e.id === 'E002');
+  const e020 = JK_DATA.enterprises.find(e => e.id === 'E020');
   const e001 = JK_DATA.enterprises.find(e => e.id === 'E001');
   const sampleRecording = JK_SAMPLE_FILES.find(file => file.id === 'rec-1117');
-  const phones = e002.contacts.map(contact => contact.phone);
+  const phones = e020.contacts.map(contact => contact.phone);
   const expectedPhones = phones.map(phone => phone.slice(0, 3) + '****' + phone.slice(-4));
   const matchesMaskedPhones = actual => phones.length > 0 &&
     phones.every(phone => /^\d{11}$/.test(phone)) &&
@@ -85,7 +86,7 @@ function installChecks() {
   const getProfile = enterprise.get;
   enterprise.get = async function (id) {
     const { on, i } = JKDemo.state;
-    if (!on || i !== 9 || !user('hejun') || id !== e002.id || partnerProfileRequested) {
+    if (!on || i !== 9 || !user('hejun') || id !== e020.id || partnerProfileRequested) {
       return getProfile.call(this, id);
     }
     partnerProfileRequested = true;
@@ -101,7 +102,7 @@ function installChecks() {
 
   const partnerPanel = panel('enterprise');
   const partnerProfileVisible = () => user('hejun') &&
-    visible(partnerPanel + '[data-op="enterprise.profile"]').some(el => el.innerText.includes(e002.name));
+    visible(partnerPanel + '[data-op="enterprise.profile"]').some(el => el.innerText.includes(e020.name));
   let firstRenderedContacts;
   function renderedContactsMasked() {
     if (firstRenderedContacts !== undefined) return firstRenderedContacts;
@@ -201,8 +202,8 @@ function installChecks() {
     ],
     [
       ['实际切换到浅色', () => themes.includes('light') && document.documentElement.dataset.theme === 'light' && caption(/深色、浅色两套主题/)],
-      ['回到王敏工作台和深色主题，显示演示结束', () => themes.includes('dark') && document.documentElement.dataset.theme === 'dark' &&
-        user('wangmin') && caption(/演示结束/)],
+      ['回到王敏工作台和深色主题，结束字幕指向左侧栏底部头像菜单的重置项', () => themes.includes('dark') && document.documentElement.dataset.theme === 'dark' &&
+        user('wangmin') && caption(/演示结束.*左侧栏底部头像菜单.*重置演示数据/) && !caption(/右下角/)],
     ],
   ];
 

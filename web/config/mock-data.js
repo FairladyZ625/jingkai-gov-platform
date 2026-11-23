@@ -1,4 +1,4 @@
-/* 由 prototype/v4/mock/build_mock.py 生成。请编辑 data/seed/ 中的 JSON。 */
+/* 由 web/mock/build_mock.py 生成。请编辑 data/seed/ 中的 JSON。 */
 (() => {
 const demo = {
   "today": "2026-11-17",

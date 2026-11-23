@@ -1,8 +1,11 @@
 // HA 评审 review-dispatch_58a7e858 的回归：写入保护、明文凭据、知识库恢复、混合会话、必需字段。
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
+const { execFile } = require('node:child_process');
+const { join } = require('node:path');
+const { promisify } = require('node:util');
 const test = require('node:test');
-const { main, isWrite } = require('./run.cjs');
+const { main } = require('./run.cjs');
 const { createContext, createMock, loadScript } = require('./mock.cjs');
 const { verify } = require('./assertions.cjs');
 const models = require('./models.json');
@@ -23,15 +26,14 @@ async function stubServer(t, handler) {
   return { base: 'http://127.0.0.1:' + server.address().port, requests };
 }
 
-const businessWrites = requests => requests.filter(({ method, url }) =>
-  method !== 'GET' && !['/api/v1/auth/login', '/api/v1/auth/logout'].includes(url) && isWrite({ method, path: url }));
-
 function mockBackend() {
   const mock = createMock();
   return {
     mock,
     handler: async (req, body) => {
-      const response = await mock.request(req.method, req.url, body);
+      const response = req.url === '/api/v1/me' && !req.headers.cookie
+        ? { status: 401, body: { error: { code: 'UNAUTHENTICATED', message: '需要登录', details: {} } } }
+        : await mock.request(req.method, req.url, body);
       return { ...response, cookie: req.url === '/api/v1/auth/login' && response.status === 200 ? 'sid=example; Path=/' : '' };
     },
   };
@@ -47,9 +49,9 @@ test('普通 HTTP 目标默认只读：全模块不发任何业务写请求，�
   }, line => lines.push(line), line => errors.push(line));
   assert.equal(status, 0, errors.join('\n'));
   assert.equal(lines[0], '契约模式：HTTP（只读）；模块：platform、kb、policy、enterprise、meeting、document、skills、computer');
-  assert.ok(lines.some(line => /^platform: \d+\/\d+，错误样例 1\/1（只读模式跳过 \d+ 条写入）$/.test(line)), lines.join('\n'));
-  assert.deepEqual(businessWrites(requests), []);
-  assert.ok(!requests.some(({ url }) => url === '/api/v1/demo/reset'));
+  assert.ok(lines.some(line => /^platform: \d+\/\d+，错误样例 1\/1（只读模式跳过 \d+ 条写入或依赖用例）$/.test(line)), lines.join('\n'));
+  assert.deepEqual(requests.filter(({ method, url }) => method !== 'GET' && url !== '/api/v1/auth/login'), []);
+  assert.ok(requests.every(({ url }) => !url.split('?')[0].endsWith('/export')));
   assert.ok(requests.some(({ url }) => url === '/api/apps/policy/items'));
 });
 
@@ -58,7 +60,7 @@ test('登录返回 401 时立即中止，含 --allow-writes 也不发业务写�
     const { base, requests } = await stubServer(t, async () => ({
       status: 401, body: { error: { code: 'BAD_CREDENTIALS', message: '账号或密码不正确', details: {} } },
     }));
-    const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'example', CONTRACT_RESETTABLE_TARGET: new URL(base).host };
+    const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'example', CONTRACT_RESETTABLE_TARGET: base };
     await assert.rejects(main(['--base', base, ...args], env, () => {}, () => {}), /登录失败（HTTP 401），已中止/);
     assert.deepEqual(requests, [{ method: 'POST', url: '/api/v1/auth/login' }]);
   }
@@ -68,9 +70,28 @@ test('--allow-writes 必须先确认目标可重置，否则不发任何请求',
   const { base, requests } = await stubServer(t, async () => ({ status: 200, body: {} }));
   const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'example' };
   await assert.rejects(main(['--base', base, '--allow-writes'], env, () => {}, () => {}), /CONTRACT_RESETTABLE_TARGET=/);
-  await assert.rejects(main(['--base', base, '--allow-writes'], { ...env, CONTRACT_RESETTABLE_TARGET: 'other.example:443' }, () => {}, () => {}), /CONTRACT_RESETTABLE_TARGET=/);
+  await assert.rejects(main(['--base', base + '/another-instance', '--allow-writes'], { ...env, CONTRACT_RESETTABLE_TARGET: base }, () => {}, () => {}), /CONTRACT_RESETTABLE_TARGET=/);
   await assert.rejects(main(['--allow-writes'], env, () => {}, () => {}), /只用于 HTTP 模式/);
   assert.deepEqual(requests, []);
+});
+
+test('Cookie 会话缺失或重置预检未确认时中止业务写入', async t => {
+  const { mock, handler } = mockBackend();
+  for (const validSession of [false, true]) {
+    const { base, requests } = await stubServer(t, async (req, body) => {
+      if (!validSession && req.url === '/api/v1/auth/session') return { status: 200, body: { user: null } };
+      if (req.url === '/api/v1/demo/reset') return { status: 200, body: { ok: false } };
+      return handler(req, body);
+    });
+    const env = {
+      CONTRACT_USERNAME: mock.credentials.username, CONTRACT_PASSWORD: mock.credentials.password, CONTRACT_RESETTABLE_TARGET: base,
+    };
+    await assert.rejects(main(['--base', base, '--module', 'platform', '--allow-writes'], env, () => {}, () => {}),
+      validSession ? /重置预检失败/ : /user 应为对象/);
+    assert.deepEqual(requests.map(({ url }) => url), [
+      '/api/v1/auth/login', '/api/v1/auth/session', ...(validSession ? ['/api/v1/demo/reset'] : []),
+    ]);
+  }
 });
 
 test('远程明文 HTTP 在发请求前拒绝，回环 HTTP 与远程 HTTPS 放行', async t => {
@@ -78,7 +99,7 @@ test('远程明文 HTTP 在发请求前拒绝，回环 HTTP 与远程 HTTPS 放�
   const calls = [];
   globalThis.fetch = async url => { calls.push(String(url)); throw new TypeError('blocked in test'); };
   t.after(() => { globalThis.fetch = original; });
-  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'synthetic-value' };
+  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'sample-pw' };
   for (const base of ['http://example.com', 'http://10.0.0.8:8000', 'http://127.0.0.1.example.com']) {
     await assert.rejects(main(['--base', base, '--module', 'platform'], env, () => {}, () => {}), /远程目标必须使用 HTTPS/);
   }
@@ -89,6 +110,20 @@ test('远程明文 HTTP 在发请求前拒绝，回环 HTTP 与远程 HTTPS 放�
   assert.deepEqual(calls.map(url => new URL(url).origin), [
     'http://127.0.0.1:9', 'http://localhost:9', 'http://[::1]:9', 'https://demo.example.com',
   ]);
+});
+
+test('登录重定向不会转发凭据或会话 Cookie', async t => {
+  const receiver = await stubServer(t, async () => ({ status: 200, body: {} }));
+  const redirect = createServer((req, res) => {
+    req.resume();
+    res.writeHead(307, { Location: receiver.base + '/login', 'Content-Type': 'application/json' }).end('{}');
+  });
+  await new Promise(resolve => redirect.listen(0, '127.0.0.1', resolve));
+  t.after(() => redirect.close());
+  const base = 'http://127.0.0.1:' + redirect.address().port;
+  const env = { CONTRACT_USERNAME: 'sample', CONTRACT_PASSWORD: 'sample-pw' };
+  await assert.rejects(main(['--base', base, '--module', 'platform'], env, () => {}, () => {}), /登录失败（HTTP 307）/);
+  assert.deepEqual(receiver.requests, []);
 });
 
 test('知识库只删除本轮导入的资料，恢复走 /restore 并回读到原资料', async () => {
@@ -113,6 +148,43 @@ test('知识库只删除本轮导入的资料，恢复走 /restore 并回读到�
   assert.equal((await mock.request('POST', '/api/v1/kb/docs/' + id, {})).status, 404, '简写恢复路径不再被改写');
 });
 
+test('知识库 HTTP 模式按新资料 ID 验证删除和恢复，回读失败后仍清理', async t => {
+  for (const wrongReadback of [false, true]) {
+    const { mock, handler } = mockBackend();
+    let importedId;
+    let restored = false;
+    const { base, requests } = await stubServer(t, async (req, body) => {
+      const result = await handler(req, body);
+      if (req.method === 'POST' && req.url === '/api/v1/kb/import') {
+        importedId = result.body.docs[0].id;
+      }
+      if (req.url === '/api/v1/kb/docs/' + importedId + '/restore') restored = true;
+      if (wrongReadback && restored && req.method === 'GET' && req.url === '/api/v1/kb/docs/' + importedId) {
+        result.body.item.id = 'mismatched-doc';
+      }
+      return result;
+    });
+    const env = {
+      CONTRACT_USERNAME: mock.credentials.username, CONTRACT_PASSWORD: mock.credentials.password,
+      CONTRACT_RESETTABLE_TARGET: base, CONTRACT_KB_DOC_ID: 'existing-readonly-fixture',
+    };
+    const errors = [];
+    const code = await main(['--base', base, '--module', 'kb', '--allow-writes'], env, () => {}, error => errors.push(error));
+    assert.equal(code, wrongReadback ? 1 : 0, errors.join('\n'));
+    if (wrongReadback) assert.ok(errors.some(error => error.includes('回读到的资料 ID')));
+    assert.ok(importedId && importedId !== env.CONTRACT_KB_DOC_ID);
+    const path = '/api/v1/kb/docs/' + importedId;
+    const actions = requests.filter(({ url }) => url === path || url === path + '/restore');
+    assert.deepEqual(actions.map(({ method, url }) => [method, url]), [
+      ['GET', path], ['PATCH', path], ['DELETE', path], ['GET', path], ['POST', path + '/restore'], ['GET', path],
+    ]);
+    assert.equal(requests.at(-1).url, '/api/v1/demo/reset');
+    assert.equal((await mock.request('GET', path)).status, 401);
+    await mock.request('POST', '/api/v1/auth/login', mock.credentials);
+    assert.equal((await mock.request('GET', path)).status, 404);
+  }
+});
+
 test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用户，HTTP 退出后清除', async () => {
   const fetches = [];
   const context = createContext({
@@ -132,7 +204,7 @@ test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用�
   assert.equal(context.JKAuth.user(), null);
   await assert.rejects(api.kb.spaces(), error => error.status === 401);
 
-  await api.auth.login({ username: 'remote.leader', password: 'synthetic-value' });
+  await api.auth.login({ username: 'remote.leader', password: 'sample-pw' });
   assert.equal(fetches.length, 1);
   assert.equal(new URL(fetches[0].url).pathname, '/api/v1/auth/login');
   const spaces = await api.kb.spaces();
@@ -140,11 +212,32 @@ test('混合模式：platform=http 登录后 kb=mock 可访问，JKAuth 有用�
   assert.equal(context.JKAuth.user().role, 'leader');
   const session = context.JKAPI.state().session;
   assert.equal(session.bridged, true);
-  assert.ok(!JSON.stringify(context.JKAPI.state()).includes('synthetic-value'), '本地状态不保存远端口令');
+  assert.ok(!JSON.stringify(context.JKAPI.state()).includes('sample-pw'), '本地状态不保存远端口令');
 
   await api.auth.logout();
   assert.equal(context.JKAuth.user(), null);
   await assert.rejects(api.kb.spaces(), error => error.status === 401);
+});
+
+test('混合模式登录期间发出的过期 401 不清除刚建立的演示会话', async () => {
+  let finishLogin;
+  let finishRead;
+  const context = createContext({
+    fetch: url => new Promise(resolve => {
+      if (url.endsWith('/auth/login')) finishLogin = resolve;
+      else finishRead = resolve;
+    }),
+    Response, AbortController,
+  }, ctx => {
+    ctx.JK_CONFIG.api = { mode: 'mock', baseUrl: 'https://demo.example.com', modules: { platform: 'http' } };
+  });
+  const login = context.JKHttp.post('/api/v1/auth/login', { username: 'remote.leader', password: 'sample-pw' });
+  const stale = context.JKHttp.get('/api/v1/models');
+  finishLogin(Response.json({ user: { username: 'remote.leader', role: 'leader' } }));
+  await login;
+  finishRead(Response.json({}, { status: 401 }));
+  await assert.rejects(stale, error => error.status === 401);
+  assert.equal(context.JKAuth.user().role, 'leader');
 });
 
 function requiredPaths(schema, prefix = []) {
@@ -154,7 +247,8 @@ function requiredPaths(schema, prefix = []) {
     return [];
   }
   if (Array.isArray(schema)) return schema.length === 1 ? requiredPaths(schema[0], [...prefix, 0]) : [];
-  return Object.entries(schema).flatMap(([key, field]) => [[...prefix, key], ...requiredPaths(field, [...prefix, key])]);
+  return Object.entries(schema).filter(([key]) => !key.endsWith('?') && key !== '$values')
+    .flatMap(([key, field]) => [[...prefix, key], ...requiredPaths(field, [...prefix, key])]);
 }
 
 function mutate(body, path, change) {
@@ -185,7 +279,9 @@ test('逐项删除必需字段或替换类型时契约失败（政策清单、�
       const removed = mutate(actual.body, field, (parent, key) => { delete parent[key]; });
       if (!removed) continue;
       assert.throws(() => verify({ status: 200, body: removed }, { response }, models), undefined, `${path} 删除 ${field.join('.')}`);
-      const retyped = mutate(actual.body, field, (parent, key) => { parent[key] = parent[key] !== null && typeof parent[key] === 'object' ? 'wrong-type' : { wrong: 'type' }; });
+      const retyped = mutate(actual.body, field, (parent, key) => {
+        parent[key] = parent[key] !== null && typeof parent[key] === 'object' ? 17 : { wrong: 'type' };
+      });
       assert.throws(() => verify({ status: 200, body: retyped }, { response }, models), undefined, `${path} 改类型 ${field.join('.')}`);
       checked++;
     }
@@ -205,5 +301,37 @@ test('逐项删除必需字段或替换类型时契约失败（政策清单、�
     const broken = structuredClone(login);
     delete broken[key];
     assert.throws(() => verify({ status: 200, body: broken }, require('./cases/platform.json').routes[1], models), new RegExp(key));
+  }
+});
+
+test('CLI 对政策与登录的逐项删字段和改类型返回非零', async t => {
+  const { mock, handler } = mockBackend();
+  let mutation;
+  const { base } = await stubServer(t, async (req, body) => {
+    const response = await handler(req, body);
+    if (req.url === mutation.path && response.status === 200) {
+      response.body = mutate(response.body, mutation.field, (parent, key) => {
+        if (mutation.remove) delete parent[key];
+        else parent[key] = parent[key] !== null && typeof parent[key] === 'object' ? 7 : { invalid: true };
+      });
+    }
+    return response;
+  });
+  const env = { ...process.env, CONTRACT_USERNAME: mock.credentials.username, CONTRACT_PASSWORD: mock.credentials.password };
+  const run = promisify(execFile);
+  const cases = [
+    { module: 'platform', path: '/api/v1/auth/login', fields: [['role'], ['grants']] },
+    { module: 'policy', path: '/api/apps/policy/items', fields: [
+      ['items', 0, 'docNo'], ['items', 0, 'docTitle'], ['items', 0, 'docState'], ['items', 0, 'conditions', 0, 'v'],
+    ] },
+  ];
+  for (const { module, path, fields } of cases) {
+    for (const field of fields) {
+      for (const remove of [true, false]) {
+        mutation = { path, field, remove };
+        await assert.rejects(run(process.execPath, [join(__dirname, 'run.cjs'), '--base', base, '--module', module], { env }),
+          error => error.code === 1 && error.stderr.includes('.' + field.at(-1)), field.join('.'));
+      }
+    }
   }
 });

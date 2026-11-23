@@ -91,6 +91,7 @@
     },
     {
       "id": "enterprise.visit",
+      "requires": "operate",
       "action": "visit",
       "examples": [
         "给书香里加一条走访记录",

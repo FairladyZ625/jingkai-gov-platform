@@ -60,7 +60,7 @@ def test_sdk_and_error_envelope(tmp_path, monkeypatch):
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
     response = client.get('/api/apps/sample-app/test-ai')
     assert response.status_code == 503
-    assert response.json()['error'] == {'code': 'not_configured', 'message': '该能力尚未配置。', 'retryable': False}
+    assert response.json()['error'] == {'code': 'NOT_CONFIGURED', 'message': '该能力尚未配置。', 'retryable': False}
     client.put('/api/v1/admin/ai/providers/demo', json={'kind': 'mock', 'models': ['m']})
     client.put('/api/v1/admin/ai/routes/image', json={'provider': 'demo', 'model': 'm'})
     assert client.get('/api/apps/sample-app/test-ai').json()['result'][0]['url'] == 'mock://demo'
@@ -85,7 +85,7 @@ def test_invalid_admin_body_does_not_echo_secret(tmp_path, monkeypatch):
     client.post('/api/auth/login', json={'user_id': 'sampleadmin'})
     response = client.put('/api/v1/admin/ai/providers/p', json={'kind': 'mock', 'models': ['m'], 'api_key': 'private-placeholder'})
     assert response.status_code == 422
-    assert response.json()['error']['code'] == 'invalid_request'  # 请求体校验统一走 v1 信封
+    assert response.json()['error']['code'] == 'INVALID_REQUEST'  # 请求体校验统一走 v1 信封
     assert 'private-placeholder' not in response.text
 
 
@@ -146,7 +146,7 @@ def test_route_rejects_capability_unsupported_by_provider(tmp_path, monkeypatch)
     assert _deepseek(client).status_code == 200
     refused = client.put('/api/v1/admin/ai/routes/image', json={'provider': 'ds', 'model': 'deepseek-chat'})
     assert refused.status_code == 400
-    assert refused.json()['error']['code'] == 'invalid_request'
+    assert refused.json()['error']['code'] == 'INVALID_REQUEST'
     assert refused.json()['error']['message'] == '服务商 ds 不支持能力 image'
     assert client.get('/api/v1/admin/ai/routes').json()['items'] == []
     # 阳性对照：同一服务商支持的能力照常保存。
@@ -197,7 +197,7 @@ def test_delete_provider_with_route_reference_is_rejected(tmp_path, monkeypatch)
     for ident, expected in (('backup', ['chat']), ('main', ['chat'])):
         refused = client.delete(f'/api/v1/admin/ai/providers/{ident}')
         assert refused.status_code == 409
-        assert refused.json()['error']['code'] == 'invalid_state'
+        assert refused.json()['error']['code'] == 'INVALID_STATE'
         assert refused.json()['error']['capabilities'] == expected
         assert ident in refused.json()['error']['message']
     # 拒绝删除不级联：服务商和路由都还在，能力照常可查。
@@ -247,7 +247,7 @@ def test_provider_kind_change_rejects_capabilities_used_by_routes(tmp_path, monk
         'kind': 'deepseek', 'base_url': 'https://api.deepseek.example.test/v1',
         'models': ['m']})
     assert refused.status_code == 409
-    assert refused.json()['error']['code'] == 'invalid_state'
+    assert refused.json()['error']['code'] == 'INVALID_STATE'
     assert refused.json()['error']['capabilities'] == ['image']
     assert 'deepseek' in refused.json()['error']['message'] and 'image' in refused.json()['error']['message']
     assert client.get('/api/v1/admin/ai/providers').json()['items'][0]['kind'] == 'ark'

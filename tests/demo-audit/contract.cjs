@@ -8,7 +8,7 @@ for (const extension of [false, true]) {
   test(extension ? '政策扩展匹配路由' : '基础匹配路由', async () => {
     const context = vm.createContext({ window: {}, setTimeout, URLSearchParams });
     function load(file) {
-      const source = fs.readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8');
+      const source = fs.readFileSync(path.join(__dirname, '../../web', file), 'utf8');
       vm.runInContext(source, context, { filename: file });
     }
     load('config/app.config.js');
@@ -89,7 +89,7 @@ test('刷新已有会话时读取当前配置并保留管理员启停状态', as
     localStorage: { getItem: () => saved, setItem: (_, value) => { saved = value; } },
   });
   function load(file) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8'), context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../../web', file), 'utf8'), context);
   }
   load('config/app.config.js');
   load('config/mock-data.js');

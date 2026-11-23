@@ -37,38 +37,47 @@
   "tools": [
     {
       "name": "policy.match",
-      "desc": "为企业逐条核对兑现事项",
-      "params": {
+      "description": "为企业逐条核对兑现事项",
+      "write": false,
+      "input": {
         "entId": "string"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/match"
     },
     {
       "name": "policy.calc",
-      "desc": "按原文规则试算额度",
-      "params": {
+      "description": "按原文规则试算额度",
+      "write": false,
+      "input": {
         "itemId": "string",
         "amount": "number"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/calc"
     },
     {
       "name": "policy.notice",
-      "desc": "生成一次性告知单",
-      "params": {
+      "description": "生成一次性告知单",
+      "write": false,
+      "input": {
         "entId": "string",
         "itemIds": "string[]"
-      }
+      },
+      "endpoint": "POST /api/apps/policy/notice"
     },
     {
       "name": "policy.search",
-      "desc": "按口语搜索兑现事项",
-      "params": {
+      "description": "按口语搜索兑现事项",
+      "write": false,
+      "input": {
         "q": "string"
-      }
+      },
+      "endpoint": "GET /api/apps/policy/items"
     }
   ],
   "intents": [
     {
       "id": "policy.match",
+      "requires": "operate",
       "action": "match",
       "examples": [
         "帮我查一下示例企业能申报哪些政策",
@@ -95,6 +104,7 @@
     },
     {
       "id": "policy.fill",
+      "requires": "operate",
       "action": "fill",
       "examples": [
         "补填数据采购额 30 万",
@@ -142,6 +152,7 @@
     },
     {
       "id": "policy.notice",
+      "requires": "operate",
       "action": "notice",
       "examples": [
         "给示例企业生成政策告知单",
@@ -203,6 +214,7 @@
     },
     {
       "id": "policy.toDocument",
+      "requires": "operate",
       "action": "toDocument",
       "examples": [
         "把告知单转成公文答复"
@@ -239,5 +251,20 @@
     "items",
     "detail",
     "docs"
-  ]
+  ],
+  "starters": [
+    "看看书香里文化能申请什么"
+  ],
+  "chatCards": [
+    "policy-match",
+    "policy-items"
+  ],
+  "deepLink": {
+    "params": [
+      "entId",
+      "tab",
+      "itemId"
+    ]
+  },
+  "dataClass": "internal"
 }

@@ -50,7 +50,7 @@ def _public_snapshot() -> dict:
         snapshot = _json(seed)
     else:
         # 主线当前只有原型的公开快照。只解码 JSON 字面量，后附脚本无需执行。
-        source = (ROOT / "prototype/v4/data/real-policies.js").read_text(encoding="utf-8")
+        source = (ROOT / "web/data/real-policies.js").read_text(encoding="utf-8")
         payload = source.split("window.JK_REAL = ", 1)[1]
         snapshot, _ = json.JSONDecoder().raw_decode(payload)
     docs = {doc["id"]: doc for doc in snapshot["policyDocs"]}

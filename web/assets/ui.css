@@ -19,7 +19,7 @@ h1,h2,h3,h4{margin:0;line-height:var(--lh-tight);font-weight:var(--fw-b);letter-
 .grid{display:grid;gap:var(--s4)} .g2{grid-template-columns:repeat(2,minmax(0,1fr))} .g3{grid-template-columns:repeat(3,minmax(0,1fr))} .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .scroll,*{scrollbar-width:thin;scrollbar-color:var(--scroll) transparent}
 ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:10px;border:3px solid transparent;background-clip:content-box} ::-webkit-scrollbar-track{background:transparent}
-:focus-visible{outline:none;box-shadow:var(--focus);border-radius:var(--r-sm)}
+:focus-visible{outline:2px solid var(--ring);outline-offset:1px;box-shadow:none;border-radius:var(--r-sm)}
 ::selection{background:var(--accent-soft)}
 .divider{height:1px;background:var(--border);margin:var(--s4) 0}
 .ico{width:16px;height:16px;flex:none;display:inline-block;vertical-align:-3px}
@@ -209,9 +209,9 @@ mark,.hl{background:#FCE765;color:#201A09;border-radius:3px;padding:0 2px}
 .avatar{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font-size:12px;font-weight:var(--fw-m);background:var(--tg,var(--hover));color:var(--tf,var(--text));border:1px solid var(--tb,var(--border-strong));flex:none}
 
 /* ---------- AI 操作员：光标与高亮 ---------- */
-.op-cursor{position:fixed;z-index:120;width:22px;height:22px;pointer-events:none;transition:left .55s var(--ease),top .55s var(--ease);filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))}
+.op-cursor{position:fixed;z-index:120;width:22px;height:22px;pointer-events:none;transition:left .55s var(--ease),top .55s var(--ease);filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
 .op-cursor .lbl{position:absolute;left:18px;top:18px;padding:2px 8px;border-radius:6px;background:var(--accent);color:#fff;font-size:11px;line-height:16px;white-space:nowrap}
-.op-ring{position:fixed;z-index:119;pointer-events:none;border-radius:var(--r-md);box-shadow:0 0 0 2px var(--accent),0 0 0 6px var(--accent-soft);transition:all .3s var(--ease)}
+.op-ring{position:fixed;z-index:119;pointer-events:none;border-radius:var(--r-md);box-shadow:0 0 0 2px var(--accent);transition:all .3s var(--ease)}
 .op-click{position:fixed;z-index:121;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid var(--accent);pointer-events:none;animation:ripple .5s ease-out forwards} @keyframes ripple{to{transform:scale(2);opacity:0}}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 .menu .mi>.app-ico,.menu .mi>.ico,.menu .mi>.file-ico{flex:none} .menu:has(.mi-d){min-width:280px}

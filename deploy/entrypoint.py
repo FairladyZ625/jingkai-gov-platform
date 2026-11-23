@@ -41,8 +41,13 @@ def write_boot_token(data_dir: Path) -> None:
 
 
 def use_same_origin_http(root: Path) -> None:
-    """只改容器里的前端配置。仓库里的原型保持 mock，file:// 仍可离线打开。"""
+    """只改容器里的前端配置。仓库里的原型保持 mock，file:// 仍可离线打开。
+
+    JKQ_FRONTEND_API_MODE=mock 时保留浏览器内 mock，演示兜底用；默认 http。
+    """
     if os.environ.get("JKQ_DEPLOY_RUNTIME") != "1":
+        return
+    if os.environ.get("JKQ_FRONTEND_API_MODE", "http").strip().lower() == "mock":
         return
     for relative in ("web/config/app.config.js", "prototype/v4/config/app.config.js"):
         path = root / relative
@@ -86,9 +91,14 @@ def main() -> int:
     require_demo_passwords()
     root = Path(os.environ.get("HAIKNOW_ROOT", "/srv/app"))
     use_same_origin_http(root)
-    write_boot_token(Path(os.environ.get("HAIKNOW_DATA_DIR", "/state/live")))
+    data_dir = Path(os.environ.get("HAIKNOW_DATA_DIR", "/state/live"))
+    write_boot_token(data_dir)
     port = os.environ.get("APP_PORT", "8000")
-    process = subprocess.Popen(uvicorn_command(port))
+    app_env = os.environ.copy()
+    # 演示台账使用独立原值库；缺省放进同一持久数据卷，由快照一并备份。
+    if app_env.get("JKQ_DEPLOY_RUNTIME") == "1" and app_env.get("JKQ_DEMO_MODE") == "1":
+        app_env.setdefault("JKQ_ENTERPRISE_PRIVATE_DB", str(data_dir / "enterprise-private.sqlite"))
+    process = subprocess.Popen(uvicorn_command(port), env=app_env)
 
     def stop(*_args):
         if process.poll() is None:

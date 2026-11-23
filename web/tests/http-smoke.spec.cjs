@@ -6,7 +6,7 @@ const { expect, test } = require('@playwright/test');
 
 const web = path.resolve(__dirname, '..');
 const username = 't27-browser-test';
-const password = 'local-test-password';
+const password = 't27-pass';
 const user = { id: 'TEST-T27', name: '测试用户', username };
 const profile = { user, role: { name: '经办人员' }, grants: { '*': ['view', 'operate'] } };
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };

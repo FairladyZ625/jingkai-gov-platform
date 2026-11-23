@@ -19,6 +19,7 @@ from haiknow_core.identity_http import Body, Identifier
 from haiknow_core.passwords import hash_password, verify_password
 from haiknow_sdk import ACTIONS
 
+from ..app_catalogs import internal_app_ids
 from .seeds import seed_identities
 
 
@@ -118,6 +119,7 @@ def install(app, *, demo=None, clock=time.time):
         raise RuntimeError('经开区实例须关闭 HAIKNOW_DEMO_LOGIN，演示模式请使用 JKQ_DEMO_MODE')
     if demo is None:
         demo = os.environ.get('JKQ_DEMO_MODE') == '1'
+    deployed = os.environ.get('JKQ_DEPLOY_RUNTIME') == '1'
 
     config = yaml.safe_load((platform.config_dir / 'roles.yaml').read_text(encoding='utf-8'))
     demo_users = []
@@ -148,7 +150,10 @@ def install(app, *, demo=None, clock=time.time):
     def session_document(user):
         public_user, role = document(user)
         grants = {}
+        internal = internal_app_ids(platform)
         for app_id in dict.fromkeys(('*', *config['apps'], *platform.apps)):
+            if app_id in internal:
+                continue
             allowed = platform.rbac.actions(user, app_id)
             grants[app_id] = [action for action in ACTIONS if action in allowed]
         return dict(user=public_user, role=role, grants=grants)
@@ -214,6 +219,8 @@ def install(app, *, demo=None, clock=time.time):
         return {'ok': True}
 
     @router.get('/api/auth/session', include_in_schema=False)
+    # 反代连接到应用可能使用 HTTP，尾斜杠不交给框架生成绝对跳转地址。
+    @router.get('/api/v1/auth/session/', include_in_schema=False)
     @router.get('/api/v1/auth/session')
     def session(request: Request):
         with store._lock:
@@ -285,6 +292,11 @@ def install(app, *, demo=None, clock=time.time):
 
         @router.put('/api/v1/me/role')
         def set_role(body: RoleBody, request: Request):
+            if deployed:
+                # 部署实例的演示须验证目标账号口令，不能在原会话内直接改授权。
+                user = current_user(request)
+                store.audit('platform', user.id, 'permission.denied', {'operation': 'auth.role'})
+                raise AuthError(403, 'FORBIDDEN', '部署实例不能直接切换角色')
             with store._lock, store._db as db:
                 store.begin_write()
                 user = current_user(request)

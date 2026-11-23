@@ -10,7 +10,7 @@
 
 ## 目录和本地命令
 
-- `prototype/v4/` 是现场演示原型。直接打开 `prototype/v4/index.html`，用演示账号登录，从侧栏启动「一键演示」。保留 file:// 与离线 mock 模式。
+- `web/` 是现场演示原型。直接打开 `web/index.html`，用演示账号登录，从侧栏启动「一键演示」。保留 file:// 与离线 mock 模式。
 - `jkq/` 是经开区实例入口（`make seed` / `make dev`），`core/` 是平台底座，`apps/_template/` 是小应用模板，`deploy/` 是演示环境部署配置。
 - `data/public/` 放可公开的数据及核查说明，`docs/plan/` 放开发计划。`docs/agents/` 有写小应用（[写小应用.md](docs/agents/写小应用.md)）和提交 PR（[Issue到PR.md](docs/agents/Issue到PR.md)）的操作说明。
 - 运行 `python3 -m pytest -q --ignore=tests/demo`（Windows 用 `python`，或执行 `make test`）测试仓库逻辑；PR 正文用例可单独运行 `python3 -m pytest -q tests/pr_body`。前端冒烟（`tests/demo`、`tests/p0`）由 CI 单独运行。

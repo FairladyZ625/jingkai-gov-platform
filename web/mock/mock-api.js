@@ -12,7 +12,8 @@
   // 只映射政策复核表中明确合并的旧条目。下线且无依据的条目没有替代 ID。
   const legacyPolicyIds = new Map([['PI-01', 'RP-003'], ['PI-08', 'RP-006'], ['PI-10', 'RP-007'], ['PI-16', 'PI-17']]);
   const DEMO_SEED_VERSION = 3;
-  let S;
+  let S, httpPrincipal, mixedOwner;
+  const httpSite = () => window.JK_CONFIG?.api?.mode === 'http';
 
   function upgradeSeedDocumentNumbers() {
     const seeded = new Set([...SEED.documents.map((draft) => draft.id), 'DOC-1112']);
@@ -127,7 +128,7 @@
 
   function load() {
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = !httpSite() && localStorage.getItem(KEY);
       if (raw) {
         S = JSON.parse(raw);
         // 政策库没有写入接口，持久化的是演示交互状态，政策始终从当前种子读取。
@@ -163,13 +164,18 @@
     S.demoSeedVersion = DEMO_SEED_VERSION;
     seedDrafts();
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+  function save() { if (!httpSite()) try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
   const nid = (p) => p + '-' + (++S.seq);
   const now = () => { const d = new Date(); return d.toISOString().slice(0, 10) + ' ' + d.toTimeString().slice(0, 5); };
-  const me = () => S.users.find((u) => u.id === S.me);
+  const me = () => httpPrincipal?.user || S.users.find((u) => u.id === S.me);
   /* 权限判定（复用 haiknow rbac.py：角色 × 应用 × 动作 view/operate/approve/admin；授权表在 data/accounts.js） */
   function can(app, action, user) {
     const u = user || me(); if (!u) return false;
+    if (httpPrincipal && u.id === httpPrincipal.user.id) {
+      // /me 已按应用计算有效授权；不从角色名或通配项补回服务器没有返回的动作。
+      const allowed = httpPrincipal.grants[app];
+      if (!Array.isArray(allowed) || !allowed.includes(action)) return false;
+    }
     const g = (S.grants || {})[u.role]; if (!g) return u.role === 'admin';
     const ap = (S.apps || []).find((a) => a.id === app); if (ap && ap.status === 'disabled' && !(g['*'] || []).includes('admin')) return false;
     const acts = [...(g['*'] || []), ...(g[app] || [])];
@@ -752,7 +758,20 @@
   on('POST', '/api/apps/document/compare', (b) => { const get = (x) => { if (typeof x === 'string') return x; const d = S.drafts[x.id]; const v = d.versions.find((y) => y.v === x.v) || d.versions[d.versions.length - 1]; return docText(v.content); }; const a = get(b.a), c = get(b.b); const parts = diff(a, c); return { parts, stats: { add: parts.filter((x) => x.op === 'add').reduce((s, x) => s + x.t.length, 0), del: parts.filter((x) => x.op === 'del').reduce((s, x) => s + x.t.length, 0) } }; });
   on('POST', '/api/apps/document/drafts/:id/comments', (b, p) => { const d = S.drafts[p.id]; const c = { id: nid('cm'), para: b.para, by: me().name, at: now(), text: b.text, replies: [], resolved: false }; d.comments.push(c); return { item: c }; });
   on('PATCH', '/api/apps/document/drafts/:id/comments/:cid', (b, p) => { const d = S.drafts[p.id]; const c = d.comments.find((x) => x.id === p.cid); if (b.reply) c.replies.push({ by: me().name, text: b.reply }); if (b.resolved !== undefined) c.resolved = b.resolved; return { item: c }; });
-  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => { const d = S.drafts[p.id]; requireCheckedDraft(d, '请先在“核查”中处理。'); d.status = '审签中'; const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: b.assignee || '李阳' }; S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r }; });
+  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => {
+    if (!can('document', 'operate')) err(403, 'FORBIDDEN', '没有公文操作权限');
+    const d = S.drafts[p.id];
+    if (!d) err(404, 'NOT_FOUND', '文稿不存在');
+    requireCheckedDraft(d, '请先在“核查”中处理。');
+    if (!['草稿', '已退回'].includes(d.status)) err(409, 'INVALID_STATE', '只有草稿或已退回的文稿可以送审');
+    const name = b.assignee || '李阳', reviewer = S.users.find(u => u.name === name);
+    if (!reviewer) err(404, 'NOT_FOUND', '审签人不存在');
+    if (reviewer.id === me().id || reviewer.name === d.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+    if (!can('document', 'approve', reviewer)) err(403, 'FORBIDDEN', '指定用户没有审签权限');
+    d.status = '审签中';
+    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: name, submitter: me().id };
+    S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r };
+  });
   on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${escapeHtml(c.title)}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${escapeHtml(c.docNo) || '发文字号（请填写）'}</p><h1>${escapeHtml(c.title)}</h1><p>${escapeHtml(c.to)}</p>${c.paragraphs.map((x) => `<p>　　${escapeHtml(x)}</p>`).join('')}<p class="sign">${escapeHtml(c.sign)}</p><p class="sign">${escapeHtml(c.date)}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
   // 审签 / 等我确认（复用卫华 reviews）
   on('GET', '/api/v1/reviews', () => ({ items: S.inbox }));
@@ -762,12 +781,13 @@
     const approve = b.decision === 'approve';
     if (r.type === 'review') {
       const d = S.drafts[r.ref];
-      if (approve) {
-        const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
-        if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
-        requireCheckedDraft(d, '请退回修订后重新送审。');
-      }
+      if (me().id === r.submitter || me().name === d?.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+      if (r.assignee && r.assignee !== me().name && r.assignee !== me().id) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
+      const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
+      if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
+      if (approve) requireCheckedDraft(d, '请退回修订后重新送审。');
       d.status = approve ? '已定稿' : '已退回';
+      if (!approve) d.returnReason = b.reason ?? b.comment ?? '';
     }
     r.status = approve ? 'done' : 'rejected';
     r.reason = b.reason;
@@ -798,7 +818,7 @@
   on('POST', '/api/v1/skills/:id/rate', (b, p) => { const s = S.skills.find((x) => x.id === p.id); s.myRating = b.useful; return { item: s }; });
   // 管理
   on('GET', '/api/v1/admin/usage', () => ({ usage: S.usage, audit: S.audit.slice(0, 30), seats: S.org }));
-  on('GET', '/api/v1/audit', () => ({ items: S.audit }));
+  on('GET', '/api/v1/audit', (_, _path, q) => { const offset = Number(q.offset) || 0; const limit = Number(q.limit) || 50; return { items: S.audit.slice(offset, offset + limit), total: S.audit.length }; });
   on('GET', '/api/v1/feed', () => ({ items: S.feed }));
 
   // 小应用工具调用（对话编排 / 自建技能通过它调用官方应用能力；与界面同一套权限和留痕）
@@ -834,8 +854,25 @@
     request(method, path, body) {
       const [p, q] = parseQuery(path);
       return new Promise((resolve, reject) => {
-        setTimeout(() => {
+        const authorization = httpSite() ? window.JKHttp?.mockAuthorization(path) : null;
+        setTimeout(async () => {
           try {
+            if (httpSite()) {
+              if (!window.JKAPI.guard || !authorization) err(401, 'UNAUTHENTICATED', '需要有效的服务端会话');
+              const profile = await authorization.profile();
+              authorization.check();
+              const u = profile?.user;
+              const local = u && SEED.users.find(x => x.id === u.id && x.username === u.username && x.role === u.role && x.status === 'active');
+              if (!local || u.status !== 'active' || profile.role?.id !== u.role ||
+                  profile.role.mask !== (SEED.roles || []).find(r => r.id === u.role)?.mask)
+                err(403, 'FORBIDDEN', '当前身份不能使用此演示模块');
+              const owner = JSON.stringify([authorization.epoch, u.id, u.role, u.deptId, profile.grants]);
+              if (owner !== mixedOwner) {
+                load(); loadHooks.forEach(f => f(S)); mixedOwner = owner;
+              }
+              // 仅在下列同步 guard/handler 内生效。不保存线上会话，也不复制真实口令。
+              httpPrincipal = profile;
+            }
             if (window.JKAPI.guard) window.JKAPI.guard(method, p, body || {});
             const r = routes.find((x) => x.method === method && x.re.test(p));
             if (!r) err(404, 'NO_ROUTE', `未实现的接口 ${method} ${p}`);
@@ -843,7 +880,7 @@
             const out = r.fn(body || {}, params, q);
             if (method !== 'GET') { save(); listeners.forEach((f) => f(method, p)); }
             resolve(clone(out));
-          } catch (e) { reject(e); }
+          } catch (e) { reject(e); } finally { httpPrincipal = null; }
         }, method === 'GET' ? Math.min(120, this.latency) : this.latency);
       });
     },
@@ -851,7 +888,7 @@
     onChange: (f) => listeners.push(f),
     reset() { localStorage.removeItem(KEY); load(); loadHooks.forEach((f) => f(S)); save(); listeners.forEach((f) => f('RESET', '')); },
     /* 扩展点：账号权限模块（assets/auth.js）通过它注册路由、读写状态，不改本文件 */
-    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now },
+    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now, hasHttpPrincipal: () => !!httpPrincipal },
     onLoad(f) { loadHooks.push(f); f(S); save(); },
     guard: null,
     setFast(v) { S.demoFast = v; window.JKAPI.latency = v ? 90 : 260; },

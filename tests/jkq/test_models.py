@@ -27,6 +27,7 @@ LOCAL_URL = "https://local.example.test/v1"
 def model_client(make_client, isolated_platform, monkeypatch):
     for key in os.environ.keys() & {
         "JKQ_MODEL_PROVIDER",
+        *(f"JKQ_CODEX_MODEL_{key}" for key in ("ENABLED", "NAME", "TIMEOUT", "MAX_CONCURRENCY")),
         *(f"JKQ_{provider}_MODEL_{option}"
           for provider in ("CLOUD", "DEEPSEEK", "LOCAL", "LOCAL_BACKUP", "OVERSEAS")
           for option in ("BASE_URL", "NAME", "API_KEY", "CONFIDENTIAL_BASE_URL")),
@@ -307,7 +308,7 @@ def test_confidential_does_not_send_to_unapproved_local_fallback(model_client, i
         entries = client.app.state.platform.store.audit_list("platform")
         assert [(r["app"], r["user"], r["detail"]) for r in entries if r["action"] == "ai.chat"] == [
             ("platform", "sampleoperator", {"provider": "local", "model": "local-configured-name",
-              "status": "provider_error", "usage": {"input": None, "output": None}}),
+              "status": "provider_error", "usage": {"input": None, "output": None}, "providerKind": "local"}),
         ]
 
 
@@ -353,12 +354,12 @@ def test_retry_next_and_audit_each_attempt(model_client, monkeypatch, failure):
         assert [(r["user"], r["app"]) for r in entries] == [("sampleoperator", audit_app)] * 2
         assert entries[0]["detail"] == {
             "provider": "cloud", "model": "cloud-configured-name", "status": "success",
-            "usage": {"input": 8, "output": 5},
+            "usage": {"input": 8, "output": 5}, "providerKind": "cloud",
         }
         assert entries[1]["detail"] == {
             "provider": "deepseek", "model": "deepseek-configured-name",
             "status": "provider_error" if failure == "5xx" else "timeout",
-            "usage": {"input": None, "output": None},
+            "usage": {"input": None, "output": None}, "providerKind": "cloud",
         }
 
 
@@ -407,10 +408,10 @@ def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatc
         assert client.post(path, json=body).status_code == 200
         disabled = client.post(path, json={**body, "model": "deepseek-configured-name"})
         assert disabled.status_code == 503
-        assert (disabled.json()["error"]["code"] if entry == "ai" else disabled.json()["kind"]) == "not_configured"
+        assert (disabled.json()["error"]["code"] if entry == "ai" else disabled.json()["kind"]) == ("NOT_CONFIGURED" if entry == "ai" else "not_configured")
         denied = client.post(path, json={**body, "model": "deepseek", "classification": "confidential"})
         assert denied.status_code == 403
-        assert (denied.json()["error"]["code"] if entry == "ai" else denied.json()["kind"]) == "outbound_denied"
+        assert (denied.json()["error"]["code"] if entry == "ai" else denied.json()["kind"]) == ("OUTBOUND_DENIED" if entry == "ai" else "outbound_denied")
 
         assert requests == [
             (f"{ident}.example.test", {"messages": messages, "temperature": 0.3, "max_tokens": 20,
@@ -422,10 +423,21 @@ def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatc
         assert [(r["action"], r["detail"]) for r in events] == [
             ("ai.outbound_denied", {"capability": "chat", "classification": "confidential"}),
             *[("ai.chat", {"provider": "cloud", "model": "cloud-configured-name", "status": "success",
-                          "usage": {"input": 8, "output": 5}})] * 2,
+                          "usage": {"input": 8, "output": 5}, "providerKind": "cloud"})] * 2,
             ("ai.chat", {"provider": "deepseek", "model": "deepseek-configured-name", "status": "provider_error",
-                         "usage": {"input": None, "output": None}}),
+                         "usage": {"input": None, "output": None}, "providerKind": "cloud"}),
         ]
+        # #19 用量统计直接汇总网关逐次审计，三个维度与上面的记录一致。
+        from jkq.admin.usage import usage_page
+        with platform.store._lock:
+            db = platform.store._db
+            assert usage_page(db, "app")["items"] == [
+                {"app": "sample-app", "calls": 3, "input": 16, "output": 10}]
+            assert usage_page(db, "model")["items"] == [
+                {"model": "cloud-configured-name", "calls": 2, "input": 16, "output": 10},
+                {"model": "deepseek-configured-name", "calls": 1, "input": 0, "output": 0}]
+            assert usage_page(db, "user")["items"] == [
+                {"user": "sampleoperator", "calls": 3, "input": 16, "output": 10}]
 
         login(client)
         assert client.patch("/api/v1/models/cloud", json={"enabled": False}).status_code == 200
@@ -466,7 +478,7 @@ def test_application_sdk_media_and_legacy_options_cannot_bypass_confidential_bou
             denied = client.post(f"{APP_CHAT}/{entry}", json={**body, "classification": "confidential"})
             assert denied.status_code == 400
             error = denied.json()
-            assert (error["error"]["code"] if entry == "ai" else error["kind"]) == "bad_input"
+            assert (error["error"]["code"] if entry == "ai" else error["kind"]) == ("BAD_INPUT" if entry == "ai" else "bad_input")
             stream = client.post(f"{APP_CHAT}/{entry}", json={**CHAT, "stream": True, "classification": "confidential"})
             assert stream.status_code == 400
         embedding = client.post("/api/apps/sample-app/sdk-embedding")

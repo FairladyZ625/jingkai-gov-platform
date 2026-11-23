@@ -43,9 +43,11 @@ function createContext(globals = {}, configure = () => {}) {
 
 function createMock() {
   const context = createContext();
-  context.JKAPI.state().myTodos.push({
-    id: 'contract-todo', task: '核对契约测试', owner: '测试账号',
-    due: '2026-12-01', from: '契约测试', app: 'meeting', done: false,
+  context.JKAPI.onLoad(state => {
+    state.myTodos.push({
+      id: 'contract-todo', task: '核对契约测试', owner: '测试账号',
+      due: '2026-12-01', from: '契约测试', app: 'meeting', done: false,
+    });
   });
   const { username, password } = context.JK_CONFIG.demoAccounts.find(account => account.username === 'admin');
   return {

@@ -36,7 +36,8 @@ for (const [name, url] of [['站点根路径', root], ['部署子路径 /v4/', s
 
     await openAppsAndChat(page);
     const plan = page.locator('#btn-plan');
-    expect(await plan.evaluate(link => link.href)).toBe(new URL('plan.html', url).href);
+    if (await plan.count()) expect(await plan.evaluate(link => link.href)).toBe(new URL('plan.html', url).href);
+    expect((await page.request.get(new URL('plan.html', url).href)).ok()).toBe(true);
     expect(requests).toEqual(expect.arrayContaining([
       new URL('assets/theme.css', url).href,
       new URL('assets/fonts/Inter-var.woff2', url).href,

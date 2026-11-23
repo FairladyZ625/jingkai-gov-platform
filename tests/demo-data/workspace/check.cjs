@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '../../..');
-const source = file => fs.readFileSync(path.join(root, 'prototype/v4', file), 'utf8');
+const source = file => fs.readFileSync(path.join(root, 'web', file), 'utf8');
 const seed = file => JSON.parse(fs.readFileSync(path.join(root, 'data/seed', file + '.json')));
 const ctx = vm.createContext({ setTimeout, URLSearchParams, JK: { registry: {} }, localStorage: { getItem() {}, setItem() {} } });
 ctx.window = ctx;
@@ -65,7 +65,7 @@ async function check() {
   const api = ctx.JKAPI;
   api.latency = 0;
   ctx.JKHttp = api;
-  await ctx.JKOp.loadDict();
+  await ctx.JKOp.loadDict(app => app === 'enterprise');
   for (const e of rows) {
     for (const n of [e.name, e.short]) assert.equal(ctx.JKOp.understand('查一下' + n).slots.ent.id, e.id, n);
   }
@@ -74,7 +74,8 @@ async function check() {
     if (step.file) assert.ok(ctx.JK_SAMPLE_FILES.some(f => f.id === step.file));
     if (step.appDemo) assert.ok(ctx.JK_APP_LIST.some(a => a.id === step.appDemo));
   }
-  assert.ok(ctx.JK_DEMO_SCRIPT.some(s => s.steps.some(step => step.say === '查一下' + rows[1].short)));
+  const e020 = rows.find(e => e.id === 'E020');
+  assert.ok(e020 && ctx.JK_DEMO_SCRIPT.some(s => s.steps.some(step => step.say === '查一下' + e020.short)));
   assert.ok(ctx.JK_SAMPLE_FILES.find(f => f.id === 'ent-xinghe').text.includes(rows[1].name));
   assert.ok(ctx.JK_SAMPLE_FILES.find(f => f.id === 'rec-1117').name.includes('示例'));
   assert.ok(demo.meetings.every(m => m.title.includes('示例')));

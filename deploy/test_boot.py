@@ -1,4 +1,6 @@
-"""空库首管关闭、公网路径和续跑任务。不启动容器，也不打印口令。"""
+"""空库首管关闭、公网路径、应用列表和续跑任务。"""
+import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -9,6 +11,7 @@ pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-
 from fastapi.testclient import TestClient
 
 from deploy.entrypoint import (
+    main,
     require_demo_passwords,
     use_same_origin_http,
     write_boot_token,
@@ -69,9 +72,9 @@ def test_public_proxy_rejects_bootstrap_before_forwarding():
 
 
 def test_runtime_patch_is_opt_in_and_keeps_source_mock(tmp_path, monkeypatch):
-    source = ROOT / "prototype/v4/config/app.config.js"
+    source = ROOT / "web/config/app.config.js"
     original = source.read_text(encoding="utf-8")
-    target = tmp_path / "prototype/v4/config/app.config.js"
+    target = tmp_path / "web/config/app.config.js"
     target.parent.mkdir(parents=True)
     target.write_text(original, encoding="utf-8")
     monkeypatch.delenv("JKQ_DEPLOY_RUNTIME", raising=False)
@@ -84,10 +87,66 @@ def test_runtime_patch_is_opt_in_and_keeps_source_mock(tmp_path, monkeypatch):
     assert source.read_text(encoding="utf-8") == original
 
 
+def test_frontend_mode_switch_keeps_mock(tmp_path, monkeypatch):
+    original = (ROOT / "web/config/app.config.js").read_text(encoding="utf-8")
+    target = tmp_path / "web/config/app.config.js"
+    target.parent.mkdir(parents=True)
+    target.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("JKQ_DEPLOY_RUNTIME", "1")
+    monkeypatch.setenv("JKQ_FRONTEND_API_MODE", "mock")
+    use_same_origin_http(tmp_path)
+    assert target.read_text(encoding="utf-8") == original
+    monkeypatch.setenv("JKQ_FRONTEND_API_MODE", "http")
+    use_same_origin_http(tmp_path)
+    assert "mode: 'http'" in target.read_text(encoding="utf-8")
+    compose = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "JKQ_FRONTEND_API_MODE: ${JKQ_FRONTEND_API_MODE:-http}" in compose
+
+
+@pytest.mark.parametrize(("demo", "deployed", "configured"), [
+    (True, True, None), (True, True, "/custom/enterprise.sqlite"),
+    (True, False, None), (False, True, None),
+])
+def test_entrypoint_supplies_private_store_only_for_deployed_demo(tmp_path, monkeypatch, demo, deployed, configured):
+    data_dir = tmp_path / "state"
+    monkeypatch.setenv("HAIKNOW_ROOT", str(tmp_path))
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("JKQ_DEMO_MODE", str(int(demo)))
+    monkeypatch.setenv("JKQ_DEPLOY_RUNTIME", str(int(deployed)))
+    if configured is None:
+        monkeypatch.delenv("JKQ_ENTERPRISE_PRIVATE_DB", raising=False)
+    else:
+        monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", configured)
+    for key, value in PASSWORDS.items():
+        monkeypatch.setenv(key, value)
+
+    class CapturedStart(Exception):
+        pass
+
+    def capture_child(_command, *, env=None):
+        expected = configured or (str(data_dir / "enterprise-private.sqlite") if demo and deployed else None)
+        assert (env if env is not None else os.environ).get("JKQ_ENTERPRISE_PRIVATE_DB") == expected
+        assert os.environ.get("JKQ_ENTERPRISE_PRIVATE_DB") == configured
+        raise CapturedStart
+
+    monkeypatch.setattr("deploy.entrypoint.subprocess.Popen", capture_child)
+    with pytest.raises(CapturedStart):
+        main()
+
+
 def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monkeypatch, cheap_password_hash):
     apps = tmp_path / "apps"
     data = tmp_path / "data"
     shutil.copytree(HOLD, apps / "jkq-hold")
+    example_manifest = json.loads((HOLD / "app.json").read_text(encoding="utf-8"))
+    example_manifest.pop("internal", None)
+    for app_id, flags in (("fixture-public", {}), ("fixture-internal", {"internal": True})):
+        target = apps / app_id
+        target.mkdir()
+        (target / "app.json").write_text(
+            json.dumps({**example_manifest, "id": app_id, "name": app_id, **flags}),
+            encoding="utf-8",
+        )
     for name in tuple(__import__("os").environ):
         if name.startswith(("HAIKNOW_MODEL_", "HAIKNOW_PROVIDER_")):
             monkeypatch.delenv(name)
@@ -107,12 +166,36 @@ def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monke
         assert client.get("/api/auth/state").json()["needsBootstrap"] is False
         assert client.post("/api/v1/auth/bootstrap", json={}).status_code == 404
         assert client.post("/api/auth/bootstrap", json={}).status_code == 404
+        assert client.get("/api/apps").status_code == 401
+        response = client.get("/api/v1/admin/apps")
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+        assert client.get("/api/auth/users").status_code == 404
         login = client.post("/api/v1/auth/login", json={
             "username": "admin", "password": PASSWORDS["JKQ_DEMO_ADMIN_PASSWORD"],
         })
         assert login.status_code == 200, login.text
         assert login.json()["role"]["id"] == "admin"
         assert client.get("/api/v1/auth/session").json()["user"]["username"] == "admin"
+        hidden = {"jkq-hold", "fixture-internal"}
+        for path in ("/api/apps", "/api/admin/apps", "/api/v1/admin/apps",
+                     "/api/admin/grants", "/api/v1/admin/grants"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            body = response.json()
+            ids = {entry["id"] for entry in body["apps"]}
+            if path == "/api/v1/admin/grants":
+                # 管理后台授权矩阵另含全局 * 与已配置应用，只要求隐藏内部应用（#128 × #135）。
+                assert "fixture-public" in ids and hidden.isdisjoint(ids), path
+            else:
+                assert ids == {"fixture-public"}, path
+            assert all(hidden.isdisjoint(grants) for grants in body.get("grants", {}).values()), path
+        me = client.get("/api/v1/me")
+        assert me.status_code == 200
+        for body in (login.json(), me.json()):
+            assert {"*", "fixture-public"} <= body["grants"].keys()
+            assert hidden.isdisjoint(body["grants"])
+        assert hidden <= client.app.state.platform.apps.keys()
         created = client.post("/api/v1/jobs", json={
             "appId": "jkq-hold", "project": "jkq", "operation": "hold",
             "input": {}, "idempotencyKey": "hold-once",

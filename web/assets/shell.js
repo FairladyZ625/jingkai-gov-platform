@@ -12,12 +12,12 @@
   let switchingAccount = false;
   let afterReauthentication = null;
   const pendingConversations = new WeakMap();
-  const demoAccounts = () => H.mode() === 'mock' || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
+  const loginDemoAccounts = () => offlineDemo() || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
 
-  window.addEventListener('jk:api:notice', ({ detail }) => {
+  window.addEventListener?.('jk:api:notice', ({ detail }) => {
     toast(detail.message, { type: 'err' });
   });
-  window.addEventListener('jk:api:unauthenticated', () => {
+  window.addEventListener?.('jk:api:unauthenticated', () => {
     if (!S.me) return;
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     const slot = S.mounted[S.active];
@@ -35,6 +35,26 @@
   const can = (app, action) => { const g = S.grants || {}; const acts = [...(g['*'] || []), ...(g[app] || [])]; return acts.includes('admin') || acts.includes(action || 'view'); };
   const isAdmin = () => (S.grants['*'] || []).includes('admin');
   const roleName = () => (S.role && S.role.name) || '';
+  const offlineDemo = () => H.mode() === 'mock' && window.location.protocol === 'file:';
+  const canPresentDemo = () => !!S.me && (offlineDemo() ||
+    (H.mode() === 'http' && ['admin', 'leader', 'member'].includes(S.role?.id)));
+  function canIntent(it) {
+    if (it.needsAdmin && !isAdmin()) return false;
+    if (it.platform) {
+      if (it.id === 'role' || it.id === 'demo') return canPresentDemo();
+      if (it.id === 'reset') return offlineDemo();
+      return true;
+    }
+    return !!JK.registry[it.app] && can(it.app, 'view') && (!it.requires || can(it.app, it.requires));
+  }
+  const homeSuggestions = () => (CFG.homeSuggestions || []).filter(s =>
+    !s.app || JK.registry[s.app] && can(s.app, 'view') && (!s.requires || can(s.app, s.requires)))
+    .map((s) => s.httpText && H.mode(s.app) === 'http' ? { ...s, text: s.httpText } : s);
+  function recommendText(text) {
+    const best = Op.understand(text).best;
+    return !best || best.score < 1.5 || canIntent(best.intent);
+  }
+  const startersFor = id => can(id, 'view') ? (mf(id).starters || []).filter(recommendText) : [];
   const greet = () => { const hr = new Date().getHours(); return hr < 6 ? '夜深了' : hr < 11 ? '早上好' : hr < 13 ? '中午好' : hr < 18 ? '下午好' : '晚上好'; };
   const appsVisible = (group) => (window.JK_APP_LIST || []).filter((a) => a.enabled !== false && JK.registry[a.id] && (!group || a.group === group) && can(a.id, 'view'));
   const mf = (id) => (JK.registry[id] ? JK.registry[id].manifest : JK.BUILTIN[id] || { name: id });
@@ -54,22 +74,23 @@
       if (!(await API.auth.session()).user) return renderLogin();
       await afterLogin();
     } catch (error) {
-      renderLogin(error.status === 401 ? undefined : error.message);
+      renderLogin(error?.status === 401 ? undefined : error?.message);
     }
   }
-  async function afterLogin(finishPreviousAccount) {
+  async function afterLogin(finishPreviousAccount, identityReady) {
     const profile = await API.me.get();
     const models = await API.models.list().catch((error) => {
-      if (error.status === 401) throw error;
+      if (error?.status === 401) throw error;
       return null;
     });
     // 视角切换的任务卡属于发起账号。新会话校验通过后，再切换本地存储键。
     finishPreviousAccount?.();
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
-    renderShell();
+    Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell();
     const resume = afterReauthentication;
     afterReauthentication = null;
     if (resume?.userId === S.me.id) {
@@ -83,13 +104,13 @@
       else if (panel) openApp(panel.app, panel.route, panel.params, true);
       if (S.active && resume.layout === 'max') setLayout('max');
     }
-    Op.loadDict();
-    refreshInbox();
+    identityReady?.(S.me);
+    await refreshInbox();
   }
 
   /* ---------------- 登录 ---------------- */
   function renderLogin(err, keepUser) {
-    const accts = demoAccounts();
+    const accts = loginDemoAccounts();
     root().innerHTML = `<div class="login">
       <div class="login-l">
         <div class="row"><span class="brand-mark">${icon('cube')}</span><b style="font-size:15px">${esc(CFG.platformName)}</b></div>
@@ -97,11 +118,11 @@
           <div class="feat">${[['sparkles', '在右侧亲自操作给你看，关键一步等你确认'], ['book', '回答都有出处，点开就是政策原文'], ['shield', '敏感数据走本地模型，操作全程留痕']].map(([i, t]) => `<div class="row">${icon(i)}<span>${t}</span></div>`).join('')}</div></div>
         <div class="t-3 t-xs">${esc(CFG.orgName)}</div>
       </div>
-      <div class="login-r"><form class="login-box" id="lf">
+      <div class="login-r"><form class="login-box" id="lf" autocomplete="off">
         <h2>登录</h2><div class="sub">使用局内账号登录</div>
         <div class="col gap3">
-          <div class="field"><label for="login-user">账号</label><input class="input" id="login-user" name="u" autocomplete="username" data-op="login.user" placeholder="请输入账号" required value="${esc(keepUser || '')}" ${keepUser ? '' : 'autofocus'}></div>
-          <div class="field"><label for="login-password">密码</label><input class="input" id="login-password" name="p" type="password" autocomplete="current-password" data-op="login.pass" placeholder="请输入密码" required></div>
+          <div class="field"><label for="login-user">账号</label><input class="input" id="login-user" name="u" autocomplete="username" data-op="login.user" placeholder="请输入账号" value="${esc(keepUser || '')}" ${keepUser ? '' : 'autofocus'}></div>
+          <div class="field"><label for="login-password">密码</label><input class="input" id="login-password" name="p" type="password" autocomplete="current-password" data-op="login.pass" placeholder="请输入密码"></div>
           ${err ? `<div class="callout h-red" role="alert">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
           <button class="btn primary lg" data-op="login.go" style="width:100%;margin-top:4px">登录</button>
         </div>
@@ -128,44 +149,123 @@
     form.querySelectorAll('.ql').forEach((button) => {
       button.onclick = () => {
         const account = accts.find((item) => item.username === button.dataset.u);
-        go(account.username, account.password);
+        if (account) go(account.username, account.password);
       };
     });
   }
-  async function switchUser(username, run) {
-    const a = demoAccounts().find((x) => x.username === username); if (!a) return;
-    if (switchingAccount) return;
-    switchingAccount = true;
+  // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
+  function passwordLogin(account, signal) {
+    return new Promise((resolve) => {
+      let accepted = false, busy = false;
+      const abort = () => { if (!busy) modal.close(); };
+      const holdClose = (event) => {
+        if (busy && (event.key === 'Escape' || event.target.closest?.('[data-cancel],[data-x],.mask-bg'))) {
+          event.preventDefault(); event.stopImmediatePropagation();
+        }
+      };
+      document.addEventListener('click', holdClose, true); document.addEventListener('keydown', holdClose, true);
+      const modal = JK.modal({ title: `登录 ${account.name}`, okText: '登录并切换',
+        body: `<form autocomplete="off"><label>请输入 ${esc(account.username)} 的口令<input class="input" type="password" autocomplete="off" data-op="switch.password"></label><div role="alert" data-op="switch.error"></div></form>`,
+        ok: async (dialog) => {
+          if (busy) return false;
+          const input = dialog.querySelector('[data-op="switch.password"]');
+          const okBtn = dialog.querySelector('[data-ok]');
+          if (!input.value) {
+            dialog.querySelector('[data-op="switch.error"]').textContent = '请输入口令，或取消以保留当前身份';
+            input.focus(); return false;
+          }
+          busy = true; input.disabled = true; if (okBtn) okBtn.disabled = true;
+          const request = { username: account.username, password: input.value }; input.value = '';
+          try {
+            await API.auth.login(request); accepted = true;
+          } catch (error) {
+            input.disabled = false; if (okBtn) okBtn.disabled = false;
+            dialog.querySelector('[data-op="switch.error"]').textContent = '口令不正确或登录失败，当前会话已保留';
+            input.focus(); return false;
+          } finally { request.password = ''; busy = false; }
+        },
+        onMount: (dialog) => {
+          dialog.querySelector('form').onsubmit = (event) => { event.preventDefault(); dialog.querySelector('[data-ok]').click(); };
+          dialog.querySelector('input').focus();
+        },
+        onClose() {
+          modal.el.querySelector('input').value = '';
+          document.removeEventListener('click', holdClose, true);
+          document.removeEventListener('keydown', holdClose, true);
+          signal?.removeEventListener('abort', abort);
+          resolve(accepted);
+        },
+      });
+      signal?.addEventListener('abort', abort, { once: true });
+    });
+  }
+  async function switchUser(username, run, signal) {
+    // 内部人员已启动的演示可能经过外部视角；续播仍逐次使用真实口令框。
+    if (!canPresentDemo() && !(H.mode() === 'http' && window.JKDemo?.ownsSwitch?.(signal))) return false;
+    const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a || switchingAccount) return false;
+    const lock = switchingAccount = {};
+    const unlock = () => { if (switchingAccount === lock) switchingAccount = false; };
     try {
+      if (window.JKHttp.mode() === 'http') {
+        if (!(await passwordLogin(a, signal))) { if (run) run.fail('已取消切号，当前会话已保留'); return false; }
+      } else {
+        await API.auth.logout().catch(() => {});
+        await API.auth.login({ username: a.username, password: a.password });
+      }
       if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
       rememberActivePanel();
-      await API.auth.logout().catch(() => {});
-      await API.auth.login({ username: a.username, password: a.password });
       // 登录和权限刷新都成功才完成原任务。
-      await afterLogin(() => { if (run) run.done(); });
+      // 身份和权限已确认且新工作台已显示，就允许用户打开下一次口令框。
+      // 收件箱仍按原约定等到就绪；旧刷新结束不能释放下一次切号的锁。
+      let identity;
+      await afterLogin(() => { if (run) run.done(); }, user => {
+        identity = user;
+        if (!run && !signal) unlock(); // 操作员/演示续播仍等待整次切换完成。
+      });
+      if (S.me !== identity) return false;
       toast(`已切换为 ${a.name}（${a.role}）`);
+      return true;
     } finally {
-      switchingAccount = false;
+      unlock();
     }
   }
-  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; renderLogin(); }
+  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; Op.loadDict(); renderLogin(); }
 
   /* ---------------- 外壳骨架 ---------------- */
+  const drawerViewport = typeof matchMedia === 'function' ? matchMedia('(max-width:1180px)') : { matches: false, addEventListener() {} };
+  function sidebarExpanded() {
+    const shell = $('.shell');
+    return drawerViewport.matches ? shell.classList.contains('side-drawer-open') : !shell.classList.contains('side-min');
+  }
+  function setSidebarDrawer(open, restoreFocus = false) {
+    const shell = $('.shell'); if (!shell) return;
+    open = drawerViewport.matches && open;
+    if (!open && shell.classList.contains('side-drawer-open')) $('.side-account-menu')?.remove();
+    shell.classList.toggle('side-drawer-open', open);
+    $('#rail').inert = open;
+    $('#main').inert = open;
+    $('.rail-logo').setAttribute('aria-expanded', String(sidebarExpanded()));
+    if (open) $('#btn-side').focus();
+    else if (restoreFocus) $('.rail-logo').focus();
+  }
+  drawerViewport.addEventListener('change', () => setSidebarDrawer(false, $('.shell')?.classList.contains('side-drawer-open')));
+
   function renderShell() {
     root().innerHTML = `<div class="shell ${localStorage.getItem('jk4-side') === 'min' ? 'side-min' : ''}">
       <nav class="rail" id="rail" aria-label="主导航"></nav>
-      <aside class="side">
+      <div class="side-scrim" id="side-scrim" aria-hidden="true"></div>
+      <aside class="side" id="shell-side" aria-label="工作区侧栏">
         <div class="brand"><span class="brand-mark">${icon('cube')}</span><b class="grow clip">${esc(CFG.platformName)}</b><button class="btn icon sm ghost" id="btn-side" title="收起侧栏">${icon('sidebar')}</button></div>
         <div class="side-sc" id="side-sc"></div>
         <div class="side-foot">
-          <a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>
-          <button class="nav-i" id="btn-demo" data-op="shell.demo" title="把每个功能自动走一遍"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">约 3 分钟</span></button>
-          <div class="me" id="btn-me" data-op="shell.me"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><div class="nm clip">${esc(S.me.name)}</div><div class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</div></span><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
+          ${CFG.showDevPlan === true ? `<a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>` : ''}
+          ${canPresentDemo() ? `<button class="nav-i" id="btn-demo" data-op="shell.demo" title="播放中可暂停阅读或前往下一段"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">可暂停</span></button>` : ''}
+          <div class="me"><button class="me-account" id="btn-me" data-op="shell.me" aria-label="账户菜单"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><span class="nm clip">${esc(S.me.name)}</span><span class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</span></span></button><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
         </div>
       </aside>
       <main class="main" id="main">
-        <section class="chatcol" id="chatcol"><div class="dropmask">${icon('upload', 22)}&nbsp;松开，AI 识别文件并帮你处理</div></section>
-        <section class="panel" id="panel"><div class="bar-h"><div class="ptabs" id="ptabs"></div><button class="btn icon sm ghost" id="btn-chat-toggle" title="显示 / 隐藏对话">${icon('chat')}</button><button class="btn icon sm ghost" id="btn-max" title="最大化">${icon('maximize')}</button><button class="btn icon sm ghost" id="btn-pclose" title="关闭面板">${icon('x')}</button></div><div class="pbody" id="pbody"></div></section>
+        <section class="chatcol" id="chatcol"><button class="btn ghost mobile-view-switch" id="btn-mobile-app" aria-controls="panel">${icon('arrow-right')} 返回应用</button><div class="dropmask">${icon('upload', 22)}&nbsp;松开，AI 识别文件并帮你处理</div></section>
+        <section class="panel" id="panel"><div class="bar-h"><button class="btn ghost mobile-view-switch" id="btn-mobile-chat" aria-controls="chatcol">${icon('chat')} 返回对话</button><div class="ptabs" id="ptabs"></div><button class="btn icon sm ghost" id="btn-chat-toggle" title="显示 / 隐藏对话">${icon('chat')}</button><button class="btn icon sm ghost" id="btn-max" title="最大化">${icon('maximize')}</button><button class="btn icon sm ghost" id="btn-pclose" title="关闭面板">${icon('x')}</button></div><div class="pbody" id="pbody"></div></section>
       </main></div>`;
     renderSide(); renderChat(); bindShell();
   }
@@ -175,8 +275,8 @@
     const work = appsVisible('work').some((a) => a.id === S.active);
     const it = (k, ic, t, on, extra = '') => `<button class="rail-i ${on ? 'on' : ''}" ${k} title="${esc(t)}"><span class="ri">${ic}${extra}</span><span class="rt">${esc(t)}</span></button>`;
     const has = (id) => appsVisible('platform').some((a) => a.id === id);
-    const pending = S.inbox.length;
-    el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏">${icon('cube')}</button>
+    const pending = pendingCount();
+    el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏" aria-controls="shell-side" aria-expanded="${sidebarExpanded()}">${icon('cube')}</button>
       ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !S.active || work)}
       ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
       ${it('data-nav="cmdk" data-op="rail.cmdk"', icon('search'), '搜索', false)}
@@ -185,13 +285,13 @@
       ${has('computer') ? it('data-app="computer" data-op="rail.computer"', icon(mf('computer').icon || 'computer'), '电脑', S.active === 'computer') : ''}
       ${isAdmin() ? it('data-nav="admin" data-op="rail.admin"', icon('shield'), '后台', S.active === 'admin') : ''}
       <span class="sp"></span>
-      ${it('data-act="demo" data-op="rail.demo"', icon('play'), '演示', false)}`;
+      ${canPresentDemo() ? it('data-act="demo" data-op="rail.demo"', icon('play'), '演示', false) : ''}`;
   }
   function renderSide() {
     renderRail();
     const el = $('#side-sc'); if (!el) return;
     const navApp = (a) => { const m = mf(a.id); return `<button class="nav-i ${S.active === a.id ? 'on' : ''}" data-app="${a.id}" data-op="nav.${a.id}" title="${esc(m.summary || m.name)}">${appIcon(a.id, 'sm')}<span class="t">${esc(m.name)}</span></button>`; };
-    const pending = S.inbox.length;
+    const pending = pendingCount();
     el.innerHTML = `
       <button class="nav-i entry" data-nav="chat" data-op="nav.chat" title="新对话">${icon('chat')}<span class="t">总控对话</span><span class="kbd">新</span></button>
       <button class="nav-i" data-nav="cmdk" data-op="nav.cmdk">${icon('search')}<span class="t">搜索与命令</span><span class="kbd">⌘K</span></button>
@@ -206,14 +306,23 @@
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
       const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
+      if (b.dataset.conv || b.dataset.nav) setSidebarDrawer(false);
       if (b.dataset.conv) return openConv(b.dataset.conv);
-      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(); else if (n) openBuiltin(n);
+      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(b); else if (n) openBuiltin(n);
     };
-    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(); if (n) openBuiltin(n); };
-    $('#btn-side').onclick = () => { const s = $('.shell'); s.classList.toggle('side-min'); localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : ''); };
+    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(b); if (n) openBuiltin(n); };
+    $('#btn-side').onclick = () => {
+      if (drawerViewport.matches) return setSidebarDrawer(!sidebarExpanded(), sidebarExpanded());
+      const s = $('.shell'); s.classList.toggle('side-min');
+      localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : '');
+      $('.rail-logo').setAttribute('aria-expanded', String(sidebarExpanded()));
+    };
+    $('#side-scrim').onclick = () => setSidebarDrawer(false, true);
     $('#btn-theme').onclick = (e) => { e.stopPropagation(); setTheme(theme() === 'dark' ? 'light' : 'dark'); };
-    $('#btn-me').onclick = (e) => { if (e.target.closest('#btn-theme')) return; meMenu($('#btn-me')); };
-    $('#btn-demo').onclick = () => window.JKDemo && JKDemo.start();
+    $('#btn-me').onclick = () => meMenu($('#btn-me'));
+    const demoButton = $('#btn-demo'); if (demoButton) demoButton.onclick = () => { setSidebarDrawer(false); if (window.JKDemo) JKDemo.start(); };
+    $('#btn-mobile-chat').onclick = () => { $('#main').classList.add('mobile-chat'); $('#btn-mobile-app').focus(); };
+    $('#btn-mobile-app').onclick = () => { $('#main').classList.remove('mobile-chat'); $('#btn-mobile-chat').focus(); };
     $('#btn-max').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-chat-toggle').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-pclose').onclick = () => { if (switchingAccount) return; Op.running?.stop(true); rememberPanel(); closePanel(); };
@@ -225,15 +334,27 @@
     cc.addEventListener('dragleave', () => { dc = Math.max(0, dc - 1); if (!dc) cc.classList.remove('dragging'); });
     cc.addEventListener('drop', (e) => { e.preventDefault(); dc = 0; cc.classList.remove('dragging'); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) readFile(f).then(handleFile); });
   }
-  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); cmdk(); } if (e.key === 'Escape' && !switchingAccount && Op.running && !$('.modal')) Op.running.stop(); }); }
+  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); setSidebarDrawer(false); cmdk(); } if (e.key === 'Escape' && !$('.modal')) { if ($('.side-drawer-open')) { setSidebarDrawer(false, true); return; } if (!switchingAccount && Op.running) Op.running.stop(); } }); }
   function meMenu(anchor) {
     const items = [{ head: `${S.me.name} · ${roleName()}` }, { v: 'settings', icon: 'user', label: '个人设置' }];
     if (isAdmin()) items.push({ v: 'admin', icon: 'shield', label: '管理后台' });
-    items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
-    items.push({ sep: true }, { v: 'reset', icon: 'refresh', label: '重置演示数据' }, { v: 'logout', icon: 'logout', label: '退出登录' });
-    menu(anchor, items, async (v) => { if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
+    if (canPresentDemo()) {
+      items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
+    }
+    items.push({ sep: true });
+    // 部署实例的恢复还需要宿主授权，浏览器（包括管理员会话）不持有该授权。
+    if (offlineDemo()) items.push({ v: 'reset', icon: 'refresh', label: '重置演示数据' });
+    items.push({ v: 'logout', icon: 'logout', label: '退出登录' });
+    const pop = menu(anchor, items, async (v) => { setSidebarDrawer(false); if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
+    pop.classList.add('side-account-menu');
   }
-  async function reset() { await API.demo.reset(); localStorage.removeItem(storeKey()); try { await API.auth.login({ username: S.me.username, password: (CFG.demoAccounts.find((a) => a.username === S.me.username) || { password: 'jk123456' }).password }); } catch (e) { return renderLogin(); } JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置'); }
+  async function reset() {
+    if (!offlineDemo()) throw Error('部署实例不能从网页重置，请联系宿主管理员');
+    await API.demo.reset(); localStorage.removeItem(storeKey());
+    const account = CFG.demoAccounts.find(a => a.username === S.me.username);
+    try { await API.auth.login({ username: account.username, password: account.password }); } catch { return renderLogin(); }
+    JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置');
+  }
 
   /* ---------------- 布局与面板 ---------------- */
   const shellRoutedApps = ['policy', 'enterprise', 'meeting', 'document'];
@@ -268,20 +389,6 @@
         if (e.target.dataset.ed != null) slot.edits[e.target.dataset.ed] = e.target.value.trim();
       });
     }
-    if (id === 'policy') {
-      el.addEventListener('click', (e) => {
-        const choice = e.target.closest('[data-ent], [data-act="clear"]');
-        if (choice) slot.entId = choice.dataset.ent;
-        if (e.target.closest('[data-act="showAll"]')) slot.expandedPicks = true;
-      });
-      el.addEventListener('change', (e) => {
-        const itemId = e.target.dataset.pick;
-        if (!itemId || !slot.pickedIds) return;
-        if (e.target.checked) slot.pickedIds.add(itemId);
-        else slot.pickedIds.delete(itemId);
-        slot.selectionChanged = true;
-      });
-    }
     try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
     return slot;
   }
@@ -310,7 +417,6 @@
       if (id === 'computer' && route === 'run') slot.panel = { app: id, route: 'home', params: {} };
       else if (route || hasParams || fresh) slot.panel = { app: id, route: route || 'home', params: args };
       if (id === 'document' && args.templateId) slot.templateId = args.templateId;
-      if (id === 'policy' && args.entId) slot.entId = args.entId;
       rememberPanel(slot.panel);
     }
     activate(id); if (S.layout !== 'max') setLayout('split');
@@ -340,7 +446,7 @@
     await sleep(fresh ? 160 : 30);
     return slot;
   }
-  function openBuiltin(id, tab) {
+  async function openBuiltin(id, tab) {
     if (id === 'admin' && !isAdmin()) { toast('需要管理员权限', { type: 'err' }); return; }
     snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
@@ -348,14 +454,17 @@
     if (S.open.length > 6) { const old = S.lru.find((x) => x !== id && S.open.includes(x)) || S.open.find((x) => x !== id); if (old) { closeTab(old); S.lru = S.lru.filter((x) => x !== old); } }
     let slot = S.mounted[id];
     if (!slot) { const view = h(`<div class="pview" data-view="${id}"><div class="app-root pad"></div></div>`); $('#pbody').appendChild(view); slot = S.mounted[id] = { view, el: view.firstElementChild, builtin: true, ctl: {} }; }
-    slot.tab = tab || slot.tab; renderBuiltin(id);
+    slot.tab = tab || slot.tab; const rendered = renderBuiltin(id);
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
-    return sleep(30);
+    if (id === 'inbox') return refreshInbox();
+    return rendered;
   }
-  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
+  function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') return window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
   function activate(id) {
+    setSidebarDrawer(false);
+    $('#main').classList.remove('mobile-chat');
     S.active = id; $$('.pview').forEach((v) => v.classList.toggle('on', v.dataset.view === id));
     $('#ptabs').innerHTML = S.open.map((x) => `<button class="ptab ${x === id ? 'on' : ''}" data-id="${x}">${appIcon(x, 'sm')}<span>${esc(mf(x).short || mf(x).name)}</span><span class="x" title="关闭">${icon('x')}</span></button>`).join('');
     const pt = $('#ptabs'); pt.classList.toggle('many', S.open.length > 4); const on = pt.querySelector('.ptab.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -372,11 +481,12 @@
     activate(wasActive ? S.open[S.open.length - 1] : S.active);
     if (wasActive) rememberActivePanel();
   }
-  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
+  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max', 'mobile-chat'); renderSide(); renderChatBody(); }
 
-  // 通过应用现有控件恢复私有状态，复用其校验和保存逻辑。
+  // 政策应用恢复自己的办理快照，其他应用沿用现有控件。
   async function restoreApp(slot, route, params) {
     const { app } = slot.panel;
+    if (app === 'policy') return slot.ctl.restore?.(route, params);
     const query = (selector) => slot.el.querySelector(selector);
     const current = () => S.mounted[app] === slot;
     const find = async (selector) => {
@@ -395,25 +505,7 @@
       field.dispatchEvent(new Event(event, { bubbles: true }));
     };
     const click = (selector) => { if (current()) query(selector)?.click(); };
-    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.calcAmounts || params.filter || params.expanded)));
-    await slot.ctl.go(matchedRoute ? 'match' : route, params);
-
-    if (matchedRoute && await find('.pol-kpis')) {
-      if (Array.isArray(params.pickedIds)) {
-        const selected = new Set(params.pickedIds);
-        const changed = [...new Set([...slot.pickedIds, ...selected])].filter((id) => slot.pickedIds.has(id) !== selected.has(id));
-        const pick = (id) => `[data-pick="${CSS.escape(id)}"]`;
-        if (params.expanded || changed.some((id) => !query(pick(id)))) click('[data-op="policy.show-all"]');
-        changed.forEach((id) => change(pick(id), selected.has(id)));
-      } else if (params.expanded) click('[data-op="policy.show-all"]');
-      if (params.calcAmounts) await slot.ctl.restoreCalcAmounts(params.calcAmounts);
-      if (route === 'match' && params.filter) click(`[data-filter="${CSS.escape(params.filter)}"]`);
-      if (route === 'estimate' || route === 'notice') click('[data-op="policy.next"]');
-      if (route === 'notice') click('[data-op="policy.to-notice"]');
-    }
-    if (app === 'policy' && route === 'notice' && typeof params.notice === 'string' && await find('#pn')) {
-      change('#pn', params.notice, 'input');
-    }
+    await slot.ctl.go(route, params);
 
     if (app === 'document' && params.edits && await find('[data-pe="title"]')) {
       for (const [field, value] of Object.entries(params.edits)) {
@@ -467,21 +559,6 @@
         return result;
       };
     }
-    // 应用可在操作员词典就绪之前自行解析企业，使用实际查询的 ID 恢复。
-    if (id === 'policy') api.policy = { ...API.policy, match: async (params) => {
-      const result = await API.policy.match(params);
-      const slot = mounted();
-      if (slot) {
-        slot.entId = params.entId;
-        // 核对页只渲染部分事项，完整初选来自本次匹配的实际结果。
-        const results = result.results || [];
-        const defaults = results.filter((item) => item.level === 'ok' && !item.ended);
-        slot.pickedIds = new Set((defaults.length ? defaults : results.filter((item) => item.level !== 'no').slice(0, 2)).map((item) => item.id));
-        slot.selectionChanged = false;
-        slot.expandedPicks = false;
-      }
-      return result;
-    } };
     if (id === 'enterprise') api.enterprise = {
       ...API.enterprise,
       get: async (entId) => {
@@ -515,7 +592,10 @@
       nav: { open: (a, r, p) => { if (mounted()) return a === 'inbox' || a === 'admin' ? openBuiltin(a, r) : openApp(a, r, p); }, go: (r, p) => mounted()?.ctl?.go?.(r, p), back: () => {}, chat: (text) => { if (mounted()) return send(text); } },
       operator: { isRunning: () => !!Op.running },
       chat: { post: (card) => { if (mounted()) return postAI(typeof card === 'string' ? { text: card } : card); }, say: (t) => { if (mounted()) return postAI({ text: t }); } },
-      audit: (action, detail) => H.post('/api/v1/audit', { app: mf(id).name, action: detail ? `${action} · ${detail}` : action }).catch(() => {}),
+      // HTTP 审计由执行操作的后端生成；浏览器仅向离线演示的模拟审计表写入。
+      audit: (action, detail) => H.mode() === 'mock'
+        ? H.post('/api/v1/audit', { app: mf(id).name, action: detail ? `${action} · ${detail}` : action }).catch(() => {})
+        : Promise.resolve(),
     };
   }
 
@@ -529,8 +609,9 @@
   }
   function snapshotPanel(slot) {
     if (!slot?.panel) return;
-    if (slot.restoring) return slot.panel;
     const { app, route, params } = slot.panel;
+    // 政策应用在画像与手填金额就位后即可保存，后台试算可以继续。
+    if (slot.restoring && app !== 'policy') return slot.panel;
     const query = (selector) => slot.el.querySelector(selector);
     const tab = query('.ap-tabs .tab.on')?.dataset.tab;
     const step = query('.wiz-step.on')?.dataset.op;
@@ -564,28 +645,8 @@
       }
     }
     if (app === 'policy') {
-      if (tab === 'items' && route !== 'detail') {
-        const q = query('[data-op="policy.items-q"]')?.value;
-        const object = query('[data-obj].on')?.dataset.obj;
-        return show('items', { ...(q && { q }), ...(object && { object }) });
-      }
-      if (tab === 'docs') return show('docs');
-      if (step === 'policy.step-0') return show('home', slot.entId && query('.pol-prof') ? { entId: slot.entId } : {});
-      if (slot.entId && slot.pickedIds) {
-        const policyRoute = { 'policy.step-1': 'match', 'policy.step-2': 'estimate', 'policy.step-3': 'notice' }[step];
-        if (policyRoute) {
-          const next = { entId: slot.entId };
-          const notice = query('#pn');
-          if (slot.selectionChanged || policyRoute !== 'match') next.pickedIds = [...slot.pickedIds];
-          const amounts = slot.ctl.getCalcAmounts();
-          if (Object.keys(amounts).length) next.calcAmounts = amounts;
-          if (notice) next.notice = notice.value;
-          const filter = query('[data-filter].on')?.dataset.filter;
-          if (filter) next.filter = filter;
-          if (slot.expandedPicks) next.expanded = true;
-          return show(policyRoute, next);
-        }
-      }
+      const saved = slot.ctl.snapshot?.(route, params);
+      return saved ? show(saved.route, saved.params) : slot.panel;
     }
     if (app === 'enterprise' && tab === 'list') {
       const q = query('#lq')?.value;
@@ -616,14 +677,15 @@
   }
   function newChat() {
     switchConversation(null);
-    setTimeout(() => { const t = $('#chatcol textarea'); t && t.focus(); }, 30);
+    const t = $('#chatcol textarea');
+    if (t) t.focus();
   }
   function openConv(id) { if (id !== S.cur) return switchConversation(id); }
   function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [] }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
   function renderChat() { renderChatBody(); }
   function renderChatBody() {
     const cc = $('#chatcol'); if (!cc) return; const mask = cc.querySelector('.dropmask');
-    [...cc.children].forEach((x) => { if (x !== mask) x.remove(); });
+    [...cc.children].forEach((x) => { if (x !== mask && x.id !== 'btn-mobile-app') x.remove(); });
     const c = conv();
     if (!c) { cc.appendChild(homeView()); }
     else {
@@ -636,7 +698,7 @@
     }
   }
   function homeView() {
-    const sugs = (CFG.homeSuggestions || []).filter((s) => !s.app || JK.registry[s.app] && can(s.app, 'view')).slice(0, 3);
+    const sugs = homeSuggestions().slice(0, 3);
     const apps = appsVisible('work').slice(0, 4);
     const v = h(`<div class="home scroll">
       <div style="position:absolute;top:10px;right:16px">${modelChip()}</div>
@@ -671,16 +733,18 @@
     const go = () => { const t = ta.value.trim(); const f = pendingFile; if (!t && !f) return; ta.value = ''; pendingFile = null; showPF(); upd(); if (f) handleFile(f, t); else send(t); };
     sendB.onclick = go;
     scope.querySelector('[data-act="attach"]').onclick = (e) => attachMenu(e.currentTarget, (f) => { pendingFile = f; showPF(); upd(); ta.focus(); });
-    scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = (mf(v).starters || [])[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
+    scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = startersFor(v)[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
     showPF(); upd();
   }
   function attachMenu(anchor, pick) {
-    const samples = window.JK_SAMPLE_FILES || [];
+    const samples = (window.JK_SAMPLE_FILES || []).map(sampleFileView);
     menu(anchor, [{ v: '__pick', icon: 'upload', label: '从电脑选择文件…' }, { head: '试试样例文件' }, ...samples.map((s) => ({ v: s.id, lead: fileIco(s), label: s.name }))], (v) => {
       if (v === '__pick') { const inp = h('<input type="file" style="display:none">'); document.body.appendChild(inp); inp.onchange = () => { const f = inp.files[0]; inp.remove(); if (f) readFile(f).then(pick); }; inp.click(); return; }
       const s = samples.find((x) => x.id === v); if (s) pick({ ...s, sample: true });
     });
   }
+  const sampleFileView = (sample) => sample?.httpName && H.mode('meeting') === 'http'
+    ? { ...sample, name: sample.httpName, ext: 'webm', size: sample.httpSize } : sample;
   async function readFile(f) {
     const ext = (f.name.split('.').pop() || '').toLowerCase(); const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
     let text = ''; if (/^(txt|md|csv|json|html?)$/.test(ext) || (f.type || '').startsWith('text')) { try { text = (await f.text()).slice(0, 20000); } catch (e) {} }
@@ -718,7 +782,15 @@
       body.querySelectorAll('.src').forEach((s) => (s.onclick = (e) => { if (e.target.closest('a')) return; openCite(s.dataset.cid, s.dataset.hl); }));
       body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openCite(x.id, (x.snippet || '').slice(0, 60)); }));
     }
-    if (m.next && m.next.length) { const n = h(`<div class="next-acts">${m.next.map((a, i) => `<button class="btn" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>`); n.onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; const a = m.next[+b.dataset.i]; if (a.say) send(a.say); else if (a.open) openApp(a.open, a.route, a.params); }; body.appendChild(n); }
+    const nextButtons = (m.next || []).map((a, i) => {
+      if ((a.say && !recommendText(a.say)) || (a.open && !can(a.open, 'view')) || (a._run && !canIntent(a._run.intent))) return '';
+      return `<button class="btn" data-i="${i}">${esc(a.label)}</button>`;
+    }).join('');
+    if (nextButtons) {
+      const n = h(`<div class="next-acts">${nextButtons}</div>`);
+      n.onclick = e => { const b = e.target.closest('[data-i]'); if (!b) return; const a = m.next[+b.dataset.i]; if (a.say) send(a.say); else if (a.open) openApp(a.open, a.route, a.params); };
+      body.appendChild(n);
+    }
     if (m.model) { const meta = h(`<div class="meta"><span>${esc(m.model)}${m.routeNote ? ' · ' + esc(m.routeNote) : ''}</span><span class="sp"></span><button class="btn sm ghost" data-a="copy" title="复制">${icon('copy')}</button>${m.q ? `<button class="btn sm ghost" data-a="redo" title="换个模型重答">${icon('refresh')}</button>${JK.registry.skills ? `<button class="btn sm ghost" data-a="skill" title="存为我的技能">${icon('skill')}</button>` : ''}` : ''}</div>`); body.appendChild(meta);
       meta.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a;
         if (a === 'copy') { const t = (m.text || '').replace(/\*\*/g, ''); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('已复制'), () => toast('已复制')); }
@@ -801,9 +873,16 @@
     if (switchingAccount) return;
     text = String(text || '').trim(); if (!text) return;
     if (!opt.silentUser) push({ role: 'user', text });
-    if (H.mode() === 'http') return answerHttp(text);
     const epoch = conversationEpoch;
+    // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
+    const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
+    if (scope) return answer(text, scope);
+    // 已登记的完整知识库问法不需要串行等待远程技能匹配。仍走 runIntent 的授权、
+    // 操作员与实际 ask；非精确匹配的自由输入保留原有技能/意图竞争。
+    const kbAsk = mf('kb').intents?.find(it => it.id === 'kb.ask' && it.examples.includes(text));
+    if (kbAsk) return runIntent({ ...kbAsk, app: 'kb' }, { text }, text);
     const u = Op.understand(text); const b = u.best;
+    if (b && b.score >= 2.6 && !canIntent(b.intent)) return runIntent(b.intent, b.slots, text);
     if (!u.slots.ent && !opt.noFuzzy) { const fz = Op.fuzzyEnt(text); if (fz) {
       const fixed = text.replace(fz.span, fz.ent.short);
       if (Op.demo) return send(fixed, { silentUser: true, noFuzzy: true });
@@ -812,13 +891,14 @@
       if (n) n.onclick = (e) => { const bb = e.target.closest('[data-i]'); if (!bb) return; n.remove(); if (bb.dataset.i === '0') send(fixed, { silentUser: true, noFuzzy: true }); else send(text, { silentUser: true, noFuzzy: true }); };
       return; } }
     // 技能触发语
-    let sk = null; try { sk = JK.services.skills && JK.services.skills.match ? await JK.services.skills.match(text) : null; } catch (e) {}
+    let sk = null; try { sk = can('skills', 'operate') && JK.services.skills?.match ? await JK.services.skills.match(text) : null; } catch (e) {}
     if (epoch !== conversationEpoch || switchingAccount) return;
     if (sk && sk.skill && (!b || sk.score >= b.score)) return runIntent({ app: 'skills', action: 'run', title: '运行技能：' + sk.skill.name, plan: ['打开技能中心', '准备输入', '运行技能', '整理结果'] }, { ...u.slots, skillId: sk.skill.id }, text);
     if (b && b.score >= 2.6) return runIntent(b.intent, b.slots, text);
     if (b && b.score >= 1.5 && Op.demo) return runIntent(b.intent, b.slots, text);
     if (b && b.score >= 1.5 && !opt.noConfirm) {
-      const alts = [b, ...u.alts.filter((x) => x.score >= 1.5)].slice(0, 2);
+      const alts = [b, ...u.alts].filter(x => x.score >= 1.5 && canIntent(x.intent)).slice(0, 2);
+      if (!alts.length) return postAI({ text: '当前身份不能执行这项操作。如需办理，请联系管理员。' });
       const m = postAI({ text: `我理解为「**${alts[0].intent.title || alts[0].intent.plan[0]}**」，要这样做吗？`, next: [...alts.map((a) => ({ label: a.intent.title || a.intent.plan[0], _run: a })), { label: '都不是，直接回答', _answer: true }] });
       const node = $$('#chatcol .msgs-in > .msg').pop(); const n = node.querySelector('.next-acts');
       if (n) n.onclick = (e) => { const bb = e.target.closest('[data-i]'); if (!bb) return; const a = m.next[+bb.dataset.i]; n.remove(); if (a._run) runIntent(a._run.intent, a._run.slots, text); else answer(text); };
@@ -829,9 +909,9 @@
   async function runIntent(intent, slots, text, file) {
     if (switchingAccount) return;
     const app = intent.app;
-    if (intent.needsAdmin && !isAdmin()) return postAI({ text: '这件事需要**管理员**来做。你可以在头像菜单里切换到管理员视角（演示）。' });
     if (app && !intent.platform && JK.registry[app] && !can(app, 'view')) return postAI({ text: `你的角色（${roleName()}）没有「${mf(app).name}」的使用权限。需要的话请管理员在“角色与授权”里开通。` });
     if (app && !intent.platform && !JK.registry[app]) return postAI({ text: `「${app}」应用还没有启用。` });
+    if (!canIntent(intent)) return postAI({ text: '当前身份不能执行这项操作。如需办理，请联系管理员。' });
     ensureConv(text || intent.title || '新对话');
     const epoch = conversationEpoch;
     return Op.start({
@@ -845,23 +925,24 @@
     const saved = snapshotPanel(slot);
     const { action } = intent;
     const save = (route, params = {}) => { slot.panel = { app, route, params }; rememberPanel(slot.panel); };
-    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { itemId: slots.policy.id });
+    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { ...saved.params, itemId: slots.policy.id });
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }
   function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
-  async function answer(text) {
-    if (H.mode() === 'http') return answerHttp(text);
+  async function answer(text, scope) {
+    if (!scope && H.mode() === 'http') return answerHttp(text);
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
     const finish = (o) => { Object.assign(thinking, o); const n2 = renderMsg(thinking); node.replaceWith(n2); saveConvs(); scrollEnd(); };
     const kbLike = /[？?]|什么|怎么|如何|哪些|多少|是否|能不能|可以|条件|标准|规定|政策|办法|补贴|申报|流程|要求/.test(text);
     try {
-      if (kbLike && (JK.services.kb || JK.registry.kb)) {
-        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, {}) : API.kb.ask({ q: text }));
+      if ((kbLike || scope) && (JK.services.kb || JK.registry.kb)) {
+        const r = await (JK.services.kb && JK.services.kb.ask ? JK.services.kb.ask(text, { scope, fromChat: S.active === 'kb' }) : API.kb.ask({ q: text, scope }));
+        if (r?.unavailable) throw Error(r.message);
         if (r && (r.confidence === 'none' || (r.answer && ((r.citations || []).length || JK.services.kb)))) { if (!r.answer) r.answer = '知识库里没有找到能回答这个问题的原文，我没有编答案。可以导入相关资料后再问。'; const m = S.models.find((x) => x.id === S.model); const none = r.confidence === 'none' || !(r.citations || []).length;
           const next = (r.suggestions || []).map((x) => ({ label: x.label, say: x.say }));
           if (!none && JK.registry.kb) next.push({ label: '在知识库里看全部结果', open: 'kb', route: 'search', params: { q: text } });
-          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: (m && m.name) || '自动选择', routeNote: none ? '知识库未命中' : '知识库检索', next: next.slice(0, 3) }); }
+          return finish({ q: text, text: r.summary ? r.answer.split('\n\n').slice(0, 2).join('\n\n') : r.answer.split('\n\n**其他相关**')[0], cites: citesOf(r), model: r.source === 'extract' || r.source === 'preset' ? '知识库' : (m && m.name) || '自动选择', routeNote: r.routeNote || (none ? '知识库未命中' : '知识库检索'), next: next.slice(0, 3) }); }
       }
       const c = ensureConv(text); const cid = await serverConv(c);
       const r = await API.chat.send(cid, { text, model: S.model });
@@ -935,21 +1016,24 @@
   async function serverConv(c) { if (c.sid) return c.sid; try { const r = await API.chat.create({ title: c.title }); c.sid = r.item.id; } catch (e) { c.sid = 'C-301'; } saveConvs(); return c.sid; }
   function fallbackNext() {
     const list = [];
-    Object.values(JK.registry).forEach((d) => { const st = (d.manifest.starters || [])[0]; if (st && can(d.manifest.id, 'view') && list.length < 4) list.push({ label: st, say: st }); });
+    Object.values(JK.registry).forEach((d) => { const st = startersFor(d.manifest.id)[0]; if (st && list.length < 4) list.push({ label: st, say: st }); });
     return list;
   }
-  function suggestFor(intent) { const d = JK.registry[intent]; return d ? (d.manifest.starters || []).slice(0, 2).map((t) => ({ label: t, say: t })) : []; }
+  function suggestFor(intent) { return startersFor(intent).slice(0, 2).map(t => ({label:t, say:t})); }
 
   /* 文件投递 */
   async function handleFile(file, text) {
+    file = sampleFileView(file);
     push({ role: 'user', text: text || '', file });
     const ext = String(file.ext || (file.name || '').split('.').pop() || '').toLowerCase();
     if (/^(exe|msi|bat|cmd|sh|dll|apk|dmg|iso|zip|rar|7z|tar|gz)$/.test(ext)) { postAI({ text: `「${file.name}」是${/^(zip|rar|7z|tar|gz)$/.test(ext) ? '压缩包' : '程序文件'}，我暂时处理不了。${/^(zip|rar|7z|tar|gz)$/.test(ext) ? '解压后把里面的文件拖进来就行。' : ''}\n可以发 PDF、Word、Excel、TXT、图片或录音。` }); return; }
     const c = Op.classify(file);
     if (!c.length) {
       const opts = [];
-      if (JK.registry.kb) opts.push({ label: '存入知识库', run: { app: 'kb', accept: { kind: '其他', plan: ['识别文件', '打开知识库', '解析入库'] } } });
-      Object.values(JK.registry).forEach((d) => { if ((d.manifest.accepts || []).length && d.manifest.id !== 'kb') opts.push({ label: '交给' + d.manifest.short, run: { app: d.manifest.id, accept: d.manifest.accepts[0] } }); });
+      const canReceive = app => can(app, 'view') && can(app, 'operate');
+      if (JK.registry.kb && canReceive('kb')) opts.push({ label: '存入知识库', run: { app: 'kb', accept: { kind: '其他', plan: ['识别文件', '打开知识库', '解析入库'] } } });
+      Object.values(JK.registry).forEach((d) => { if ((d.manifest.accepts || []).length && d.manifest.id !== 'kb' && canReceive(d.manifest.id)) opts.push({ label: '交给' + d.manifest.short, run: { app: d.manifest.id, accept: d.manifest.accepts[0] } }); });
+      if (!opts.length) return postAI({text:'当前身份没有可接收这类文件的应用。'});
       const m = postAI({ text: `我没认出「${file.name}」是什么。想怎么处理？`, next: opts.slice(0, 3).map((o) => ({ label: o.label, _r: o.run })) });
       const node = $$('#chatcol .msgs-in > .msg').pop(); const n = node.querySelector('.next-acts'); if (n) n.onclick = (e) => { const b = e.target.closest('[data-i]'); if (!b) return; n.remove(); intake(m.next[+b.dataset.i]._r, file, text); };
       return;
@@ -965,41 +1049,81 @@
   }
 
   /* ---------------- ⌘K ---------------- */
-  function cmdk() {
-    if ($('.cmdk')) return;
-    const x = JK.modal({ title: '', body: `<div class="cmdk-in">${icon('search')}<input placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>` });
+  function cmdk(opener = document.activeElement) {
+    if ($('[role="dialog"]')) return;
+    const x = JK.modal({ title: '搜索与命令', body: `<div class="cmdk-in">${icon('search')}<input aria-label="搜索与命令" placeholder="搜应用、功能、对话，或直接说要办的事…" data-op="cmdk.input"><span class="kbd">Esc</span></div><div class="cmdk-list"></div>`,
+      onClose() {
+        const original = opener?.isConnected && opener !== document.body ? opener : opener?.dataset.op && $(`[data-op="${CSS.escape(opener.dataset.op)}"]`);
+        (original || $('[data-op="rail.cmdk"]'))?.focus({ preventScroll: true });
+      } });
+    x.el.setAttribute('aria-label', '搜索与命令');
+    x.el.setAttribute('aria-modal', 'true');
+    const closeButton = x.el.querySelector('[data-x]');
+    x.el.querySelector('.cmdk-in').append(closeButton);
     x.el.classList.add('cmdk'); const inp = x.el.querySelector('input'); const list = x.el.querySelector('.cmdk-list'); let items = [], sel = 0;
     const draw = async () => {
       const q = inp.value.trim(); items = [];
-      if (q) items.push({ g: '交给 AI', label: `“${q}”`, d: 'AI 理解后替你操作', icon: 'sparkles', fn: () => send(q) });
+      if (q && recommendText(q)) items.push({ g: '交给 AI', label: `“${q}”`, d: 'AI 理解后替你操作', icon: 'sparkles', fn: () => send(q) });
       [...appsVisible('work'), ...appsVisible('platform')].forEach((a) => { const m = mf(a.id); if (!q || (m.name + m.summary).includes(q)) items.push({ g: '打开应用', label: m.name, d: m.summary, app: a.id, fn: () => openApp(a.id) }); });
       [['inbox', '收件箱', '待我审签 / 确认'], ...(isAdmin() ? [['admin', '管理后台', '账号、权限、模型、审计']] : [])].forEach(([id, n, d]) => { if (!q || n.includes(q)) items.push({ g: '平台', label: n, d, app: id, fn: () => openBuiltin(id) }); });
-      Op.allIntents().filter((it) => !it.platform && JK.registry[it.app] && can(it.app, 'view')).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
+      Op.allIntents().filter((it) => !it.platform && canIntent(it)).forEach((it) => (it.examples || []).slice(0, 1).forEach((ex) => { if (!q || ex.includes(q) || (it.keywords || []).some((k) => q.includes(k))) items.push({ g: '试试这样说', label: ex, app: it.app, fn: () => send(ex) }); }));
       S.convs.filter((c) => q && c.title.includes(q)).slice(0, 4).forEach((c) => items.push({ g: '最近对话', label: c.title, icon: 'history', fn: () => openConv(c.id) }));
       items = items.slice(0, 14); sel = 0; render();
     };
     const render = () => { let g = ''; list.innerHTML = items.map((it, i) => `${it.g !== g ? `<div class="mh">${esc((g = it.g))}</div>` : ''}<div class="mi ${i === sel ? 'on' : ''}" data-i="${i}">${it.app ? appIcon(it.app, 'sm') : icon(it.icon || 'arrow-right')}<span class="ck-t">${esc(it.label)}</span>${it.d ? `<span class="ck-d">${esc(it.d)}</span>` : ''}${i === sel ? '<span class="ck-k">↵</span>' : ''}</div>`).join('') || JK.empty({ icon: 'search', title: '没有匹配的结果' }); };
     list.onclick = (e) => { const it = e.target.closest('[data-i]'); if (!it) return; x.close(); items[+it.dataset.i].fn(); };
     inp.oninput = draw; inp.onkeydown = (e) => { if (e.key === 'ArrowDown') { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); } if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); render(); e.preventDefault(); } if (e.key === 'Enter' && items[sel]) { x.close(); items[sel].fn(); } };
-    draw(); setTimeout(() => inp.focus(), 20);
+    x.el.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      (document.activeElement === inp ? closeButton : inp).focus();
+    });
+    draw(); inp.focus();
   }
 
   /* ---------------- 收件箱 ---------------- */
-  async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
-    try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
-    renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+  // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
+  const pendingTodos = () => S.todos.filter((t) => !t.done && t.status !== '已完成');
+  function pendingCount() { return S.inbox.length + pendingTodos().length; }
+  let inboxLoad;
+  function refreshInbox() {
+    const who = S.me;
+    const items = async read => { try { return (await read()).items || []; } catch { return []; } };
+    const load = Promise.all([items(API.reviews.list), items(API.todos.list)]).then(([reviews, todos]) => {
+      if (!who || who !== S.me) return;
+      // 打开面板、写入回执和角标通知均可触发刷新。旧请求既不能回写，也不能提前宣告就绪。
+      if (load !== inboxLoad) return inboxLoad;
+      S.inbox = reviews.filter((x) => {
+        const a = x.app === 'market' ? 'skills' : x.app;
+        if (x.status !== 'pending') return false;
+        if (a === 'document' && x.type === 'review') return x.approver && can(a, 'approve');
+        return x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && who.role === 'leader'));
+      });
+      S.todos = todos;
+      renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
+    });
+    inboxLoad = load;
+    return load;
   }
-  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
+  JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\/|^\/api\/v1\/kb\/(?:search|ask)$/.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
   function renderInbox(el) {
     const tab = el.dataset.tab || 'mine';
-    const list = S.inbox; const todos = S.todos.filter((t) => t.status !== '已完成');
+    const list = S.inbox; const todos = pendingTodos();
     el.innerHTML = `<div class="app-head">${appIcon('inbox', 'lg')}<div><h2>收件箱</h2><div class="sub">等你处理的事都在这里</div></div></div>
       <div class="tabs" style="margin-bottom:8px"><button class="tab ${tab === 'mine' ? 'on' : ''}" data-t="mine">待我处理 ${list.length ? `<span class="count muted">${list.length}</span>` : ''}</button><button class="tab ${tab === 'todo' ? 'on' : ''}" data-t="todo">我的待办 ${todos.length ? `<span class="count muted">${todos.length}</span>` : ''}</button></div>
       <div class="list">${tab === 'mine' ? (list.map((r) => { const app = r.app === 'market' ? 'skills' : r.app; return `<div class="inb-i">${appIcon(app, 'sm')}<div class="grow"><div class="row"><span class="ttl">${esc(r.title)}</span>${tag(TYPE_LABEL[r.type] || '待处理')}</div><div class="meta">${esc(r.meta || '')}</div></div><div class="row">${r.approver && can(app, 'approve') ? `<button class="btn sm" data-dec="reject" data-id="${r.id}" data-op="inbox.reject.${r.id}">退回</button><button class="btn sm soft" data-dec="approve" data-id="${r.id}" data-op="inbox.approve.${r.id}">通过</button>` : ''}<button class="btn sm ghost" data-open="${app}" data-ref="${esc(r.ref || '')}" data-type="${r.type}">查看 ${icon('chevron-right')}</button></div></div>`; }).join('') || JK.empty({ icon: 'check', title: '全部处理完了', desc: '新的审签、确认会出现在这里' })) : (todos.map((t) => `<div class="inb-i"><input type="checkbox" class="check" data-todo="${t.id}" style="margin-top:4px;accent-color:var(--accent)"><div class="grow"><div class="ttl">${esc(t.title || t.text)}</div><div class="meta">${esc([t.from, t.due && '截止 ' + t.due].filter(Boolean).join(' · '))}</div></div>${t.due ? tag(t.status || '待办') : ''}</div>`).join('') || JK.empty({ icon: 'check', title: '没有待办', desc: '会议纪要派发给你的待办会出现在这里' }))}</div>`;
     el.querySelectorAll('[data-t]').forEach((b) => (b.onclick = () => { el.dataset.tab = b.dataset.t; renderInbox(el); }));
-    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => { const dec = b.dataset.dec; let comment = ''; if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; } try { await API.reviews.decide(b.dataset.id, { decision: dec, comment }); toast(dec === 'approve' ? '已通过' : '已退回'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
+    el.querySelectorAll('[data-dec]').forEach((b) => (b.onclick = async () => {
+      if (b.disabled) return;
+      const dec = b.dataset.dec; let comment = '';
+      if (dec === 'reject') { comment = prompt('退回原因（会发给提交人）', '请补充依据后再提交') || ''; if (!comment) return; }
+      b.disabled = true; b.setAttribute('aria-busy', 'true'); delete b.dataset.failed;
+      const version = list.find(row => row.id === b.dataset.id)?.version;
+      try { await API.reviews.decide(b.dataset.id, { decision: dec, comment, version }); toast(dec === 'approve' ? '已通过' : '已退回'); await refreshInbox(); }
+      catch (e) { b.dataset.failed = '1'; toast(e.message, { type: 'err' }); }
+      finally { b.removeAttribute('aria-busy'); b.disabled = false; }
+    }));
     el.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => { const a = b.dataset.open; const ref = b.dataset.ref; const R = !ref ? null : a === 'document' ? ['detail', { id: ref }] : a === 'enterprise' ? ['profile', { entId: ref }] : a === 'meeting' ? ['detail', { id: ref, meetingId: ref }] : a === 'skills' ? ['detail', { skillId: ref, review: true }] : null; Promise.resolve(openApp(a)).then(() => { const sl = S.mounted[a]; if (R && sl && sl.ctl && sl.ctl.go) { sl.ctx.params = R[1]; try { sl.ctl.go(R[0], R[1]); } catch (e) { console.error(e); } } }); }));
     el.querySelectorAll('[data-todo]').forEach((c) => (c.onchange = async () => { try { await API.todos.patch(c.dataset.todo, { status: '已完成' }); toast('已完成'); refreshInbox(); } catch (e) { toast(e.message, { type: 'err' }); } }));
   }
@@ -1020,14 +1144,14 @@
     const apps = [...appsVisible('work'), ...appsVisible('platform')].map((a) => `· **${mf(a.id).name}**：${mf(a.id).summary || ''}`).join('\n');
     return `我可以直接在右侧替你操作这些应用：\n${apps}\n也可以把文件拖进对话框，我会认出是什么并交给对应应用。`;
   }
-  const helpNext = () => (CFG.homeSuggestions || []).slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
+  const helpNext = () => homeSuggestions().slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
 
   /* ---------------- 对外（操作员钩子、管理后台、演示） ---------------- */
-  const shellApi = { S, can, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };
+  const shellApi = { S, can, canPresentDemo, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };
   Object.assign(Op.hooks, {
     postPlan, postAI, openApp, appCtl: (id) => S.mounted[id] && S.mounted[id].ctl, appEl: (id) => S.mounted[id] && S.mounted[id].el,
     openBuiltin, inboxCount: () => S.inbox.length, setModel, setTheme, switchUser: (u) => switchUser(u, Op.running), helpText, helpNext,
-    startDemo: () => window.JKDemo && JKDemo.start(), reset,
+    startersFor, canViewApp: id => can(id, 'view'), startDemo: () => window.JKDemo && JKDemo.start(), reset,
   });
   window.JKShell = shellApi;
   document.addEventListener('DOMContentLoaded', boot);

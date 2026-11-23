@@ -1,5 +1,7 @@
 # 部署演示环境
 
+面向全新 Linux 服务器的分步说明（服务器要求、环境变量表、启动、备份、日志与常见问题）见仓库根目录 [README.md 的「部署到服务器」](../README.md#部署到服务器)。下文是同一套 `deploy/` 文件的运维补充，包括首次启动细节、持有任务续跑验收和公网 pytest。
+
 本说明供有权限的运维人员在专用 Linux 演示机执行。需要 Git、Python 3、GNU Make、flock、curl 7.71+、支持时区的 systemd 和支持 config --no-env-resolution 的 Docker Compose。约定独立检出位于 /opt/jkq-demo，持久目录位于 /var/lib/jkq-demo。域名 A/AAAA 应指向此机，放行 TCP 80、443，供 Caddy 签发证书并对外提供 HTTPS。
 
 ## 首次启动
@@ -24,6 +26,18 @@ curl --fail --show-error --output /dev/null --write-out '%{http_code}\n' https:/
 ```sh
 docker compose -f deploy/docker-compose.yml restart
 ```
+
+## 前端接口模式开关（演示兜底）
+
+容器内前端默认走同源真实接口（`http`）。截至 2026-11-19，真后端尚未覆盖一键演示用到的全部接口（政策、公文、知识库、技能、电脑操作等仍有 404），12 段演示只在 mock 下全部通过。演示环境在 deploy/.env 写入下面一行，重建 app 后前端保留浏览器内 mock，账号登录、健康检查和首管入口关闭不受影响：
+
+```sh
+JKQ_FRONTEND_API_MODE=mock
+docker compose -f deploy/docker-compose.yml up -d --force-recreate app
+curl -s https://<演示域名>/config/app.config.js | grep "api: {"
+```
+
+预期输出含 `mode: 'mock'`。mock 模式的业务数据存在各浏览器的 localStorage，不写 HAIKNOW_DATA_DIR，头像菜单「重置演示数据」只清本机浏览器。真后端接口补齐后，把该值改为 `http`（或删除该行）再重建 app，即回到同源真实会话。deploy/env.example 默认写 `mock`。
 
 ## 快照与重置
 

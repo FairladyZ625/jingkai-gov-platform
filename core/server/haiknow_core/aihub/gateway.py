@@ -214,6 +214,8 @@ class Gateway:
     def call(self, app_id, capability, payload, timeout=50, *, override_model=None, legacy=False, principal=None,
              _stream=None):
         decoded_audio = self._validate(capability, payload, timeout)
+        if capability == 'chat' and isinstance(payload, streaming.ChatRequest):
+            _stream = payload.events
         classification = None
         if capability in OUTBOUND_CAPABILITIES:
             classification = payload.get('classification') or DEFAULT_CLASSIFICATION
@@ -456,12 +458,14 @@ class Gateway:
                             except TRANSPORT_ERRORS:
                                 raise transport_error('模型服务连接中断，请稍后重试。') from None
                         except AIError as error:
-                            # 首个流块发出后不能切到另一个服务商，把两份回答拼在一起。
+                            # 首个选择帧或明确的上游失败已确定本条流的服务商。
                             if stream is not None and (stream.started or stream.cancelled.is_set()):
+                                raise
+                            if not error.retryable:
                                 raise
                             if legacy and attempt == 0 and (error.kind == 'timeout' or getattr(error, 'legacy_retryable', False)):
                                 continue
-                            if index + 1 == len(candidates) or error.kind not in ('timeout', 'provider_error'):
+                            if index + 1 == len(candidates):
                                 raise
                             break
         except TimeoutError:
@@ -470,11 +474,20 @@ class Gateway:
     async def _invoke(self, provider, model, capability, payload, file, timeout, deadline, decoded_audio=None, stream=None):
         if capability not in CAPABILITY_SUPPORT[provider['kind']]:
             raise AIError('provider_error', f'服务商 {provider["id"]} 不支持能力 {capability}。')
+        if capability == 'chat' and isinstance(payload, streaming.ChatRequest):
+            if stream is not None:
+                return await streaming.chat_events(provider, model, payload, timeout, stream)
+            if provider['kind'] == 'mock':
+                return payload.validate_message(streaming.chat_message(streaming.mock_message(provider)))
         if stream is not None:
             return await streaming.request(provider, model, payload, timeout, stream)
         if provider['kind'] == 'mock':
             return self._mock(provider, capability, payload, file, model)
         if provider['kind'] == 'codex-cli':
+            if isinstance(payload, streaming.ChatRequest):
+                if payload.get('tools'):
+                    raise AIError('provider_error', '当前服务商不支持工具调用。')
+                return streaming.chat_message({'content': await codex.chat(model, payload)})
             return await codex.chat(model, payload)
         if capability == 'parse':
             return await adapters.mineru_parse(provider, model, file, timeout, deadline)
@@ -513,7 +526,10 @@ class Gateway:
                     return {'audio_base64': base64.b64encode(response.content).decode()}
                 result = response.json()
                 if capability == 'chat':
-                    content = result['choices'][0]['message']['content']
+                    message = result['choices'][0]['message']
+                    if isinstance(payload, streaming.ChatRequest):
+                        return payload.validate_message(streaming.chat_message(message))
+                    content = message['content']
                     if not isinstance(content, str):
                         raise TypeError('响应格式错误')
                     return content
@@ -530,6 +546,8 @@ class Gateway:
             error.legacy_kind = 'http'
             error.status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             error.legacy_retryable = error.status_code is not None and 500 <= error.status_code < 600
+            if capability == 'chat' and error.status_code is not None and 400 <= error.status_code < 500:
+                error.retryable = False
             error.model_hint = mentions_model(exc)
             raise error from None
         except (ValueError, KeyError, IndexError, TypeError):
@@ -539,7 +557,7 @@ class Gateway:
 
     def _mock(self, provider, capability, payload, file, model):
         if capability == 'chat':
-            return '[模拟模型] 已收到输入。'
+            return streaming.MOCK_CONTENT
         if capability == 'image':
             return [{'url': 'mock://' + provider['id']}]
         if capability == 'transcribe':
