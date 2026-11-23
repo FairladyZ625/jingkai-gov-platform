@@ -553,7 +553,7 @@
     }
   }
   function homeView() {
-    const sugs = (CFG.homeSuggestions || []).filter((s) => !s.app || JK.registry[s.app] && can(s.app, 'view')).slice(0, 3);
+    const sugs = homeSuggestions().filter((s) => !s.app || JK.registry[s.app] && can(s.app, 'view')).slice(0, 3);
     const apps = appsVisible('work').slice(0, 4);
     const v = h(`<div class="home scroll">
       <div style="position:absolute;top:10px;right:16px">${modelChip()}</div>
@@ -592,12 +592,14 @@
     showPF(); upd();
   }
   function attachMenu(anchor, pick) {
-    const samples = window.JK_SAMPLE_FILES || [];
+    const samples = (window.JK_SAMPLE_FILES || []).map(sampleFileView);
     menu(anchor, [{ v: '__pick', icon: 'upload', label: '从电脑选择文件…' }, { head: '试试样例文件' }, ...samples.map((s) => ({ v: s.id, lead: fileIco(s), label: s.name }))], (v) => {
       if (v === '__pick') { const inp = h('<input type="file" style="display:none">'); document.body.appendChild(inp); inp.onchange = () => { const f = inp.files[0]; inp.remove(); if (f) readFile(f).then(pick); }; inp.click(); return; }
       const s = samples.find((x) => x.id === v); if (s) pick({ ...s, sample: true });
     });
   }
+  const sampleFileView = (sample) => sample?.httpName && H.mode('meeting') === 'http'
+    ? { ...sample, name: sample.httpName, ext: 'webm', size: sample.httpSize } : sample;
   async function readFile(f) {
     const ext = (f.name.split('.').pop() || '').toLowerCase(); const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB';
     let text = ''; if (/^(txt|md|csv|json|html?)$/.test(ext) || (f.type || '').startsWith('text')) { try { text = (await f.text()).slice(0, 20000); } catch (e) {} }
@@ -761,6 +763,7 @@
 
   /* 文件投递 */
   async function handleFile(file, text) {
+    file = sampleFileView(file);
     push({ role: 'user', text: text || '', file });
     const ext = String(file.ext || (file.name || '').split('.').pop() || '').toLowerCase();
     if (/^(exe|msi|bat|cmd|sh|dll|apk|dmg|iso|zip|rar|7z|tar|gz)$/.test(ext)) { postAI({ text: `「${file.name}」是${/^(zip|rar|7z|tar|gz)$/.test(ext) ? '压缩包' : '程序文件'}，我暂时处理不了。${/^(zip|rar|7z|tar|gz)$/.test(ext) ? '解压后把里面的文件拖进来就行。' : ''}\n可以发 PDF、Word、Excel、TXT、图片或录音。` }); return; }
@@ -848,7 +851,8 @@
     const apps = [...appsVisible('work'), ...appsVisible('platform')].map((a) => `· **${mf(a.id).name}**：${mf(a.id).summary || ''}`).join('\n');
     return `我可以直接在右侧替你操作这些应用：\n${apps}\n也可以把文件拖进对话框，我会认出是什么并交给对应应用。`;
   }
-  const helpNext = () => (CFG.homeSuggestions || []).slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
+  const homeSuggestions = () => (CFG.homeSuggestions || []).map((s) => s.httpText && H.mode(s.app) === 'http' ? { ...s, text: s.httpText } : s);
+  const helpNext = () => homeSuggestions().slice(0, 3).map((s) => ({ label: s.text, say: s.text }));
 
   /* ---------------- 对外（操作员钩子、管理后台、演示） ---------------- */
   const shellApi = { S, can, citesOf, isAdmin, openApp, openBuiltin, send, handleFile, setTheme, theme, switchUser, toast, refreshInbox, reset, newChat, setLayout, roleName, modelsReload: async () => { const m = await API.models.list(); S.models = m.items || []; }, rerenderSide: renderSide, afterLogin };

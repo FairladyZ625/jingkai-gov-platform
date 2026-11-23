@@ -8,6 +8,9 @@
   const T = Object.assign({ pickQ: '整理哪场会？', pickSub: '', runQ: '正在整理', runSub: '', checkQ: '核对转写', checkSub: '', outQ: '纪要与待办', outSub: '', noAccess: '没有权限', local: '本地转写' }, C.text);
   const sec = (t) => { const p = String(t || '0').split(':').map(Number); return p.reduce((a, b) => a * 60 + (b || 0), 0); };
   const mixedMeeting = () => window.JKHttp.mode() === 'http' && window.JKHttp.mode('meeting') === 'mock';
+  const httpMeeting = () => window.JKHttp.mode('meeting') === 'http';
+  const demoSample = { sampleId: 'park-service-v1', title: '【合成演示】园区服务清单核对', type: '专题推进会', source: 'demo' };
+  const demoPrompt = '把园区服务清单的合成录音整理成纪要';
   const hms = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(x).padStart(2, '0'); };
   // 标签显示到秒；引用与跳转仍保留原始毫秒定位。
   const atLabel = (stamp) => hms(Math.floor(sec(stamp)));
@@ -29,7 +32,7 @@
       ],
       accepts: [{ kind: '会议录音', ext: C.audioExt, match: /会|录音|座谈|纪要/ }],
       intents: [
-        { id: 'meeting.summarize', action: 'summarize', examples: ['整理一下文化企业座谈会的纪要', '看看座谈会纪要', '上次座谈会说了什么'], keywords: ['纪要', '会上说了', '座谈会'], slots: { meeting: 'meeting' }, plan: ['打开会议记录', '找到会议', '打开纪要与待办'] },
+        { id: 'meeting.summarize', action: 'summarize', examples: [demoPrompt, '整理一下文化企业座谈会的纪要', '看看座谈会纪要', '上次座谈会说了什么'], keywords: ['纪要', '会上说了', '座谈会'], slots: { meeting: 'meeting' }, plan: ['打开会议记录', '找到会议', '打开纪要与待办'] },
         { id: 'meeting.transcribe', action: 'transcribe', examples: ['整理局务会录音', '把 AI 原生企业推进会的录音转成纪要', '转写最新的会议录音'], keywords: ['转写', '录音', '整理录音'], slots: { meeting: 'meeting' }, plan: ['选中录音', '选纪要模板', '本地转写与分发言人', '生成纪要与待办'] },
         { id: 'meeting.todos', action: 'todos', examples: ['会上定了哪些待办', '把座谈会的待办派发下去', '还有哪些待办没认领'], keywords: ['待办', '派发', '认领'], slots: { meeting: 'meeting' }, plan: ['打开纪要与待办', '核对负责人', '等你确认派发'] },
         { id: 'meeting.record', action: 'record', examples: ['开始现场录音', '帮我录一下这个会'], keywords: ['现场录音', '开始录音', '录一下'], plan: ['打开现场录音', '开始录制'] },
@@ -197,6 +200,7 @@
         if (!m || !mi) { ms.innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>'; foot(); return; }
         const td = m.todos || []; const miss = td.filter((t) => t.owner === '待确认' || t.due === '待确认').length; const sent = td.filter((t) => t.status === '已派发').length;
         ms.innerHTML = `<div class="q">${esc(T.outQ)}</div><div class="q-sub">${esc(T.outSub)}</div>
+          ${m.sampleId === demoSample.sampleId ? '<div class="callout">本页使用约 11 秒的合成录音和对应的示例逐字稿，不是实际会议记录。</div>' : ''}
           ${mixedMeeting() ? '<div class="callout">本次为模拟会议，派发仅保留在演示数据中，不会写入真实收件箱。</div>' : ''}
           <div class="mt-stats" style="margin-bottom:var(--s5)"><span><b class="num">${mi.body.length}</b> ${sectionLabel(mi)}</span><span><b class="num">${td.length}</b> 待办</span><span class="${miss ? 'warn' : ''}"><b class="num">${miss}</b> 缺负责人/时限</span><span><b class="num">${sent}</b> 已派发</span></div>
           <div class="sec row">待办<span class="sp"></span>${canOp ? `<button class="link" data-act="selAll">全选可派发</button>` : ''}</div>
@@ -268,6 +272,11 @@
 
       /* ---------- 上传 / 现场录音 ---------- */
       function uploadModal(file) {
+        if (!file && httpMeeting()) {
+          return ui.modal({ title: '整理合成示例录音', okText: '开始整理',
+            body: '<p>园区服务清单核对 · 约 11 秒合成录音。已有示例会直接打开，不会另建一条会议。</p>',
+            ok: async () => { await createAndRun(demoSample); } });
+        }
         const s = C.sampleUpload; const name = file ? file.name : s.file;
         const title = file ? name.replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '') : s.title;
         return ui.modal({ title: '登记这份录音', okText: '上传并整理', body: `<div class="row gap2" style="margin-bottom:var(--s3)"><span class="t-3">${icon('file')}</span><b class="clip">${esc(name)}</b><span class="meta">${esc(file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size)}</span></div>
@@ -276,7 +285,19 @@
           <div class="field"><label>参会人（逗号分隔，帮助区分发言人）</label><input class="input" id="up" value="${esc(file ? '' : s.participants.join('，'))}"></div>`,
           ok: async (box) => { const b = { title: box.querySelector('#ut').value.trim() || title, type: box.querySelector('#uy').value, participants: box.querySelector('#up').value.split(/[,，、\s]+/).filter(Boolean), file: name, size: file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, duration: file ? undefined : s.duration, source: '网页上传' }; await createAndRun(b); } });
       }
-      async function createAndRun(b) { const r = await M.create(b); LIST.unshift(Object.assign({ todoCount: 0 }, r.item)); S.tab = 'flow'; render(); S.setup = null; await startJob(r.item.id, b.type); return r.item; }
+      async function registerMeeting(input) {
+        const { item } = await M.create(input);
+        LIST = [Object.assign({ todoCount: 0 }, item), ...LIST.filter((row) => row.id !== item.id)];
+        return item;
+      }
+      async function createAndRun(b) {
+        const meeting = await registerMeeting(b);
+        S.tab = 'flow'; render(); S.setup = null;
+        if (meeting.status === 'done') await openMeeting(meeting.id, 2);
+        else if (meeting.status === 'running' && meeting.jobId) { S.id = meeting.id; S.step = 1; body(); poll(meeting.id, meeting.jobId); }
+        else await startJob(meeting.id, b.type);
+        return meeting;
+      }
       function recStart() { S.rec = { on: true, t: 0 }; step0(); recTimer = setInterval(() => { S.rec.t += 1; const t = $('#rect'); if (t) t.textContent = hms(S.rec.t); const w = $('#recw'); if (w) w.innerHTML = wave(40, true); }, 1000); }
       async function recStop() { clearInterval(recTimer); const t = S.rec.t; S.rec = null; const d = new Date(); const b = { title: `现场录音 ${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, type: '专题推进会', participants: [ctx.user.name], file: '现场录音.m4a', size: Math.max(0.1, t * 0.03).toFixed(1) + ' MB', duration: hms(Math.max(t, 1)), source: '现场录音' }; return createAndRun(b); }
 
@@ -352,7 +373,15 @@
       }
       const actions = {
         async summarize({ meeting, text } = {}, run) {
-          await ready(); if (!canView) return noPerm(run); const id = resolveMeeting(meeting, text, 'done'); if (!id) { run && run.fail('没找到这场会议，请说出会议名称'); return; }
+          await ready(); if (!canView) return noPerm(run);
+          const wantsSample = httpMeeting() && /园区服务清单.*合成录音/.test(text || '');
+          let id;
+          if (wantsSample) {
+            const existing = LIST.find((row) => row.sampleId === demoSample.sampleId);
+            if (!existing && !canOp) return noPerm(run);
+            id = (existing || await registerMeeting(demoSample)).id;
+          } else id = resolveMeeting(meeting, text, 'done');
+          if (!id) { run && run.fail('没找到这场会议，请说出会议名称'); return; }
           if (mOf(id).status !== 'done') return actions.transcribe({ meeting: id, text }, run);
           await toMinutes(id, run);
           if (run) { await run.step(2); await run.highlight('[data-op="meeting.minutes"]'); const mi = S.minutes; const td = S.cur.todos || [];
@@ -416,11 +445,11 @@
           await ready(); if (!canOp) return noPerm(run); goFlow();
           const s = C.sampleUpload; const title = String(file.name || '会议录音').replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
           const type = (TEMPLATES.find((t) => title.includes(t.name.slice(0, 2))) || TEMPLATES[0] || {}).name;
-          const b = { title, type, participants: [], file: file.name, size: file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, source: '对话拖入' };
+          const b = httpMeeting() && file.id === 'rec-1117' ? demoSample : { title, type, participants: [], file: file.name, size: file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, source: '对话拖入' };
           if (!run) return createAndRun(b);
           await run.step(1); const m = await createAndRun(b); await run.step(2);
           await run.wait(() => S.step === 2 && S.cur && S.cur.id === m.id, 30000); await run.step(3);
-          run.done(`录音「${title}」已整理：${S.cur.transcript.length} 段转写、${(S.cur.todos || []).length} 条待办（按“${type}”模板）`, [{ label: '看纪要', say: `看看${title}纪要` }]);
+          run.done(`录音「${S.cur.title}」已整理：${S.cur.transcript.length} 段转写、${(S.cur.todos || []).length} 条待办（按“${S.cur.type}”模板）`, [{ label: '看纪要', say: `看看${S.cur.title}纪要` }]);
         },
       };
       return {

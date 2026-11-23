@@ -10,7 +10,7 @@ window.JK_CONFIG = {
   /* 首页：问候下面的 3 条建议（点一下就让 AI 去办） */
   homeSuggestions: [
     { icon: 'policy', app: 'policy', text: '帮我查一下纸鹿二号智驾能申报哪些政策' },
-    { icon: 'meeting', app: 'meeting', text: '把昨天文化企业座谈会整理成纪要' },
+    { icon: 'meeting', app: 'meeting', text: '把昨天文化企业座谈会整理成纪要', httpText: '把园区服务清单的合成录音整理成纪要' },
     { icon: 'book', app: 'kb', text: '数据券补贴最高能拿多少？' },
   ],
   /* 登录页“一键登录”的演示账号（正式环境删除这段即可） */
