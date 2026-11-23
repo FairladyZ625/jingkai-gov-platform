@@ -187,6 +187,7 @@ class SkillProvider:
         def record_attempt(provider_id, model, status, usage):
             store.audit("skills", user.id, "ai.chat", {
                 "provider": provider_id, "model": model, "status": status, "usage": usage,
+                "providerKind": "local",  # candidates 只含通过 _approved_local 的端点。
             })
 
         def record_outbound(app_id, user_id, action, detail):

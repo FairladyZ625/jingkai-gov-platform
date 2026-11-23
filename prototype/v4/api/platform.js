@@ -51,7 +51,7 @@
     },
     todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id, b) },
     feed: { list: () => H.get('/api/v1/feed') },
-    audit: { /** → {items:AuditEntry[]} */ list: () => H.get('/api/v1/audit') },
+    audit: { /** {offset,limit} → {items:AuditEntry[],total} */ list: (query) => H.get('/api/v1/audit', query) },
     kb: { /* 知识库适配：知识库模块的 api/kb.js 会扩展/覆盖这里 */
       search: (b) => H.post('/api/v1/kb/search', b), ask: (b) => H.post('/api/v1/kb/ask', b),
       libraries: () => H.get('/api/v1/kb/libraries'), file: (id) => H.get('/api/v1/kb/files/' + encodeURIComponent(id)),
@@ -63,7 +63,7 @@
       grants: () => H.get('/api/v1/admin/grants'), setGrant: (role, app, actions) => H.put(`/api/v1/admin/grants/${role}/${encodeURIComponent(app)}`, { actions }),
       patchRole: (id, b) => H.patch('/api/v1/admin/roles/' + id, b), patchApp: (id, b) => H.patch('/api/v1/admin/apps/' + id, b),
       settings: () => H.get('/api/v1/admin/settings'), saveSettings: (b) => H.put('/api/v1/admin/settings', b),
-      usage: () => H.get('/api/v1/admin/usage'),
+      usage: () => H.get(H.mode() === 'http' ? '/api/v1/admin/usage/summary' : '/api/v1/admin/usage'),
     },
     skills: { list: () => H.get('/api/v1/skills') },
     /** 演示环境：重置模拟数据（http 模式下调用服务端演示重置接口） */
