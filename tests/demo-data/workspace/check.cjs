@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '../../..');
-const source = file => fs.readFileSync(path.join(root, 'prototype/v4', file), 'utf8');
+const source = file => fs.readFileSync(path.join(root, 'web', file), 'utf8');
 const seed = file => JSON.parse(fs.readFileSync(path.join(root, 'data/seed', file + '.json')));
 const ctx = vm.createContext({ setTimeout, URLSearchParams, JK: { registry: {} }, localStorage: { getItem() {}, setItem() {} } });
 ctx.window = ctx;

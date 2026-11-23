@@ -13,7 +13,7 @@ const parent = fs.realpathSync(path.dirname(output));
 if (parent === root || parent.startsWith(root + '/') || !/^t38-browser-[\w.-]+$/.test(path.basename(output))) {
   throw Error('请指定仓库外尚不存在的 t38-browser-* 目录');
 }
-const base = path.join(output, 'browser-fixture'), v4 = 'prototype/v4/';
+const base = path.join(output, 'browser-fixture'), v4 = 'web/';
 const files = {}, runtime = new Set();
 const write = (rel, bytes) => {
   fs.mkdirSync(path.dirname(path.join(base, rel)), {recursive: true});
@@ -34,7 +34,7 @@ const win = {};
 const config = vm.createContext({window: win});
 for (const f of ['config/app.config.js', 'config/apps.js']) vm.runInContext(blob(f).toString(), config);
 if (win.JK_CONFIG.api.mode !== 'mock') throw Error('基线不是离线 mock 配置，请人工核查');
-for (const m of entry.matchAll(/<(?:script src|link rel="stylesheet" href)="([^"]+)"/g)) {
+for (const m of entry.matchAll(/<(?:script src|link rel="(?:stylesheet|icon)" href)="([^"]+)"/g)) {
   if (!m[1].includes("'")) runtime.add(m[1]);
 }
 for (const a of win.JK_APP_LIST.filter(a => a.enabled !== false)) {
@@ -75,12 +75,12 @@ if (headStart < 0 || headEnd <= headStart || configStart <= headEnd || end <= co
 const fragment = entry.slice(headStart, end)
   .replace(/<script>([\s\S]*?)<\/script>/g, (_, src) => '<script>if(window.T38?.ready){\n' + src + '\n}</script>')
   .replace(bootRoot, '<div id="root"><div class="app-boot" role="status" data-op="startup.loading"><strong>经开区共享智能体工作站</strong><span>T38 隔离启动中。若一直停在这里，请确认使用 file:// 打开完整解压包，勿降低浏览器安全设置。</span></div></div>')
-  .replace(hook, '<script src="../../qa/seed.js"></script>\n' + hook)
-  + '<script src="../../qa/probe.js"></script>\n';
+  .replace(hook, '<script src="../qa/seed.js"></script>\n' + hook)
+  + '<script src="../qa/probe.js"></script>\n';
 const csp = "default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; img-src file: data: blob:; font-src file: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 const page = entry.slice(0, headStart).replace(/<title>/, '<title>【T38 隔离验收】')
   + '<meta http-equiv="Content-Security-Policy" content="' + csp + '"><meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">\n'
-  + '<script src="../../qa/isolate.js"></script>\n' + fragment + entry.slice(end);
+  + '<script src="../qa/isolate.js"></script>\n' + fragment + entry.slice(end);
 write(v4 + 'index.html', page); files[v4 + 'index.html'].sourceSha256 = sha256(entry);
 for (const name of ['isolate.js','seed.js','probe.js']) write('qa/' + name, fs.readFileSync(path.join(__dirname,name)));
 for (const name of ['README.md','parking.txt','parking-original.txt']) write(name, fs.readFileSync(path.join(__dirname,name)));

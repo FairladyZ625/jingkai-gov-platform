@@ -2,7 +2,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { expect, test } = require('@playwright/test');
 
-const prototypeUrl = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const prototypeUrl = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 const op = (page, name) => page.locator(`[data-op="${name}"]`);
 const activePanel = (page, app) => page.locator(`#pbody [data-view="${app}"].on`);
 

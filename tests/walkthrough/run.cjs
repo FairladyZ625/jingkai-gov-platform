@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const { labels, installChecks } = require('../demo/checks.cjs');
 
-const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 const output = process.argv[2];
 assert.ok(output, '请指定截图输出目录');
 

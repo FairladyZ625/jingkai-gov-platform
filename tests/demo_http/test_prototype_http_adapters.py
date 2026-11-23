@@ -40,7 +40,7 @@ def test_computer_summary_guards_missing_enterprise():
     # 真后端 apply 任务可带 ent=None；收尾文案不得直接读 r.ent.short。
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[2] / "prototype/v4/apps/computer/app.js").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "web/apps/computer/app.js").read_text(encoding="utf-8")
     assert "${r.ent.short}" not in source
     assert "(r && r.ent && r.ent.short) || '示例企业'" in source
 

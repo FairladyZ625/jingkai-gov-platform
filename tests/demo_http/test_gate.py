@@ -6,7 +6,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "prototype/v4/config/demo-script.js"
+SCRIPT = ROOT / "web/config/demo-script.js"
 
 
 @pytest.mark.parametrize("change,expected", [

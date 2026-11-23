@@ -68,7 +68,7 @@ def server(tmp_path_factory, request):
         from jkq.kb.importer.public_url import PublicPage, PublicURLError, PublicURLReader
 
         # 演示不出外网：接口验收用的虚构网址和知识库段的官网样例网址都由本地快照应答。
-        kb_config = (ROOT / "prototype/v4/apps/kb/config.js").read_text(encoding="utf-8")
+        kb_config = (ROOT / "web/apps/kb/config.js").read_text(encoding="utf-8")
         sample_url = re.search(r"sampleUrl:\s*'([^']+)'", kb_config)[1]
         pages = {
             "https://example.invalid/demo-notice": ("演示导入通知", "第一条 演示材料已受理。"),

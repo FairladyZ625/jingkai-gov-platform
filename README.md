@@ -3,7 +3,7 @@
 
 ## 目录
 
-- `prototype/v4/`：v4 综合版前端原型（静态 HTML/JS，mock 数据，`JK_CONFIG.api.mode` 切换 mock/http）及《接口规范》v1.3
+- `web/`：v4 综合版前端原型（静态 HTML/JS，mock 数据，`JK_CONFIG.api.mode` 切换 mock/http），应用契约与《接口规范》v1.3 位于 `docs/`
 - `docs/plan/`：里程碑与任务清单（定稿）、`issues.json`（Issue 批量创建源）
 - `data/public/`：公开来源抓取的真实数据（经开区政务公开政策、企业、公文样例、规则、会议纪要）及核对报告
 - `docs/audit/`：原型流程问题截图
@@ -15,7 +15,7 @@
 
 ## 本地运行
 
-- **纯前端原型（离线 mock）**：双击 `prototype/v4/index.html`，选择演示账号进入工作台，点击侧栏「一键演示」即可观看 12 段流程。
+- **纯前端原型（离线 mock）**：双击 `web/index.html`，选择演示账号进入工作台，点击侧栏「一键演示」即可观看 12 段流程。
 - **经开区实例（FastAPI 后端 + 同源托管前端）**：安装 `requirements-dev.txt` 并配置 `HAIKNOW_SECRET`，运行 `make seed` 与 `make dev` 启动，详见 [jkq/README.md](jkq/README.md)；纯平台底座启动见 [core/README.md](core/README.md)。
 - **部署到别人的 Linux 服务器**：见下方「部署到服务器」。补充的运维约定（快照中断恢复、公网验收等）见 [docs/deploy.md](docs/deploy.md)。
 
@@ -234,7 +234,7 @@ journalctl -u jkq-demo-reset.service
 | `jkq/` | 经开区实例入口、路径/错误兼容层与平台业务模块，见 [jkq/README.md](jkq/README.md) |
 | `config/`、`data/seed/` | 经开区项目配置（`config/projects.yaml`）与种子数据说明（[REAL_DATA.md](data/seed/REAL_DATA.md)） |
 | `deploy/` | 演示环境 Docker Compose、Caddyfile、运维脚本 `deploy/demo`、定时重置与模拟政务站 `deploy/mock-gov/`，见上方「部署到服务器」与 [docs/deploy.md](docs/deploy.md) |
-| `web/` | 规划中的前端迁移目标，当前后端托管与演示入口仍在 `prototype/v4/` |
+| `web/` | 迁移完成后的前端目录，后端同源托管与静态离线演示入口 |
 | `scripts/`、`tests/` | 仓库检查与脚手架（`guard.py`、`check_pr_body.py`、`check.py`、`new_app.py`），以及 `tests/guard/`、`tests/pr_body/`、`tests/jkq/`、`tests/demo/`、`tests/p0/` 等自动化测试 |
 | `.github/` | [PR 模板](.github/PULL_REQUEST_TEMPLATE.md)、[Issue 模板](.github/ISSUE_TEMPLATE/task.md) 与 CI 工作流（[ci.yml](.github/workflows/ci.yml)、[core.yml](.github/workflows/core.yml)） |
 

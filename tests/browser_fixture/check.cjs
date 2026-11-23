@@ -56,7 +56,7 @@ async function main() {
   // data/index.js 在 config/mock-data 已内联同一快照时主动跳过独立脚本。
   const snapshots={'real-kb':'JK_REAL_KB','kb-examples':'JK_KB_EXAMPLES','real-policies':'JK_REAL','real-supplement':'JK_REAL_SUPPLEMENT'};
   for(const rel of Object.keys(manifest.files).filter(k=>/\.(?:js|css)$/.test(k))) {
-    const snapshot=/^prototype\/v4\/data\/([\w-]+)\.js$/.exec(rel);
+    const snapshot=/^web\/data\/([\w-]+)\.js$/.exec(rel);
     assert(loaded.has(rel) || (snapshot && w[snapshots[snapshot[1]]]),rel);
   }
   await assert.rejects(w.fetch('https://t38.example.invalid/never'),/不发送网络/);

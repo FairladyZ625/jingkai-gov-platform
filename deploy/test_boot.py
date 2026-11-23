@@ -72,9 +72,9 @@ def test_public_proxy_rejects_bootstrap_before_forwarding():
 
 
 def test_runtime_patch_is_opt_in_and_keeps_source_mock(tmp_path, monkeypatch):
-    source = ROOT / "prototype/v4/config/app.config.js"
+    source = ROOT / "web/config/app.config.js"
     original = source.read_text(encoding="utf-8")
-    target = tmp_path / "prototype/v4/config/app.config.js"
+    target = tmp_path / "web/config/app.config.js"
     target.parent.mkdir(parents=True)
     target.write_text(original, encoding="utf-8")
     monkeypatch.delenv("JKQ_DEPLOY_RUNTIME", raising=False)
@@ -88,8 +88,8 @@ def test_runtime_patch_is_opt_in_and_keeps_source_mock(tmp_path, monkeypatch):
 
 
 def test_frontend_mode_switch_keeps_mock(tmp_path, monkeypatch):
-    original = (ROOT / "prototype/v4/config/app.config.js").read_text(encoding="utf-8")
-    target = tmp_path / "prototype/v4/config/app.config.js"
+    original = (ROOT / "web/config/app.config.js").read_text(encoding="utf-8")
+    target = tmp_path / "web/config/app.config.js"
     target.parent.mkdir(parents=True)
     target.write_text(original, encoding="utf-8")
     monkeypatch.setenv("JKQ_DEPLOY_RUNTIME", "1")

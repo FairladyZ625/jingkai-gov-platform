@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 
-const read = p => readFileSync(new URL('../../prototype/v4/' + p, import.meta.url), 'utf8');
+const read = p => readFileSync(new URL('../../web/' + p, import.meta.url), 'utf8');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const deferred = () => { let done; const promise = new Promise(r => { done = r; }); return {promise, done}; };
 const win = {}, nodes = new Map();

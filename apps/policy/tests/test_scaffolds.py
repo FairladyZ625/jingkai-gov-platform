@@ -20,7 +20,7 @@ def test_v4_manifest(app):
             console.log(JSON.stringify(manifest, (_, value) =>
                 value instanceof RegExp ? value.source : value));
         }};
-        const base = './prototype/v4/apps/' + process.argv[1];
+        const base = './web/apps/' + process.argv[1];
         require(base + '/config.js');
         require(base + '/app.js');
     """

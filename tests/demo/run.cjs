@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const { labels, installChecks } = require('./checks.cjs');
 
-const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 const report = path.join(__dirname, 'REPORT.md');
 
 // PR #59 已合入，两个 P0 不再预期失败。只有已知故障的具体症状属于预期失败。

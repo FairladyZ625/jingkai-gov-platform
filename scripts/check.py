@@ -121,7 +121,7 @@ RULES = {
     "CHK-ERR-01": "界面文案不拼错误码；错误一律经 errorMessage(err) 或 ctx.preview.errors.message(err) 转成中文再展示",
     "CHK-ERR-02": "不直接展示 err.message；改用 ctx.preview.errors.message(err)（平台页面用 errorMessage(err)）",
     "CHK-ERR-03": "在 apps/<id>/web/errors.json 登记 {\"码\": \"中文提示\"}；键用大写 SNAKE_CASE 或已支持的小写拼写，引用时须精确匹配，不得与平台码重名，值必须是中文",
-    "CHK-ERR-04": "在 core/sdk/js/preview/errors.js 的 PLATFORM_ERROR_MESSAGES 补齐该码的中文提示，并保持与 prototype/v4/接口规范.md 一致",
+    "CHK-ERR-04": "在 core/sdk/js/preview/errors.js 的 PLATFORM_ERROR_MESSAGES 补齐该码的中文提示，并保持与 docs/接口规范.md 一致",
     "CHK-TEST-01": "新建 apps/<id>/tests/test_*.py，至少覆盖一条完整流程",
     "CHK-TEST-02": "加一条断言 403 或 PermissionDenied 的无权限用例",
     "CHK-TEST-03": "按失败用例修；本地用 python scripts/check.py --app <id> 复现",
@@ -424,7 +424,7 @@ ERR_CODE_CMP = re.compile(r"""\.code\s*[=!]==?\s*(['"])([A-Za-z0-9_]+)\1""")
 HAN = re.compile(r"[\u4e00-\u9fff]")
 CODE_KEY = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 PLATFORM_ERRORS_JS = Path("core/sdk/js/preview/errors.js")
-PLATFORM_API_DOC = Path("prototype/v4/接口规范.md")
+PLATFORM_API_DOC = Path("docs/接口规范.md")
 
 
 def _blank_js_comments(text: str) -> str:

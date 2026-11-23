@@ -15,7 +15,7 @@ const ctx = vm.createContext({setTimeout, clearTimeout, AbortController, FormDat
     return {ok:!expired,status:expired?401:200,json:async()=>expired?{error:{code:'UNAUTHENTICATED'}}:profile};
   }});
 ctx.window=ctx;
-const run=file=>vm.runInContext(readFileSync(new URL('../../prototype/v4/'+file,import.meta.url),'utf8'),ctx);
+const run=file=>vm.runInContext(readFileSync(new URL('../../web/'+file,import.meta.url),'utf8'),ctx);
 run('config/app.config.js'); ctx.JK_CONFIG.api={mode:'http',baseUrl:'',modules:{meeting:'mock'}};
 for (const f of ['config/mock-data.js','config/accounts.js','mock/mock-api.js','mock/auth.js',
                  'api/http.js','api/platform.js','api/meeting.js']) run(f);
@@ -56,7 +56,7 @@ const scripts = [];
 ctx.document={write:s=>scripts.push(s)};
 run('config/apps.js');
 ctx.JK_CONFIG.api.modules={kb:'mock'};
-const html=readFileSync(new URL('../../prototype/v4/index.html',import.meta.url),'utf8');
+const html=readFileSync(new URL('../../web/index.html',import.meta.url),'utf8');
 const loader=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).find(s=>s.includes('a.mock'));
 vm.runInContext(loader,ctx);
 assert.deepEqual(scripts.filter(s=>s.includes('src="mock/')),['<script src="mock/kb.js"></script>']);

@@ -1,6 +1,6 @@
 # T38 独立 box：真实页面、隔离数据
 
-**入口**：将 `browser-fixture.tar.gz` 解到一个专用、空的 `/workspace/qa-feedback` 目录（不要覆盖旧证据），打开 **`file:///workspace/qa-feedback/browser-fixture/prototype/v4/index.html`**。需要延迟读、观察调用或测切号取消时，在地址末尾加 `#probe` 后**刷新**。不用启动服务、安装插件、改浏览器安全选项或输入任何口令。若 box 不允许 file:、字体或脚本，记录原始阻断，不改权限。只开本地资料详情，不跟外部链接。
+**入口**：将 `browser-fixture.tar.gz` 解到一个专用、空的 `/workspace/qa-feedback` 目录（不要覆盖旧证据），打开 **`file:///workspace/qa-feedback/browser-fixture/web/index.html`**。需要延迟读、观察调用或测切号取消时，在地址末尾加 `#probe` 后**刷新**。不用启动服务、安装插件、改浏览器安全选项或输入任何口令。若 box 不允许 file:、字体或脚本，记录原始阻断，不改权限。只开本地资料详情，不跟外部链接。
 
 这是实际 v4 页面，不是效果图。以 `MANIFEST.json` 的 revision 为准；不要用此包给此后尚未整合的 #174/#186 修复签收。正式复测须重建并记下新 SHA 和归档哈希。登录页直接点 **何军 hejun（合作方）／李阳 liyang（领导）／王敏 wangmin（成员）**。它们是本页虚拟身份，四张原型角色卡片不连部署账号；夹具种子使用空值，原 mock 仍检查身份、启用状态与权限。没有需传递的秘密。不要把任何真实账号、资料或口令输入本页。
 

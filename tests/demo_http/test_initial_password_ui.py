@@ -77,7 +77,7 @@ def test_offline_mock_can_use_issued_password_but_has_no_default():
     root = Path(__file__).resolve().parents[2]
     with sync_playwright() as engine, engine.chromium.launch(args=["--allow-file-access-from-files"]) as browser:
         page = browser.new_page(offline=True, viewport={"width": 1440, "height": 900})
-        page.goto((root / "prototype/v4/index.html").as_uri())
+        page.goto((root / "web/index.html").as_uri())
         assert page.evaluate("JK_CONFIG.api.mode") == "mock"
         page.locator('[data-u="admin"]').click()
         page.locator('[data-op="rail.admin"]').click()

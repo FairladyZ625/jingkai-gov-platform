@@ -1,6 +1,6 @@
 // 错误展示的唯一入口：错误对象 → 中文提示，界面不出现原始错误码。
 // 码表每条占一行（`  code: '中文',`），scripts/check.py 的 CHK-ERR-04 按这个格式解析并与
-// prototype/v4/接口规范.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
+// docs/接口规范.md 和服务端实际发出的码逐条比对，新增码必须同时补这里。
 
 export const PLATFORM_ERROR_MESSAGES = {
   unauthenticated: '登录已失效，请重新登录',

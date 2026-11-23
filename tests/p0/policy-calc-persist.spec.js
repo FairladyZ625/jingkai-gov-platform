@@ -7,7 +7,7 @@ test.setTimeout(50000);
 const op = (page, name) => page.locator(`[data-op="${name}"]`);
 
 async function openPolicyConversation(page) {
-  const url = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+  const url = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
   await page.goto(url);
   await page.locator('.ql[data-u="wangmin"]').click();
 

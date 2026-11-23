@@ -10,7 +10,7 @@ from tests.demo_http.password_ui import login
 
 
 def test_offline_demo_keeps_its_simulated_audit():
-    entry = Path(__file__).resolve().parents[2] / "prototype/v4/index.html"
+    entry = Path(__file__).resolve().parents[2] / "web/index.html"
     with sync_playwright() as pw, pw.chromium.launch() as browser:
         page = browser.new_page(offline=True)
         page.goto(entry.as_uri())

@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const src = fs.readFileSync('prototype/v4/api/http.js', 'utf8');
+const src = fs.readFileSync('web/api/http.js', 'utf8');
 test('HTTP 响应体超时不伪装成成功或发 api:write；getter 使用实际请求配置', async () => {
   const timers = new Map(), writes = [];
   let seq = 0, responseStarted;

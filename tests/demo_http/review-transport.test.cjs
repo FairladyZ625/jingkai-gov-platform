@@ -9,7 +9,7 @@ function transport(fetch) {
   const window = {JK_CONFIG: {api: {mode: 'http', baseUrl: ''}}};
   const ctx = vm.createContext({window, fetch, AbortController, setTimeout, clearTimeout});
   for (const file of ['http.js', 'platform.js', 'document.js']) {
-    vm.runInContext(readFileSync(path.join(__dirname, '../../prototype/v4/api', file), 'utf8'), ctx);
+    vm.runInContext(readFileSync(path.join(__dirname, '../../web/api', file), 'utf8'), ctx);
   }
   return window.JKApi;
 }
@@ -63,7 +63,7 @@ test('HTTP 会话中的模拟公文不能送进真实收件箱，也不生成孤
     },
   });
   ctx.window = ctx;
-  const load = file => vm.runInContext(readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8'), ctx);
+  const load = file => vm.runInContext(readFileSync(path.join(__dirname, '../../web', file), 'utf8'), ctx);
   load('config/app.config.js');
   ctx.JK_CONFIG.api = {mode: 'http', baseUrl: '', modules: {document: 'mock'}};
   for (const file of ['config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js', 'mock/auth.js',
@@ -84,7 +84,7 @@ test('HTTP 会话中的模拟公文不能送进真实收件箱，也不生成孤
 test('离线公文也不能自送自审，指定领导之外的账号不能代签', async () => {
   const ctx = vm.createContext({window: {}, localStorage: {getItem() {}, setItem() {}}, setTimeout});
   for (const file of ['config/app.config.js', 'config/mock-data.js', 'config/accounts.js', 'mock/mock-api.js']) {
-    vm.runInContext(readFileSync(path.join(__dirname, '../../prototype/v4', file), 'utf8'), ctx);
+    vm.runInContext(readFileSync(path.join(__dirname, '../../web', file), 'utf8'), ctx);
   }
   const api = ctx.window.JKAPI;
   api.latency = 0;

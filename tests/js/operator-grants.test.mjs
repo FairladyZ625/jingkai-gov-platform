@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 
-const source = fs.readFileSync(new URL('../../prototype/v4/assets/operator.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../../web/assets/operator.js', import.meta.url), 'utf8');
 test('按有效 view 授权预加载，迟到的前一身份响应不写回', async () => {
   const calls = [];
   let finishOld;

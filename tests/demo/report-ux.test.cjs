@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 const {inspectRole, checkRole} = require('./role-surface.cjs');
 
-const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 let browser;
 before(async () => {
   browser = await chromium.launch({ executablePath: process.env.JKQ_TEST_CHROMIUM });

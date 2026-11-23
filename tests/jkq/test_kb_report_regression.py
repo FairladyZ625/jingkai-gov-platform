@@ -49,7 +49,7 @@ def post(c, endpoint, **data):
 
 
 def test_four_visible_starters_recall_and_answer(client):
-    config = (ROOT / "prototype/v4/apps/kb/config.js").read_text()
+    config = (ROOT / "web/apps/kb/config.js").read_text()
     questions = re.findall("'([^']+)'", re.search(r"suggestions: \[([^\]]+)", config)[1])
     assert len(questions) == 4
     for q, expected in zip(questions, ["100万元", "万元", "11月20日", "产业"]):

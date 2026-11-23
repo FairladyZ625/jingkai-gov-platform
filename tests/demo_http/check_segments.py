@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
-SCRIPT = Path(__file__).resolve().parents[2] / "prototype/v4/config/demo-script.js"
+SCRIPT = Path(__file__).resolve().parents[2] / "web/config/demo-script.js"
 
 
 def main(path):

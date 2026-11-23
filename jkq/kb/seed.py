@@ -44,7 +44,7 @@ def documents(root=ROOT):
         payload = read(policies)
     else:
         # 主种子迁移前，原型的赋值右侧是相同结构的 JSON；不执行脚本。
-        script = (root / "prototype/v4/data/real-policies.js").read_text(encoding="utf-8")
+        script = (root / "web/data/real-policies.js").read_text(encoding="utf-8")
         payload, _ = json.JSONDecoder().raw_decode(script.split("window.JK_REAL =", 1)[1].lstrip())
     excerpts = defaultdict(list)
     for clause in payload["policies"]:

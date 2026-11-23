@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 
-const source = readFileSync(new URL('../../prototype/v4/assets/shell.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../web/assets/shell.js', import.meta.url), 'utf8');
 function deferred() {
   let resolve;
   const promise = new Promise(r => { resolve = r; });

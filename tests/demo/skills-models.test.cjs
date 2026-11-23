@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright');
 
-const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 const approvalHint = '本地端点尚未获准，请先配置机密数据审批地址';
 const models = [
   { id: 'auto', name: '自动选择', local: false },

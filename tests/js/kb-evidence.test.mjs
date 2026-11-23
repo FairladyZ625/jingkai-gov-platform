@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const read = name => readFileSync(new URL('../../prototype/v4/' + name, import.meta.url), 'utf8');
+const read = name => readFileSync(new URL('../../web/' + name, import.meta.url), 'utf8');
 const state = {}, win = { JK_APPCFG: {} }, routes = new Map();
 let role = 'member';
 let nextId = 0;

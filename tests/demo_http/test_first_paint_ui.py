@@ -36,7 +36,7 @@ def test_startup_is_visible_while_large_script_is_in_flight(server, theme, width
 
 
 def test_file_mock_keeps_local_public_snapshots():
-    entry = Path(__file__).resolve().parents[2] / "prototype/v4/index.html"
+    entry = Path(__file__).resolve().parents[2] / "web/index.html"
     with sync_playwright() as pw, pw.chromium.launch() as browser:
         page = browser.new_page(offline=True)
         page.goto(entry.as_uri())

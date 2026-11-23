@@ -2,7 +2,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { test, expect } = require('@playwright/test');
 
-const entry = pathToFileURL(path.resolve(__dirname, '../../prototype/v4/index.html')).href;
+const entry = pathToFileURL(path.resolve(__dirname, '../../web/index.html')).href;
 const accounts = { wangmin: '王敏', liyang: '李阳', admin: '张磊', hejun: '何军' };
 
 for (const [account, name] of Object.entries(accounts)) {

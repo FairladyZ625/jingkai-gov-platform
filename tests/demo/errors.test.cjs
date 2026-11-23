@@ -56,10 +56,10 @@ test('浏览器故障只归入发生时的段落，演示命令退出 1', async 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jingkai-demo-errors-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const demo = path.join(root, 'tests/demo');
-  const prototype = path.join(root, 'prototype/v4');
+  const prototype = path.join(root, 'web');
   await fs.mkdir(demo, { recursive: true });
   await Promise.all([
-    fs.cp(path.resolve(__dirname, '../../prototype/v4'), prototype, { recursive: true }),
+    fs.cp(path.resolve(__dirname, '../../web'), prototype, { recursive: true }),
     ...['run.cjs', 'checks.cjs'].map(file => fs.copyFile(path.join(__dirname, file), path.join(demo, file))),
   ]);
   await fs.appendFile(path.join(prototype, 'assets/demo.js'), '\n(' + injectFaults.toString() + ')();\n');
