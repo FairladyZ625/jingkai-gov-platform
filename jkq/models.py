@@ -98,6 +98,10 @@ class ModelService:
             **items,
         }
 
+    def catalog(self, items):
+        return [item for ident, item in items.items()
+                if ident == "auto" or self.models[ident].kind != "codex-cli" or self.providers[ident]]
+
     def current(self, user_id, items=None):
         items = self.items() if items is None else items
         chosen = self.store.kv_get(SETTINGS_NAMESPACE, f"current:{user_id}", "auto")
@@ -402,7 +406,7 @@ def me(request: Request, user=Depends(current_user)):
 def models(service=Depends(_service), user=Depends(current_user)):
     items = service.items()
     return {
-        "items": list(items.values()), "current": service.current(user.id, items),
+        "items": service.catalog(items), "current": service.current(user.id, items),
         "capabilities": [{"id": "chat", "name": "对话", "route": "auto" if items["auto"]["enabled"] else None}],
     }
 

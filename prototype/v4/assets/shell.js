@@ -300,20 +300,6 @@
         if (e.target.dataset.ed != null) slot.edits[e.target.dataset.ed] = e.target.value.trim();
       });
     }
-    if (id === 'policy') {
-      el.addEventListener('click', (e) => {
-        const choice = e.target.closest('[data-ent], [data-act="clear"]');
-        if (choice) slot.entId = choice.dataset.ent;
-        if (e.target.closest('[data-act="showAll"]')) slot.expandedPicks = true;
-      });
-      el.addEventListener('change', (e) => {
-        const itemId = e.target.dataset.pick;
-        if (!itemId || !slot.pickedIds) return;
-        if (e.target.checked) slot.pickedIds.add(itemId);
-        else slot.pickedIds.delete(itemId);
-        slot.selectionChanged = true;
-      });
-    }
     try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
     return slot;
   }
@@ -342,7 +328,6 @@
       if (id === 'computer' && route === 'run') slot.panel = { app: id, route: 'home', params: {} };
       else if (route || hasParams || fresh) slot.panel = { app: id, route: route || 'home', params: args };
       if (id === 'document' && args.templateId) slot.templateId = args.templateId;
-      if (id === 'policy' && args.entId) slot.entId = args.entId;
       rememberPanel(slot.panel);
     }
     activate(id); if (S.layout !== 'max') setLayout('split');
@@ -407,9 +392,10 @@
   }
   function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
 
-  // 通过应用现有控件恢复私有状态，复用其校验和保存逻辑。
+  // 政策应用恢复自己的办理快照，其他应用沿用现有控件。
   async function restoreApp(slot, route, params) {
     const { app } = slot.panel;
+    if (app === 'policy') return slot.ctl.restore?.(route, params);
     const query = (selector) => slot.el.querySelector(selector);
     const current = () => S.mounted[app] === slot;
     const find = async (selector) => {
@@ -428,25 +414,7 @@
       field.dispatchEvent(new Event(event, { bubbles: true }));
     };
     const click = (selector) => { if (current()) query(selector)?.click(); };
-    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.calcAmounts || params.filter || params.expanded)));
-    await slot.ctl.go(matchedRoute ? 'match' : route, params);
-
-    if (matchedRoute && await find('.pol-kpis')) {
-      if (Array.isArray(params.pickedIds)) {
-        const selected = new Set(params.pickedIds);
-        const changed = [...new Set([...slot.pickedIds, ...selected])].filter((id) => slot.pickedIds.has(id) !== selected.has(id));
-        const pick = (id) => `[data-pick="${CSS.escape(id)}"]`;
-        if (params.expanded || changed.some((id) => !query(pick(id)))) click('[data-op="policy.show-all"]');
-        changed.forEach((id) => change(pick(id), selected.has(id)));
-      } else if (params.expanded) click('[data-op="policy.show-all"]');
-      if (params.calcAmounts) await slot.ctl.restoreCalcAmounts(params.calcAmounts);
-      if (route === 'match' && params.filter) click(`[data-filter="${CSS.escape(params.filter)}"]`);
-      if (route === 'estimate' || route === 'notice') click('[data-op="policy.next"]');
-      if (route === 'notice') click('[data-op="policy.to-notice"]');
-    }
-    if (app === 'policy' && route === 'notice' && typeof params.notice === 'string' && await find('#pn')) {
-      change('#pn', params.notice, 'input');
-    }
+    await slot.ctl.go(route, params);
 
     if (app === 'document' && params.edits && await find('[data-pe="title"]')) {
       for (const [field, value] of Object.entries(params.edits)) {
@@ -500,21 +468,6 @@
         return result;
       };
     }
-    // 应用可在操作员词典就绪之前自行解析企业，使用实际查询的 ID 恢复。
-    if (id === 'policy') api.policy = { ...API.policy, match: async (params) => {
-      const result = await API.policy.match(params);
-      const slot = mounted();
-      if (slot) {
-        slot.entId = params.entId;
-        // 核对页只渲染部分事项，完整初选来自本次匹配的实际结果。
-        const results = result.results || [];
-        const defaults = results.filter((item) => item.level === 'ok' && !item.ended);
-        slot.pickedIds = new Set((defaults.length ? defaults : results.filter((item) => item.level !== 'no').slice(0, 2)).map((item) => item.id));
-        slot.selectionChanged = false;
-        slot.expandedPicks = false;
-      }
-      return result;
-    } };
     if (id === 'enterprise') api.enterprise = {
       ...API.enterprise,
       get: async (entId) => {
@@ -562,8 +515,9 @@
   }
   function snapshotPanel(slot) {
     if (!slot) return;
-    if (slot.restoring) return slot.panel;
     const { app, route, params } = slot.panel;
+    // 政策应用在画像与手填金额就位后即可保存，后台试算可以继续。
+    if (slot.restoring && app !== 'policy') return slot.panel;
     const query = (selector) => slot.el.querySelector(selector);
     const tab = query('.ap-tabs .tab.on')?.dataset.tab;
     const step = query('.wiz-step.on')?.dataset.op;
@@ -597,28 +551,8 @@
       }
     }
     if (app === 'policy') {
-      if (tab === 'items' && route !== 'detail') {
-        const q = query('[data-op="policy.items-q"]')?.value;
-        const object = query('[data-obj].on')?.dataset.obj;
-        return show('items', { ...(q && { q }), ...(object && { object }) });
-      }
-      if (tab === 'docs') return show('docs');
-      if (step === 'policy.step-0') return show('home', slot.entId && query('.pol-prof') ? { entId: slot.entId } : {});
-      if (slot.entId && slot.pickedIds) {
-        const policyRoute = { 'policy.step-1': 'match', 'policy.step-2': 'estimate', 'policy.step-3': 'notice' }[step];
-        if (policyRoute) {
-          const next = { entId: slot.entId };
-          const notice = query('#pn');
-          if (slot.selectionChanged || policyRoute !== 'match') next.pickedIds = [...slot.pickedIds];
-          const amounts = slot.ctl.getCalcAmounts();
-          if (Object.keys(amounts).length) next.calcAmounts = amounts;
-          if (notice) next.notice = notice.value;
-          const filter = query('[data-filter].on')?.dataset.filter;
-          if (filter) next.filter = filter;
-          if (slot.expandedPicks) next.expanded = true;
-          return show(policyRoute, next);
-        }
-      }
+      const saved = slot.ctl.snapshot?.(route, params);
+      return saved ? show(saved.route, saved.params) : slot.panel;
     }
     if (app === 'enterprise' && tab === 'list') {
       const q = query('#lq')?.value;
@@ -860,7 +794,7 @@
     const saved = snapshotPanel(slot);
     const { action } = intent;
     const save = (route, params = {}) => { slot.panel = { app, route, params }; rememberPanel(slot.panel); };
-    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { itemId: slots.policy.id });
+    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { ...saved.params, itemId: slots.policy.id });
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }

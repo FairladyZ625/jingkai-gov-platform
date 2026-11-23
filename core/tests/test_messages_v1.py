@@ -38,7 +38,7 @@ def test_message_recipients_have_independent_state_and_idempotent_send(make_clie
     assert replay.status_code == 200 and replay.json()['replayed'] is True
     assert {item['id'] for item in replay.json()['items']} == {item['id'] for item in items}
     changed = c.post('/api/v1/apps/sample-app/messages', json={**payload, 'title': '另一个事件'})
-    assert changed.status_code == 409 and changed.json()['error']['code'] == 'invalid_state'
+    assert changed.status_code == 409 and changed.json()['error']['code'] == 'INVALID_STATE'
 
     lead_id = next(item['id'] for item in items if item['recipientId'] == 'samplereviewer')
     sampleobserver_id = next(item['id'] for item in items if item['recipientId'] == 'sampleobserver')
@@ -89,11 +89,11 @@ def test_message_send_rejects_unknown_and_out_of_scope_recipients(make_client):
     invalid_link = c.post('/api/v1/apps/sample-app/messages', json={
         **request(source, recipients=['samplereviewer'], key='external-link'), 'deepLink': 'https://example.invalid/',
     })
-    assert invalid_link.status_code == 422 and invalid_link.json()['error']['code'] == 'invalid_request'
+    assert invalid_link.status_code == 422 and invalid_link.json()['error']['code'] == 'INVALID_REQUEST'
     expired = c.post('/api/v1/apps/sample-app/messages', json={
         **request(source, recipients=['samplereviewer'], key='expired'), 'expiresAt': time.time() - 1,
     })
-    assert expired.status_code == 422 and expired.json()['error']['code'] == 'invalid_request'
+    assert expired.status_code == 422 and expired.json()['error']['code'] == 'INVALID_REQUEST'
     assert c.get('/api/v1/messages').json()['items'] == []
     audit = c.get('/api/audit', params={'app_id': 'sample-app'}).json()['items']
     assert any(item['action'] == 'v1.message.send_failed' for item in audit)

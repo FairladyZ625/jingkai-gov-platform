@@ -458,12 +458,14 @@ class Gateway:
                             except TRANSPORT_ERRORS:
                                 raise transport_error('模型服务连接中断，请稍后重试。') from None
                         except AIError as error:
-                            # 首个流块发出后不能切到另一个服务商，把两份回答拼在一起。
+                            # 首个选择帧或明确的上游失败已确定本条流的服务商。
                             if stream is not None and (stream.started or stream.cancelled.is_set()):
+                                raise
+                            if not error.retryable:
                                 raise
                             if legacy and attempt == 0 and (error.kind == 'timeout' or getattr(error, 'legacy_retryable', False)):
                                 continue
-                            if index + 1 == len(candidates) or error.kind not in ('timeout', 'provider_error'):
+                            if index + 1 == len(candidates):
                                 raise
                             break
         except TimeoutError:
@@ -476,7 +478,7 @@ class Gateway:
             if stream is not None:
                 return await streaming.chat_events(provider, model, payload, timeout, stream)
             if provider['kind'] == 'mock':
-                return streaming.chat_message(streaming.mock_message(provider))
+                return payload.validate_message(streaming.chat_message(streaming.mock_message(provider)))
         if stream is not None:
             return await streaming.request(provider, model, payload, timeout, stream)
         if provider['kind'] == 'mock':
@@ -526,7 +528,7 @@ class Gateway:
                 if capability == 'chat':
                     message = result['choices'][0]['message']
                     if isinstance(payload, streaming.ChatRequest):
-                        return streaming.chat_message(message)
+                        return payload.validate_message(streaming.chat_message(message))
                     content = message['content']
                     if not isinstance(content, str):
                         raise TypeError('响应格式错误')
@@ -544,6 +546,8 @@ class Gateway:
             error.legacy_kind = 'http'
             error.status_code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             error.legacy_retryable = error.status_code is not None and 500 <= error.status_code < 600
+            if capability == 'chat' and error.status_code is not None and 400 <= error.status_code < 500:
+                error.retryable = False
             error.model_hint = mentions_model(exc)
             raise error from None
         except (ValueError, KeyError, IndexError, TypeError):

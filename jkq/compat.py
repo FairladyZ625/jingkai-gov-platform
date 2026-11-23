@@ -10,6 +10,8 @@ from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException
 from starlette.routing import Match, get_route_path
 
+from haiknow_core.error_codes import public_error_code
+
 ALIASES = {
     "/api/v1/auth": "/api/auth",
     "/api/v1/admin": "/api/admin",
@@ -34,9 +36,12 @@ def error_content(status: int, payload: dict) -> dict:
     default_code, default_message = HTTP_ERRORS.get(status, (fallback, "请求处理失败"))
     if isinstance(payload.get("error"), dict):
         error = payload["error"]
-        code = str(error.get("code") or default_code).upper()
-        if code == "ERROR":
+        raw_code = str(error.get("code") or default_code)
+        legacy_code = raw_code.upper()
+        if legacy_code == "ERROR":
             code = default_code
+        else:
+            code = ERROR_ALIASES.get(legacy_code) or public_error_code(raw_code)
         message = error.get("message") or default_message
         details = {
             key: value for key, value in error.items()
@@ -44,6 +49,8 @@ def error_content(status: int, payload: dict) -> dict:
         }
         if isinstance(error.get("details"), dict):
             details.update(error["details"])
+        if error.get("retryable") is True:
+            details["retryable"] = True
     else:
         code = default_code
         detail = payload.get("detail")
@@ -52,7 +59,7 @@ def error_content(status: int, payload: dict) -> dict:
 
     if "action" in details and code == "FORBIDDEN":
         details.setdefault("need", details.pop("action"))
-    return {"error": {"code": ERROR_ALIASES.get(code, code), "message": message, "details": details}}
+    return {"error": {"code": code, "message": message, "details": details}}
 
 
 def install_error_handlers(app) -> None:
