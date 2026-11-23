@@ -6,12 +6,12 @@ window.JK_APPCFG.document = {
   name: '公文协作',
   summary: '选事项、填要素，AI 起草并核查',
   steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'],
-  tabs: [['flow', '起草'], ['list', '我的文稿']],
+  tabs: [['flow', '起草'], ['list', '可见文稿']],
   /* 红头（版头）文字与发文机关 */
   redHead: '【待补：发文机关】',
   approvers: ['李阳'],
   /* 一键演示起草时预填的公开示例要素：只在一键演示运行中补空项，手工起草与核查门禁不变 */
-  demoInputs: { oldEnd: '2026-11-20', newEnd: '2026-12-15', to: '各有关企业：', sign: '公文演示工作组', date: '2026年11月18日' },
+  demoInputs: { oldEnd: '2026-11-30', newEnd: '2026-12-15', to: '各有关企业：', sign: '公文演示工作组', date: '2026年11月17日' },
   /* 要素类型：按要素 key 决定输入控件 */
   inputTypes: { policy: 'policy', ent: 'ent', start: 'date', end: 'date', effect: 'date', oldEnd: 'date', newEnd: 'date', issue: 'long', list: 'long', reason: 'long' },
   /* 一句话 → 模板（操作员用；命中第一个） */

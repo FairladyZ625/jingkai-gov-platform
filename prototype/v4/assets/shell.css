@@ -206,5 +206,34 @@ body.demo-on #root{padding-top:44px}
 :root{--side-w:216px}
 .side{padding-left:4px}
 .brand .brand-mark{display:none}
-@media (max-width:1180px){ .shell{grid-template-columns:56px 0 minmax(0,1fr)} .shell .side{visibility:hidden;overflow:hidden;padding:0} }
+.me-account{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.me-account .nm,.me-account .rl{display:block}
+.side-scrim,.mobile-view-switch{display:none}
+@media (max-width:1180px){
+  .shell{position:relative;grid-template-columns:56px 0 minmax(0,1fr)}
+  .shell>.main{grid-column:3}
+  .shell .side{visibility:hidden;overflow:hidden;padding:0}
+  .side-drawer-open .side-scrim{display:block;position:absolute;inset:0;z-index:70;background:var(--overlay)}
+  .shell.side-drawer-open .side{position:absolute;inset:0 auto 0 0;z-index:71;width:min(260px,86vw);visibility:visible;padding-left:4px;box-shadow:var(--shadow-pop)}
+  .shell.side-drawer-open .brand{justify-content:initial;padding:0 8px 0 14px}
+  .shell.side-drawer-open .side .nav-i{justify-content:initial;padding:0 8px}
+  .shell.side-drawer-open .side-h,.shell.side-drawer-open .brand .btn{display:flex}
+  .shell.side-drawer-open .side .t,.shell.side-drawer-open .hist,.shell.side-drawer-open .brand b,.shell.side-drawer-open .me .grow{display:block}
+  .shell.side-drawer-open .nav-i .count,.shell.side-drawer-open .nav-i .kbd,.shell.side-drawer-open .side-foot .tag{display:inline-flex}
+  .shell.side-drawer-open #btn-side,.shell.side-drawer-open .me-account{min-height:44px}
+}
+@media (max-width:768px){
+  #root{height:100dvh}
+  .main.split .chatcol{display:none}
+  .main.mobile-chat:is(.split,.max) .chatcol{display:flex;flex:1;border-right:0}
+  .main.mobile-chat .panel,.panel #btn-chat-toggle,.panel #btn-max{display:none}
+  .panel #btn-mobile-chat,.main.mobile-chat #btn-mobile-app{display:inline-flex;min-height:44px;white-space:nowrap;flex:none}
+  .main.mobile-chat #btn-mobile-app{align-self:flex-start;margin:2px var(--s3)}
+  .panel .bar-h{padding-inline:var(--s2)}
+  .home{padding-inline:var(--s4)}
+  .quick-apps{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:var(--s6)}
+  .qa{gap:8px;padding:12px}
+  .qa .d{display:block;overflow:visible}
+}
+@media (max-width:360px){.quick-apps{grid-template-columns:1fr}}
 .login .sect{background:none;padding:0;height:auto;margin-bottom:0}

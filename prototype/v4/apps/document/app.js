@@ -3,7 +3,7 @@
  *       v1 核查分级（必须改/建议改/提示）+ 一键修正、润色预览、批注回复/解决、审签（复用卫华 reviews）、定稿锁定（409）。
  * 人把关点：送审签、审签通过（领导）。外部协作者：无此应用权限。 */
 (function () {
-  const DEF = { name: '公文协作', summary: '选事项、填要素，AI 起草并核查', steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'], tabs: [['flow', '起草'], ['list', '我的文稿']], redHead: '', approvers: ['李阳'], inputTypes: {}, intentMap: [], levels: { error: '必须改', warn: '建议改', info: '提示', ok: '通过' }, polishStyles: [['formal', '更正式']], text: {} };
+  const DEF = { name: '公文协作', summary: '选事项、填要素，AI 起草并核查', steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'], tabs: [['flow', '起草'], ['list', '可见文稿']], redHead: '', approvers: ['李阳'], inputTypes: {}, intentMap: [], levels: { error: '必须改', warn: '建议改', info: '提示', ok: '通过' }, polishStyles: [['formal', '更正式']], text: {} };
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).document || {});
   const T = Object.assign({ pickQ: '要办什么事？', pickSub: '', fillQ: '填要素', fillSub: '', draftQ: '初稿', draftSub: '', reviewQ: '批注与送审', reviewSub: '', watermark: '未定稿' }, C.text);
   const CN = '一二三四五六七八九十';
@@ -48,16 +48,23 @@
       const { ui, api, perms } = ctx; const D = api.document; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canView = perms.can('view') && !perms.isPartner, canOp = canView && perms.can('operate'), canApprove = canView && perms.can('approve');
       const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
+      // 起草要素按草稿隔离，仅在当前公文会话保存；不从正文猜字段，也不写入共享记录。
+      const draftForms = new Map();
       let TPLS = [], GROUPS = [], DOCS = [], POLS = null, ENTS = null, loaded = false, loadErr = null;
+      let saving = false;
       const $ = (s) => el.querySelector(s);
       const tplOf = (id) => TPLS.find((t) => t.id === id);
       const latest = () => S.doc.versions[S.doc.versions.length - 1];
-      const shown = () => (S.view ? S.doc.versions.find((v) => v.v === S.view).content : S.edit || latest().content);
+      const shown = () => (S.view != null ? S.doc.versions.find((v) => v.v === S.view).content : S.edit || latest().content);
       const locked = () => S.doc && S.doc.status === '已定稿';
       const lvl = (l) => C.levels[l] || l;
       let submitFailure;
       const submitNotice = () => submitFailure?.doc === S.doc
         ? `<div class="callout h-red" role="alert">${esc(submitFailure.message)}</div>` : '';
+      const updatedLabel = value => {
+        const match = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(value || '');
+        return match ? ui.fmtDate(match[1]) + (match[2] ? ' ' + match[2] : '') : value || '—';
+      };
 
       async function load() {
         if (!canView) { loaded = true; return render(); }
@@ -65,11 +72,46 @@
         render();
       }
       async function refreshList() { try { DOCS = (await D.list()).items; } catch (e) { /* 列表刷新失败不影响当前稿 */ } }
+      async function allowLeavingDraft() {
+        if (saving) { ui.toast('正在保存，请稍候', { type: 'warn' }); return false; }
+        flushEditor();
+        if (!S.edit) return true;
+        const discard = await ui.confirm('这份公文有未保存的修改，离开后会放弃这些修改。', {
+          title: '未保存的修改', danger: true, okText: '放弃修改',
+        });
+        if (!discard) return false;
+        S.edit = null; S.editing = null;
+        return true;
+      }
+      async function switchTab(tab) {
+        if (S.tab === tab) return true;
+        if (!await allowLeavingDraft()) return false;
+        S.tab = tab; render();
+        return true;
+      }
       async function openDoc(id, step) {
+        if (!await allowLeavingDraft()) return false;
         S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
+        S.inputs = {}; S.from = null; S.refs = new Set(); S.hits = [];
         S.tab = 'flow'; S.step = step == null ? 2 : step; render();
-        try { S.doc = (await D.get(id)).item; S.tpl = tplOf(S.doc.templateId); if (step == null && ['审签中', '已定稿', '已退回'].includes(S.doc.status)) S.step = 3; } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; }
+        try {
+          const { item } = await D.get(id);
+          if (S.id !== id) return false;
+          S.doc = item; S.tpl = tplOf(item.templateId);
+          const form = draftForms.get(id);
+          if (form) {
+            S.inputs = { ...form.inputs }; S.from = form.from;
+            S.refs = new Set(form.refs); S.hits = form.hits.slice();
+          } else if (item.policyId && S.tpl?.inputs.some(([key]) => key === 'policy')) {
+            S.inputs.policy = item.policyId;
+          }
+          if (step == null && ['审签中', '已定稿', '已退回'].includes(item.status)) S.step = 3;
+        } catch (e) {
+          if (S.id !== id) return false;
+          ui.toast(e.message, { type: 'err' }); S.step = 0;
+        }
         body();
+        return !!S.doc;
       }
 
       /* ---------- 框架 ---------- */
@@ -103,7 +145,7 @@
           ${DOCS.length ? `<div class="sec row">最近的文稿<span class="sp"></span><button class="link" data-tab="list">全部 ${DOCS.length} 份</button></div><div class="stack rows">${DOCS.slice(0, 3).map(docRow).join('')}</div>` : ''}`;
         foot('', canOp ? '' : '<span class="meta">只读：没有起草权限</span>');
       }
-      const docRow = (d) => `<div class="card tight li" data-open="${d.id}" data-op="document.doc-${d.id}"><span class="ini h-${ui.hue((tplOf(d.templateId) || {}).groupName || '', 'docGroup')}">${icon('doc')}</span><div class="grow"><div class="t clip">${esc(d.title)}</div><div class="s">${esc((tplOf(d.templateId) || {}).name || '')} · ${esc(d.author)} · ${esc(d.updated)} · 第 ${d.versions} 版</div></div>${tag(d.status, 'docStatus')}</div>`;
+      const docRow = (d) => `<div class="card tight li" data-open="${d.id}" data-op="document.doc-${d.id}"><span class="ini h-${ui.hue((tplOf(d.templateId) || {}).groupName || '', 'docGroup')}">${icon('doc')}</span><div class="grow"><div class="t clip">${esc(d.title)}</div><div class="s">${esc((tplOf(d.templateId) || {}).name || '')} · ${esc(d.author)} · ${esc(updatedLabel(d.updated))} · 第 ${d.versions} 版</div></div>${tag(d.status, 'docStatus')}</div>`;
       function pickTpl(id, inputs, from) {
         S.tpl = tplOf(id); S.inputs = {}; S.tpl.inputs.forEach(([k]) => (S.inputs[k] = inputs && inputs[k] != null ? String(inputs[k]) : ''));
         S.from = from || null; S.refs = new Set(); S.hits = null; S.doc = null; S.id = null; S.step = 1; body(); loadRefs();
@@ -129,24 +171,28 @@
         const pol = S.inputs.policy && (POLS || []).find((p) => p.id === S.inputs.policy);
         const missing = t.inputs.filter(([k]) => !String(S.inputs[k] || '').trim()).length;
         $('#ds').innerHTML = `<div class="q">${esc(T.fillQ)} <span class="t-3">· ${esc(t.name)}</span></div><div class="q-sub">${esc(T.fillSub)}</div>
+          ${S.doc ? `<div class="callout h-blue"><div>重新生成会新建草稿，当前文稿和历史版本保留。</div>${draftForms.has(S.doc.id) ? '' : '<div class="meta">当前会话没有这份草稿的完整起草要素，缺失字段需重新填写。</div>'}</div>` : ''}
           ${S.from ? `<div class="callout h-indigo" style="margin-bottom:var(--s4)">${icon('link')}<div>来自${esc(S.from.label || S.from)}：已带上相关要素</div></div>` : ''}
           <div class="dc-fill"><div class="stack">${t.inputs.map(([k, label]) => `<div class="field"><label>${esc(label)}</label>${inputCtl(k, label)}</div>`).join('')}
             <div class="row" style="margin-top:var(--s2)"><button class="btn sm ghost" data-act="sample" data-op="document.sample">${icon('sparkles')}用示例填好</button><span class="sp"></span><span class="meta">${missing ? `还有 ${missing} 项没填` : '要素已齐'}</span></div>
             ${pol ? `<div class="dc-pol"><div class="meta">政策依据</div><b>${esc(pol.title)}</b><div class="meta">${esc(pol.docNo || '无文号')}${!pol.example && pol.source?.url ? ` · <a class="link" href="${esc(pol.source.url)}" target="_blank" rel="noopener">官网原文 ${icon('external')}</a>` : ''}</div></div>` : ''}</div>
-            <div><div class="sec">参考范文 <span class="meta">（勾选后 AI 参照写法）</span></div><div id="drefs">${refsHtml()}</div></div></div>`;
-        foot(`<button class="btn ghost" data-step="0">换一类</button>`, `<button class="btn primary" data-act="gen" data-op="document.gen" ${S.busy ? 'disabled' : ''}>${S.busy ? '<span class="dc-spin"></span>起草中…' : `${icon('sparkles')}生成初稿`}</button>`);
+            <div><div class="sec">参考范文 <span class="meta">${t.id === 'T03' ? '（初稿按公开政策与已填要素生成；勾选的范文仅供查阅）' : '（勾选后保留为文稿参考）'}</span></div><div id="drefs">${refsHtml()}</div></div></div>`;
+        foot(`<button class="btn ghost" data-step="0">换一类</button>`, `<button class="btn primary" data-act="gen" data-op="document.gen" ${S.busy ? 'disabled' : ''}>${S.busy ? '<span class="dc-spin"></span>起草中…' : `${icon('sparkles')}${S.doc ? '重新生成初稿' : '生成初稿'}`}</button>`);
       }
       const refsHtml = () => (S.hits == null ? '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>' : S.hits.length ? `<div class="stack rows">${S.hits.map((h) => `<label class="card tight li dc-ref"><input type="checkbox" class="cb" data-ref="${esc(h.id)}" ${S.refs.has(h.id) ? 'checked' : ''}><div class="grow"><div class="t clip">${esc(h.title)}</div><div class="s clip2">${esc((h.snippet || '').replace(/<[^>]+>/g, '').slice(0, 70))}</div></div><button class="btn icon sm ghost" data-kb="${esc(h.id)}" title="看原文">${icon('external')}</button></label>`).join('')}</div>` : '<div class="meta">知识库里暂时没有相近的范文</div>');
       async function loadRefs() {
-        const t = S.tpl; let hits = [];
+        const t = S.tpl, inputs = S.inputs; let hits = [];
         try { const q = `${t.name.replace(/通知|公示|意见/g, '')} ${String(S.inputs[t.inputs[0][0]] || t.inputs[0][2] || '').slice(0, 20)}`; const r = await ctx.kb.search(q, { space: 'template', limit: 8 }); const seen = new Set(); hits = (r.hits || []).filter((h) => !seen.has(h.title) && seen.add(h.title)).slice(0, 4); } catch (e) { hits = []; }
-        if (S.tpl !== t) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
+        if (S.tpl !== t || S.inputs !== inputs) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
       }
       async function generate() {
         if (S.busy) return; S.busy = true; if (S.step === 1) step1();
         try {
-          const refs = (S.hits || []).filter((h) => S.refs.has(h.id)).map((h) => ({ id: h.id, title: h.title }));
-          const r = await D.draft({ templateId: S.tpl.id, inputs: S.inputs, refs });
+          const form = { inputs: { ...S.inputs }, from: S.from, hits: (S.hits || []).slice(), refs: [...S.refs] };
+          const refs = form.hits.filter((h) => form.refs.includes(h.id)).map((h) => ({ id: h.id, title: h.title }));
+          const r = await D.draft({ templateId: S.tpl.id, inputs: form.inputs, refs });
+          draftForms.set(r.item.id, form);
+          if (draftForms.size > 50) draftForms.delete(draftForms.keys().next().value);
           S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${S.tpl.name} · ${r.item.title}`);
           await refreshList(); S.busy = false; render(); await runCheck(true);
         } catch (e) { S.busy = false; ui.toast(e.message, { type: 'err' }); if (S.step === 1) step1(); }
@@ -172,20 +218,64 @@
           ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}">${paraHtml(p)}</p></div>`).join('')}
           ${field('sign', 'dc-sign')}${field('date', 'dc-sign')}</div>`;
       }
-      function startEdit(k) { if (!canOp || locked() || S.view) return; if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = Object.hasOwn(fieldLabels, k) ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
-      function endEdit(t) { const k = t.dataset.ed; const v = t.value.trim(); if (Object.hasOwn(fieldLabels, k)) S.edit[k] = v; else S.edit.paragraphs[+k] = v; S.editing = null; if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null; step2(); }
+      function startEdit(k) { if (saving || !canOp || locked() || S.view != null) return; if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = Object.hasOwn(fieldLabels, k) ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
+      function endEdit(t) {
+        if (!S.edit || String(S.editing) !== t.dataset.ed) return;
+        const k = t.dataset.ed, value = t.value.trim();
+        if (Object.hasOwn(fieldLabels, k)) S.edit[k] = value; else S.edit.paragraphs[+k] = value;
+        S.editing = null;
+        if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null;
+        // 失焦只替换正在编辑的字段，不能移除同一次点击的保存按钮或其他控件。
+        if (t.isConnected) {
+          const template = document.createElement('template');
+          template.innerHTML = paper(shown(), 'edit');
+          const selector = k === 'sign' ? '.dc-sign[data-pe="sign"]' : `[data-pe="${CSS.escape(k)}"]`;
+          const field = template.content.querySelector(selector);
+          if (field) t.replaceWith(field.closest('.dc-pw') || field);
+          if (k === 'sign') {
+            const red = el.querySelector('.dc-paper .dc-red');
+            if (red) red.textContent = (S.edit || latest().content).sign || C.redHead;
+          }
+        }
+        if (!S.edit) $('#dc-unsaved')?.remove();
+      }
+      function flushEditor() {
+        const editor = $('.dc-paper [data-ed]');
+        if (editor) endEdit(editor);
+      }
+      function updateSavedSummary() {
+        const { id, title, templateId, status, author } = S.doc;
+        const { v, at } = latest();
+        const summary = { id, title, templateId, status, author, versions: v, updated: at };
+        const existing = DOCS.findIndex(row => row.id === id);
+        if (existing >= 0) DOCS[existing] = { ...DOCS[existing], ...summary };
+        else DOCS.unshift(summary);
+      }
       async function saveEdit(note) {
-        if (!S.edit) return; try { const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' }); S.doc = r.item; S.edit = null; S.issues = null; ctx.audit('保存公文', `${S.doc.title} · 第 ${S.doc.versions.length} 版`); ui.toast(`已保存为第 ${S.doc.versions.length} 版`, { type: 'ok' }); }
-        catch (e) { ui.toast(e.status === 409 || e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message, { type: 'err' }); }
+        if (saving) return false;
+        flushEditor();
+        if (!S.edit) return true;
+        saving = true;
+        try {
+          const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' });
+          S.doc = r.item; S.edit = null; S.issues = null;
+          updateSavedSummary();
+          ctx.audit('保存公文', `${S.doc.title} · 第 ${latest().v} 版`);
+          ui.toast(`已保存为第 ${latest().v} 版`, { type: 'ok' });
+          return true;
+        } catch (e) {
+          ui.toast(e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message || '保存失败，修改仍保留', { type: 'err' });
+          return false;
+        } finally { saving = false; }
       }
 
       /* ---------- 第 3 步：初稿与核查 ---------- */
       function step2() {
         const ds = $('#ds'); if (!ds) return; if (!S.doc) { ds.innerHTML = skel(); foot(); return; }
         const c = shown(); const vs = S.doc.versions;
-        ds.innerHTML = `<div class="row" style="margin-bottom:var(--s3)"><div class="grow"><div class="q" style="margin:0">${esc(T.draftQ)} ${tag(S.doc.status, 'docStatus')} <span class="meta">第 ${S.view ?? latest().v} 版${S.view ? '（只读）' : ''}</span></div><div class="q-sub" style="margin:2px 0 0">${esc(locked() ? '已定稿，内容已锁定' : T.draftSub)}</div></div></div>
-          ${submitNotice()}${S.view ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(vs.find((v) => v.v === S.view).at)}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
-          ${S.edit ? `<div class="callout h-blue" style="margin-bottom:var(--s3)">${icon('edit')}<div class="grow">有未保存的修改</div><button class="btn sm" data-act="discard">放弃</button><button class="btn sm" data-act="saveEdit" data-op="document.save">保存为第 ${latest().v + 1} 版</button></div>` : ''}
+        ds.innerHTML = `<div class="row" style="margin-bottom:var(--s3)"><div class="grow"><div class="q" style="margin:0">${esc(T.draftQ)} ${tag(S.doc.status, 'docStatus')} <span class="meta">第 ${S.view ?? latest().v} 版${S.view != null ? '（只读）' : ''}</span></div><div class="q-sub" style="margin:2px 0 0">${esc(locked() ? '已定稿，内容已锁定' : T.draftSub)}</div></div></div>
+          ${submitNotice()}${S.view != null ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(updatedLabel(vs.find((v) => v.v === S.view).at))}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
+          ${S.edit ? `<div id="dc-unsaved" class="callout h-blue" style="margin-bottom:var(--s3)">${icon('edit')}<div class="grow">有未保存的修改</div><button class="btn sm" data-act="discard">放弃</button><button class="btn sm" data-act="saveEdit" data-op="document.save">保存为第 ${latest().v + 1} 版</button></div>` : ''}
           <div class="dc-split"><div>${paper(c, 'edit')}</div><div class="dc-side">${sidePanel()}</div></div>`;
         foot(`<button class="btn ghost" data-step="1" ${S.tpl ? '' : 'disabled'}>${icon('chevron-left')}要素</button><button class="btn" data-act="word" data-op="document.word">${icon('download')}导出 Word</button>`,
           `<button class="btn primary" data-step="3" data-op="document.to-review">批注与送审 ${icon('arrow-right')}</button>`);
@@ -243,7 +333,16 @@
       async function polishApply() { S.edit = S.polish.preview; S.polish = null; await saveEdit(`润色·${(C.polishStyles.find((x) => x[0] === S.pstyle) || [, ''])[1]}`); step2(); }
       async function compare(a, b) { S.cmpA = a; S.cmpB = b; try { const r = await D.compare({ a: { id: S.id, v: a }, b: { id: S.id, v: b } }); S.cmp = Object.assign(r, { a, b }); S.panel = 'versions'; step2(); return S.cmp; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
       async function restore() { const v = S.view; S.edit = JSON.parse(JSON.stringify(S.doc.versions.find((x) => x.v === v).content)); S.view = null; await saveEdit(`恢复第 ${v} 版`); step2(); }
-      async function exportWord() { try { const r = await D.exportWord(S.id); ui.download(r.filename, r.html, 'application/msword'); ctx.audit('导出 Word', r.filename); ui.toast(r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' }); return r; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
+      async function exportWord() {
+        try {
+          const r = await D.exportWord(S.id);
+          if (!r.filename || (!r.blob && !r.html)) throw Error('未收到可用的 Word 文件');
+          ui.download(r.filename, r.blob || r.html, 'application/msword');
+          ctx.audit('导出 Word', r.filename);
+          ui.toast(r.blob ? '已导出 Word' : r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' });
+          return r;
+        } catch (e) { ui.toast(e.message || 'Word 导出失败', { type: 'err' }); }
+      }
 
       /* ---------- 第 4 步：批注与送审 ---------- */
       function step3() {
@@ -316,19 +415,20 @@
         return openDoc(r.item.id, 2);
       }
 
-      /* ---------- 我的文稿 ---------- */
+      /* ---------- 可见文稿 ---------- */
       function renderList(b) {
         const q = (S.lq || '').trim(); const rows = DOCS.filter((d) => !q || d.title.includes(q) || d.status === q);
         b.innerHTML = `<div class="row gap2" style="margin-bottom:var(--s3)"><div class="dc-search grow">${icon('search')}<input class="input" id="dlq" placeholder="标题或状态" value="${esc(S.lq || '')}"></div>${canOp ? `<button class="btn primary" data-act="new">${icon('plus')}起草新公文</button>` : ''}</div>
-          ${rows.length ? `<div class="card dc-tblw"><table class="tbl"><thead><tr><th>标题</th><th>事项</th><th>版本</th><th>更新</th><th>状态</th></tr></thead><tbody>${rows.map((d) => `<tr class="click" data-open="${d.id}" data-op="document.row-${d.id}"><td><b>${esc(d.title)}</b><div class="meta">${esc(d.author)}</div></td><td>${tag((tplOf(d.templateId) || {}).groupName || '—', 'docGroup')}</td><td class="num">${d.versions}</td><td class="num meta">${esc(d.updated)}</td><td>${tag(d.status, 'docStatus')}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'doc', title: q ? '没有匹配的文稿' : '还没有文稿', desc: q ? '换个关键词' : '从“起草”开始写第一份', action: q ? '清空搜索' : '起草新公文' })}`;
+          <div class="meta" style="margin-bottom:var(--s3)">当前账号有权查看的文稿，不限本人创建。</div>
+          ${rows.length ? `<div class="card dc-tblw"><table class="tbl"><thead><tr><th>标题</th><th>事项</th><th>版本</th><th>更新</th><th>状态</th></tr></thead><tbody>${rows.map((d) => `<tr class="click" data-open="${d.id}" data-op="document.row-${d.id}"><td><b>${esc(d.title)}</b><div class="meta">${esc(d.author)}</div></td><td>${tag((tplOf(d.templateId) || {}).groupName || '—', 'docGroup')}</td><td class="num">${d.versions}</td><td class="num meta">${esc(updatedLabel(d.updated))}</td><td>${tag(d.status, 'docStatus')}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'doc', title: q ? '没有匹配的文稿' : '还没有文稿', desc: q ? '换个关键词' : '从“起草”开始写第一份', action: q ? '清空搜索' : '起草新公文' })}`;
       }
 
       /* ---------- 事件 ---------- */
       el.addEventListener('click', async (ev) => {
         const x = ev.target.closest('[data-tab],[data-step],[data-tpl],[data-open],[data-act],[data-pe],[data-panel],[data-fix],[data-goto],[data-iss],[data-pstyle],[data-ver],[data-cpara],[data-resolve],[data-kb],[data-empty-action]'); if (!x || x.disabled) return; const d = x.dataset;
-        if (d.tab) { S.tab = d.tab; render(); return; }
-        if (d.step != null && !x.classList.contains('on')) { const k = +d.step; if (k >= 2 && !S.doc) return; if (k === 1 && !S.tpl) return; if (S.edit && k !== 2) { await saveEdit(); if (S.edit) return; } S.step = k; body(); return; }
-        if (d.tpl) return pickTpl(d.tpl);
+        if (d.tab) return switchTab(d.tab);
+        if (d.step != null && !x.classList.contains('on')) { const k = +d.step; if (k >= 2 && !S.doc) return; if (k === 1 && !S.tpl) return; if (k !== 2 && !await saveEdit()) return; S.step = k; body(); return; }
+        if (d.tpl) { if (await allowLeavingDraft()) return pickTpl(d.tpl); return; }
         if (d.open) return openDoc(d.open);
         if (d.kb) { ev.preventDefault(); return ctx.kb.open(d.kb); }
         if (d.pe != null) return startEdit(d.pe);
@@ -337,13 +437,13 @@
         if (d.goto != null) { S.hl = +d.goto; return startEdit(d.goto); }
         if (d.iss) { const i = S.issues.find((y) => y.id === d.iss); if (i && i.para != null) { S.hl = i.para; step2(); const p = el.querySelector(`[data-op="document.p-${i.para}"]`); if (p) p.scrollIntoView({ block: 'center', behavior: 'smooth' }); } return; }
         if (d.pstyle) { S.pstyle = d.pstyle; S.polish = null; step2(); return; }
-        if (d.ver) { const v = +d.ver; S.view = v === S.doc.versions.length ? null : v; S.edit = null; step2(); return; }
+        if (d.ver) { if (!await allowLeavingDraft()) return; const v = +d.ver; S.view = v === latest().v ? null : v; step2(); return; }
         if (d.cpara != null) { S.cpara = +d.cpara; step3(); const t = $('#dcn'); if (t) t.focus(); return; }
         if (d.resolve) { const c = S.doc.comments.find((y) => y.id === d.resolve); const r = await D.patchComment(S.id, c.id, { resolved: !c.resolved }); Object.assign(c, r.item); step3(); return; }
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); return load(); } if (S.lq) { S.lq = ''; return renderList($('#db')); } S.tab = 'flow'; S.step = 0; render(); return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.doc ? `「${S.doc.title}」还有哪些地方要改？` : '公文里日期、文号有哪些规范？');
-        if (a === 'new') { S.tab = 'flow'; S.step = 0; S.tpl = null; S.doc = null; render(); return; }
+        if (a === 'new') { if (!await allowLeavingDraft()) return; S.tab = 'flow'; S.step = 0; S.tpl = null; S.doc = null; render(); return; }
         if (a === 'sample') { S.tpl.inputs.forEach(([k, , v]) => { if (!String(S.inputs[k] || '').trim()) S.inputs[k] = v; }); return step1(); }
         if (a === 'gen') return generate();
         if (a === 'check') return runCheck();
@@ -355,7 +455,7 @@
         if (a === 'latest') { S.view = null; step2(); return; }
         if (a === 'restore') return restore();
         if (a === 'saveEdit') { await saveEdit(); step2(); return; }
-        if (a === 'discard') { S.edit = null; S.editing = null; step2(); return; }
+        if (a === 'discard' && !saving) { S.edit = null; S.editing = null; step2(); return; }
         if (a === 'word') return exportWord();
         if (a === 'addCm') return addComment();
         if (a === 'submit') return submitModal();
@@ -463,7 +563,12 @@
         },
         async export({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, S.step >= 2 ? S.step : 2))) return;
-          if (run) { await run.step(1); await run.click('[data-op="document.word"]'); run.done(`已导出「${S.doc.title}」Word${locked() ? '（正式版式）' : `（带“${T.watermark}”水印）`}`); } else return exportWord();
+          if (!run) return exportWord();
+          await run.step(1);
+          await run.highlight('[data-op="document.word"]');
+          const exported = await exportWord();
+          if (!exported) return run.fail('Word 导出失败，没有生成下载文件');
+          run.done(`已导出「${exported.filename}」`);
         },
         async open({ text } = {}, run) {
           await ready(); const id = resolveDoc(text);

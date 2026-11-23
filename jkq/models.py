@@ -140,6 +140,15 @@ class ModelService:
         return next((pair for pair in self._candidates(self.items(), self.primary)
                      if pair[0]["kind"] != "mock"), None)
 
+    def audit_provider_kind(self, provider_id):
+        model = self.models.get(provider_id)
+        if model is None:
+            return None
+        if model.kind == "mock":
+            return "mock"
+        # kind=openai 表示协议，不等于海外或云端。按当次部署目录标注位置。
+        return {"本地部署": "local", "国产云端": "cloud", "海外模型（默认关闭）": "cloud"}.get(model.group)
+
     def _sdk_model_id(self, name):
         # 旧 SDK 接受供应商模型名。只解析已登记且不歧义的名称。
         if name is None or name in self.models or name == "auto":
@@ -169,6 +178,7 @@ class ModelService:
         def record_attempt(provider_id, model, status, usage):
             self.store.audit(app_id, user_id, "ai.chat", {
                 "provider": provider_id, "model": model, "status": status, "usage": usage,
+                "providerKind": self.audit_provider_kind(provider_id),
             })
             if kb_failures is not None and status != "success" and self.models[provider_id].kind != "mock":
                 kb_failures.append(status)
