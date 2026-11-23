@@ -620,7 +620,8 @@
   }
   function newChat() {
     switchConversation(null);
-    setTimeout(() => { const t = $('#chatcol textarea'); t && t.focus(); }, 30);
+    const t = $('#chatcol textarea');
+    if (t) t.focus();
   }
   function openConv(id) { if (id !== S.cur) return switchConversation(id); }
   function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [] }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }

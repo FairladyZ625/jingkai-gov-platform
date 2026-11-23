@@ -95,7 +95,7 @@ def test_segment(server, title):
             assert data(c.get(path))["item"]["name"] == draft["name"]
         elif title == "会议纪要":
             base = "/api/apps/meeting/meetings"
-            audio = SCRIPT.parents[3] / "apps/meeting/samples/demo.webm"
+            audio = SCRIPT.parents[2] / "apps/meeting/samples/demo.webm"
             with audio.open("rb") as stream:
                 item = data(c.post(base, data={"title": "演示例会"},
                                    files={"file": ("演示录音.webm", stream, "audio/webm")}))["item"]
