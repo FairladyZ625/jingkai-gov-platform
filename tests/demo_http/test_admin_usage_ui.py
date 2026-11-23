@@ -54,7 +54,7 @@ def test_audit_labels_paging_and_usage_match_the_gateway(server):
         search.fill("任务失败")
         expect(admin.locator(".audit-row")).to_have_count(1)
         with admin.expect_download() as result:
-            admin.get_by_role("button", name="导出本页 CSV").click()
+            admin.get_by_role("button", name="导出 CSV", exact=True).click()
         assert result.value.path().read_bytes().startswith(b"\xef\xbb\xbf")
         admin.get_by_role("button", name="用量", exact=True).click()
         expect(controls.get_by_text("外发拦截 1 次", exact=False)).to_be_visible()
