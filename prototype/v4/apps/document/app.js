@@ -226,7 +226,16 @@
       async function polishApply() { S.edit = S.polish.preview; S.polish = null; await saveEdit(`润色·${(C.polishStyles.find((x) => x[0] === S.pstyle) || [, ''])[1]}`); step2(); }
       async function compare(a, b) { S.cmpA = a; S.cmpB = b; try { const r = await D.compare({ a: { id: S.id, v: a }, b: { id: S.id, v: b } }); S.cmp = Object.assign(r, { a, b }); S.panel = 'versions'; step2(); return S.cmp; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
       async function restore() { const v = S.view; S.edit = JSON.parse(JSON.stringify(S.doc.versions.find((x) => x.v === v).content)); S.view = null; await saveEdit(`恢复第 ${v} 版`); step2(); }
-      async function exportWord() { try { const r = await D.exportWord(S.id); ui.download(r.filename, r.html, 'application/msword'); ctx.audit('导出 Word', r.filename); ui.toast(r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' }); return r; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
+      async function exportWord() {
+        try {
+          const r = await D.exportWord(S.id);
+          if (!r.filename || (!r.blob && !r.html)) throw Error('未收到可用的 Word 文件');
+          ui.download(r.filename, r.blob || r.html, 'application/msword');
+          ctx.audit('导出 Word', r.filename);
+          ui.toast(r.blob ? '已导出 Word' : r.final ? '已导出 Word（正式版式）' : `已导出 Word（带“${T.watermark}”水印）`, { type: 'ok' });
+          return r;
+        } catch (e) { ui.toast(e.message || 'Word 导出失败', { type: 'err' }); }
+      }
 
       /* ---------- 第 4 步：批注与送审 ---------- */
       function step3() {
@@ -431,7 +440,12 @@
         },
         async export({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, S.step >= 2 ? S.step : 2))) return;
-          if (run) { await run.step(1); await run.click('[data-op="document.word"]'); run.done(`已导出「${S.doc.title}」Word${locked() ? '（正式版式）' : `（带“${T.watermark}”水印）`}`); } else return exportWord();
+          if (!run) return exportWord();
+          await run.step(1);
+          await run.highlight('[data-op="document.word"]');
+          const exported = await exportWord();
+          if (!exported) return run.fail('Word 导出失败，没有生成下载文件');
+          run.done(`已导出「${exported.filename}」`);
         },
         async open({ text } = {}, run) {
           await ready(); const id = resolveDoc(text);
