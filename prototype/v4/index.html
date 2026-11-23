@@ -1,19 +1,44 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>经开区共享智能体工作站 · 综合版</title>
-<!-- 1. 配置（【可改】都在 config/ 里） -->
-<script src="config/app.config.js"></script>
 <script>
-  try { document.documentElement.dataset.theme = localStorage.getItem('jk4-theme2') || (window.JK_CONFIG || {}).defaultTheme || 'light'; } catch (e) {}
+  try {
+    const saved = localStorage.getItem('jk4-theme2');
+    if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+  } catch (e) {}
   try { if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) document.documentElement.dataset.mac = '1'; } catch (e) {}
-  window.JK_STATE_KEY = (window.JK_CONFIG || {}).stateKey || 'jk4-state';
 </script>
+<style>
+  .app-boot { min-height: 100vh; min-height: 100svh; display: grid; place-content: center; gap: .5rem; padding: 1rem; text-align: center; color: var(--text); background: var(--bg); }
+  .app-boot strong { font-size: 1.125rem; }
+  .app-boot span { color: var(--text-3); }
+</style>
 <link rel="stylesheet" href="assets/theme.css">
 <link rel="stylesheet" href="assets/ui.css">
 <link rel="stylesheet" href="assets/shell.css">
+</head>
+<body>
+<div id="root">
+  <div class="app-boot" role="status" data-op="startup.loading">
+    <strong>经开区共享智能体工作站</strong>
+    <span>正在加载工作站…</span>
+  </div>
+</div>
+<!-- 1. 配置和依赖仍按原顺序执行；先显示启动界面，再读取较大的脚本。 -->
+<script src="config/app.config.js"></script>
+<script>
+  const startupConfig = window.JK_CONFIG || {};
+  let startupTheme = startupConfig.defaultTheme === 'dark' ? 'dark' : 'light';
+  try {
+    const saved = localStorage.getItem('jk4-theme2');
+    if (saved === 'light' || saved === 'dark') startupTheme = saved;
+  } catch (e) {}
+  document.documentElement.dataset.theme = startupTheme;
+  window.JK_STATE_KEY = startupConfig.stateKey || 'jk4-state';
+</script>
 <script src="config/tags.js"></script>
 <script src="config/apps.js"></script>
 <script src="config/mock-data.js"></script>
@@ -51,8 +76,5 @@
 <script src="assets/admin.js"></script>
 <script src="assets/shell.js"></script>
 <script src="assets/demo.js"></script>
-</head>
-<body>
-<div id="root"></div>
 </body>
 </html>
