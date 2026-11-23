@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 from time import monotonic, sleep as wait_briefly
 
@@ -74,9 +75,13 @@ def client_factory(make_client, isolated_platform, monkeypatch):
         monkeypatch.delenv(key)
     _, apps = isolated_platform
     manifest = apps / "sample-app/app.json"
+    published = []
+    for app in ("enterprise", "document"):
+        source = Path(__file__).resolve().parents[2] / "apps" / app / "app.json"
+        published.extend(json.loads(source.read_text(encoding="utf-8"))["tools"])
     manifest.write_text(json.dumps({
         **json.loads(manifest.read_text()),
-        "tools": [{"name": TOOL, "desc": "匹配演练事项", "params": {"entId": "string"}}],
+        "tools": [*published, {"name": TOOL, "desc": "匹配演练事项", "params": {"entId": "string", "tags": "string[]?"}}],
     }), encoding="utf-8")
 
     def create():
@@ -85,6 +90,10 @@ def client_factory(make_client, isolated_platform, monkeypatch):
         return client
 
     return create
+
+
+def chat_audit(service):
+    return [row["detail"] for row in service.store.audit_list("platform") if row["action"] == "ai.chat"]
 
 
 def login(client, user="sampleadmin"):
@@ -120,6 +129,7 @@ def test_non_stream_keeps_model_content_route_note(client_factory):
         response = client.post(PATH, json={**REQUEST, "stream": False})
         assert response.status_code == 200
         catalog = {item["id"]: item for item in client.get("/api/v1/models").json()["items"]}
+        assert set(response.json()) == {"model", "content", "routeNote", "usage", "mock"}
         assert response.json()["model"] == catalog["mock"]["name"]
         assert response.json()["content"] == "[模拟模型] 已收到输入。"
         assert response.json()["routeNote"] == "使用模拟模型"
@@ -145,6 +155,23 @@ def test_mock_event_snapshot_is_repeatable(client_factory):
 
 
 @pytest.mark.parametrize("stream", [False, True])
+def test_mock_rejects_invalid_tool_before_delivery(client_factory, stream):
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        invalid = {"type": "function", "function": {"name": ALIAS, "arguments": "{}"}}
+        service.providers["mock"]["chat_script"] = {"content": None, "tool_calls": [CALL, invalid]}
+        response = client.post(PATH, json={**REQUEST, "tools": [TOOL], "stream": stream})
+        if stream:
+            sequence = events(response)
+            assert [e for e, _ in sequence] == ["meta", "error"]
+            assert sequence[-1][1]["code"] == "PROVIDER_ERROR"
+        else:
+            assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+        assert [(r["provider"], r["status"]) for r in chat_audit(service)] == [("mock", "provider_error")]
+
+
+@pytest.mark.parametrize("stream", [False, True])
 def test_unregistered_tool_returns_404_before_provider(client_factory, monkeypatch, stream):
     configure(monkeypatch)
     with client_factory() as client:
@@ -158,38 +185,56 @@ def test_unregistered_tool_returns_404_before_provider(client_factory, monkeypat
         }
 
 
-def test_registered_tool_requires_app_operate(client_factory):
+@pytest.mark.parametrize("stream", [False, True])
+def test_registered_tool_requires_app_operate(client_factory, stream):
     with client_factory() as client:
         login(client, "sampleobserver")
-        response = client.post(PATH, json={**REQUEST, "stream": True, "tools": [TOOL]})
+        response = client.post(PATH, json={**REQUEST, "stream": stream, "tools": [TOOL]})
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "FORBIDDEN"
+        error = response.json()["error"]
+        assert error["code"] == "FORBIDDEN"
+        assert error["details"] == {"app": "sample-app", "need": "operate"}
+        audit = client.app.state.platform.store.audit_list("sample-app")
+        assert [(row["user"], row["detail"]) for row in audit if row["action"] == "ai.tool_forbidden"] == [
+            ("sampleobserver", {"need": "operate"}),
+        ]
 
 
-def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeypatch):
+@pytest.mark.parametrize("stream_usage", [True, False])
+def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeypatch, stream_usage):
     configure(monkeypatch)
-    upstream = ProviderStream(
+    frames = [
         frame({"role": "assistant"}),
         frame({"content": "已查找"}),
         frame({"tool_calls": [{"index": 0, "function": {"name": "policy_", "arguments": '{"ent'}}]}),
         frame({"tool_calls": [{"index": 0, "function": {"name": "match", "arguments": 'Id":"E001"}'}}]}),
-        frame({}, finish="tool_calls"), frame(usage={"prompt_tokens": 8, "completion_tokens": 5}),
-        "data: [DONE]\n\n",
-    )
+        frame({}, finish="tool_calls"),
+    ]
+    upstream = ProviderStream()
 
     def respond(request):
         body = json.loads(request.content)
+        options = body.pop("stream_options", None)
+        assert options == ({"include_usage": True} if stream_usage else None)
+        upstream.frames = list(frames)
+        if options and options.get("include_usage"):
+            upstream.frames.append(frame(usage={"prompt_tokens": 8, "completion_tokens": 5}))
+        upstream.frames.append("data: [DONE]\n\n")
         assert body == {**REQUEST, "stream": True, "model": "cloud-model", "tools": [{
             "type": "function", "function": {"name": ALIAS, "description": "匹配演练事项",
                                            "parameters": {"type": "object", "properties": {
                                                "entId": {"type": "string"},
-                                           }}},
+                                               "tags": {"type": "array", "items": {"type": "string"}},
+                                           }, "additionalProperties": False, "required": ["entId"]}},
         }]}
         return httpx.Response(200, stream=upstream)
 
     with client_factory() as client:
         login(client)
-        client.app.state.jkq_models.transport = httpx.MockTransport(respond)
+        service = client.app.state.jkq_models
+        if not stream_usage:
+            service.providers["cloud"]["stream_usage"] = False
+        service.transport = httpx.MockTransport(respond)
         result = events(client.post(PATH, json={**REQUEST, "stream": True, "tools": [TOOL]}))
         assert result[:3] == [
             ("meta", {"model": "cloud-model", "routeNote": ""}),
@@ -197,7 +242,10 @@ def test_provider_tool_fragments_and_usage_are_assembled(client_factory, monkeyp
             ("tool", {"tool": TOOL, "args": {"entId": "E001"}}),
         ]
         assert len(result) == 4 and result[3][0] == "done"
-        assert result[3][1]["usage"] == {"input": 8, "output": 5}
+        expected_usage = {"input": 8, "output": 5} if stream_usage else {"input": None, "output": None}
+        assert result[3][1]["usage"] == expected_usage
+        assert chat_audit(service) == [{"model": "cloud-model", "provider": "cloud",
+                                        "status": "success", "usage": expected_usage}]
         assert upstream.closed
 
 
@@ -240,18 +288,38 @@ def test_provider_timeout_ends_stream(client_factory, monkeypatch):
         assert monotonic() - started < 30
         assert [event for event, _ in result] == ["meta", "delta", "error"]
         assert result[-1][1]["code"] == "TIMEOUT" and upstream.closed
+        assert [(r["provider"], r["status"]) for r in chat_audit(service)] == [("cloud", "timeout")]
 
 
-def test_stream_falls_back_before_output_and_reports_actual_provider(client_factory, monkeypatch):
+@pytest.mark.parametrize("failure", ["503", "connect"])
+@pytest.mark.parametrize("stream", [True, False])
+def test_fallback_reports_actual_provider(client_factory, monkeypatch, failure, stream):
     configure(monkeypatch)
     with client_factory() as client:
         login(client)
         service = client.app.state.jkq_models
-        service.transport = httpx.MockTransport(lambda _: httpx.Response(503))
-        result = events(client.post(PATH, json={**REQUEST, "stream": True}))
-        assert result[0] == ("meta", {"model": service.items()["mock"]["name"],
-                                     "routeNote": "主模型调用失败，已回退，使用模拟模型"})
-        assert [event for event, _ in result] == ["meta", "delta", "done"]
+
+        def fail(request):
+            if failure == "connect":
+                raise httpx.ConnectError("sensitive-upstream-detail", request=request)
+            return httpx.Response(503)
+
+        service.transport = httpx.MockTransport(fail)
+        response = client.post(PATH, json={**REQUEST, "stream": stream, "tools": [TOOL]})
+        expected_meta = {"model": service.items()["mock"]["name"],
+                         "routeNote": "主模型调用失败，已回退，使用模拟模型"}
+        if stream:
+            result = events(response)
+            assert result[0] == ("meta", expected_meta)
+            assert [event for event, _ in result] == ["meta", "delta", "done"]
+        else:
+            assert response.status_code == 200
+            body = response.json()
+            assert {k: body[k] for k in expected_meta} == expected_meta
+            assert body["mock"] and body["tool_calls"] == []
+        assert [(r["provider"], r["status"]) for r in chat_audit(service)] == [
+            ("mock", "success"), ("cloud", "provider_error"),
+        ]
 
 
 @pytest.mark.parametrize("approved", [False, True])
@@ -278,6 +346,118 @@ def test_stream_confidential_obeys_same_outbound_gate(client_factory, monkeypatc
             assert response.status_code == 403
             assert response.json()["error"]["code"] == "OUTBOUND_DENIED"
             assert seen == []
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("names", [[TOOL, "unknown.tool"], ["unknown.tool", TOOL]])
+def test_unknown_precedes_forbidden(client_factory, stream, names):
+    with client_factory() as client:
+        login(client, "sampleobserver")
+        response = client.post(PATH, json={**REQUEST, "stream": stream, "tools": names})
+        assert response.status_code == 404 and response.json()["error"]["code"] == "TOOL_NOT_FOUND"
+        store = client.app.state.platform.store
+        assert not any(r["action"] == "ai.tool_forbidden" for r in store.audit_list("sample-app"))
+        assert not chat_audit(client.app.state.jkq_models)
+
+
+@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("name,args,valid", [
+    ("document.polish", {"id": "D1", "style": "formal"}, True),
+    ("document.polish", {"id": "D1", "style": "concise"}, True),
+    ("document.polish", {"id": "D1", "style": "invalid"}, False),
+    ("enterprise.get", {}, False),
+    ("enterprise.get", {"id": 1}, False),
+    ("unknown.tool", {}, False),
+    (TOOL, {"entId": "E001", "tags": ["演练"]}, True),
+    (TOOL, {"entId": "E001", "tags": [False]}, False),
+])
+def test_registered_call_contract(client_factory, monkeypatch, stream, name, args, valid):
+    configure(monkeypatch)
+    # 第一条合法、第二条非法时，整批工具均不得发出。
+    calls = [CALL, {"type": "function", "function": {
+        "name": name.replace(".", "_"), "arguments": json.dumps(args),
+    }}]
+    upstream = ProviderStream(
+        frame({"tool_calls": [dict(call, index=i) for i, call in enumerate(calls)]}, finish="tool_calls"),
+        "data: [DONE]\n\n",
+    )
+
+    def respond(request):
+        body = json.loads(request.content)
+        declarations = {t["function"]["name"]: t["function"]["parameters"] for t in body["tools"]}
+        polish = declarations["document_polish"]
+        assert polish["required"] == ["id", "style"]
+        assert polish["properties"]["style"] == {"type": "string", "enum": ["formal", "concise"]}
+        assert declarations["enterprise_get"]["required"] == ["id"]
+        assert declarations[ALIAS]["required"] == ["entId"]
+        if stream:
+            return httpx.Response(200, stream=upstream)
+        return httpx.Response(200, json={"choices": [{"message": {"content": None, "tool_calls": calls}}]})
+
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(respond)
+        started = monotonic()
+        response = client.post(PATH, json={**REQUEST, "stream": stream,
+                                           "tools": [TOOL, "document.polish", "enterprise.get"]})
+        assert monotonic() - started < 30
+        if stream:
+            sequence = events(response)
+            assert upstream.closed
+            if valid:
+                assert [e for e, _ in sequence] == ["meta", "tool", "tool", "done"]
+                assert sequence[1:3] == [("tool", {"tool": TOOL, "args": {"entId": "E001"}}),
+                                         ("tool", {"tool": name, "args": args})]
+            else:
+                assert [e for e, _ in sequence] == ["meta", "error"]
+                assert sequence[-1][1]["code"] == "PROVIDER_ERROR"
+        elif valid:
+            assert response.status_code == 200
+            assert response.json()["content"] is None
+            assert response.json()["tool_calls"] == [
+                {"name": TOOL, "arguments": {"entId": "E001"}}, {"name": name, "arguments": args},
+            ]
+        else:
+            assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+        assert [(r["provider"], r["status"]) for r in chat_audit(service)] == [
+            ("cloud", "success" if valid else "provider_error"),
+        ]
+
+
+@pytest.mark.parametrize("finish", [None, "aborted", "insufficient_system_resource"])
+def test_role_disconnect_and_failed_finish(client_factory, monkeypatch, finish):
+    configure(monkeypatch)
+    upstream = ProviderStream(frame({"role": "assistant"}, finish=finish), disconnect=finish is None)
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: httpx.Response(200, stream=upstream))
+        started = monotonic()
+        response = client.post(PATH, json={**REQUEST, "stream": True})
+        assert monotonic() - started < 30 and upstream.closed
+        sequence = events(response)
+        assert [e for e, _ in sequence] == ["meta", "error"]
+        assert sequence[1][1]["code"] == "PROVIDER_ERROR"
+        assert "sensitive-upstream-detail" not in response.text
+        assert chat_audit(service) == [{"provider": "cloud", "model": "cloud-model",
+                                        "status": "provider_error", "usage": {"input": None, "output": None}}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_provider_400_is_permanent(client_factory, monkeypatch, stream):
+    configure(monkeypatch)
+    with client_factory() as client:
+        login(client)
+        service = client.app.state.jkq_models
+        service.transport = httpx.MockTransport(lambda _: httpx.Response(400, text="sensitive-upstream-detail"))
+        started = monotonic()
+        response = client.post(PATH, json={**REQUEST, "tools": [TOOL], "stream": stream})
+        assert monotonic() - started < 30
+        assert response.status_code == 502 and response.json()["error"]["code"] == "PROVIDER_ERROR"
+        assert "sensitive-upstream-detail" not in response.text
+        assert chat_audit(service) == [{"provider": "cloud", "model": "cloud-model",
+                                        "status": "provider_error", "usage": {"input": None, "output": None}}]
 
 
 PUBLIC = {**REQUEST, "classification": "public"}
@@ -477,6 +657,7 @@ def test_codex_registered_tool_event(codex_client, fake_codex):
     "CLI diagnostic",
     '{"content":null,"tool_calls":[{"name":"unknown","arguments":{}}]}',
     '{"content":null,"tool_calls":[{"name":"policy_match","arguments":"{}"}]}',
+    '{"content":null,"tool_calls":[{"name":"policy_match","arguments":{}}]}',
     '{"content":42,"tool_calls":[]}',
     '{"content":"ok","tool_calls":{}}',
 ])
