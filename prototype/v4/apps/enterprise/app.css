@@ -110,9 +110,9 @@
 .app-enterprise .tbl .link:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
 .app-enterprise .tbl input[type=checkbox]{vertical-align:middle;accent-color:var(--primary)}
 .app-enterprise .ent-stale{color:var(--warn)}
-.app-enterprise .ent-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--s3);align-items:start}
+.app-enterprise .ent-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s3);align-items:start;padding-bottom:var(--s2)}
 .app-enterprise .ent-col{padding:var(--s3);border-radius:var(--r-lg);background:var(--canvas);border:1px solid var(--border);min-height:160px;display:flex;flex-direction:column;gap:var(--s2)}
-.app-enterprise .ent-bcard{font-size:var(--fs-sm)}
+.app-enterprise .ent-bcard{font-size:var(--fs-sm);overflow-wrap:anywhere}
 .app-enterprise .sdot.h-amber{background:var(--warn)}
 @container ap (max-width:640px){
   .app-enterprise .ent-iss{grid-template-columns:1fr}
@@ -122,7 +122,8 @@
   .app-enterprise .ent-hd{flex-wrap:wrap}
   .app-enterprise .ent-hd-tags{flex-basis:100%;justify-content:flex-start;padding-left:52px}
 }
-@container ap (max-width:460px){.app-enterprise .ent-board{grid-template-columns:1fr}}
+@container ap (width < 680px){.app-enterprise .ent-board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container ap (width < 420px){.app-enterprise .ent-board{grid-template-columns:minmax(0,1fr)}}
 
 /* ==== parity：对齐 multica（安静的内联统计 / 状态圈 / 分组条 / 发丝线行） ==== */
 .app-enterprise .x-ring{width:12px;height:12px;border-radius:50%;border:1.5px solid var(--tf,var(--text-3));flex:none;box-sizing:border-box}
@@ -141,5 +142,3 @@
 .app-enterprise .ent-col{border:0;background:var(--fill-2);padding:var(--s2)}
 .app-enterprise .ent-bcard{box-shadow:none}
 .app-enterprise .ent-iss-l .li.on{background:var(--active)}
-.app-enterprise .ent-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,1fr);grid-template-columns:none;overflow-x:auto;padding-bottom:var(--s2)}
-@container ap (max-width:460px){.app-enterprise .ent-board{grid-auto-flow:row;grid-auto-columns:auto}}

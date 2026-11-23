@@ -1,5 +1,6 @@
 """空库首管关闭、公网路径、应用列表和续跑任务。"""
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ pytest.importorskip("fastapi", reason="经开区集成测试需要 requirements-
 from fastapi.testclient import TestClient
 
 from deploy.entrypoint import (
+    main,
     require_demo_passwords,
     use_same_origin_http,
     write_boot_token,
@@ -99,6 +101,37 @@ def test_frontend_mode_switch_keeps_mock(tmp_path, monkeypatch):
     assert "mode: 'http'" in target.read_text(encoding="utf-8")
     compose = (DEPLOY / "docker-compose.yml").read_text(encoding="utf-8")
     assert "JKQ_FRONTEND_API_MODE: ${JKQ_FRONTEND_API_MODE:-http}" in compose
+
+
+@pytest.mark.parametrize(("demo", "deployed", "configured"), [
+    (True, True, None), (True, True, "/custom/enterprise.sqlite"),
+    (True, False, None), (False, True, None),
+])
+def test_entrypoint_supplies_private_store_only_for_deployed_demo(tmp_path, monkeypatch, demo, deployed, configured):
+    data_dir = tmp_path / "state"
+    monkeypatch.setenv("HAIKNOW_ROOT", str(tmp_path))
+    monkeypatch.setenv("HAIKNOW_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("JKQ_DEMO_MODE", str(int(demo)))
+    monkeypatch.setenv("JKQ_DEPLOY_RUNTIME", str(int(deployed)))
+    if configured is None:
+        monkeypatch.delenv("JKQ_ENTERPRISE_PRIVATE_DB", raising=False)
+    else:
+        monkeypatch.setenv("JKQ_ENTERPRISE_PRIVATE_DB", configured)
+    for key, value in PASSWORDS.items():
+        monkeypatch.setenv(key, value)
+
+    class CapturedStart(Exception):
+        pass
+
+    def capture_child(_command, *, env=None):
+        expected = configured or (str(data_dir / "enterprise-private.sqlite") if demo and deployed else None)
+        assert (env if env is not None else os.environ).get("JKQ_ENTERPRISE_PRIVATE_DB") == expected
+        assert os.environ.get("JKQ_ENTERPRISE_PRIVATE_DB") == configured
+        raise CapturedStart
+
+    monkeypatch.setattr("deploy.entrypoint.subprocess.Popen", capture_child)
+    with pytest.raises(CapturedStart):
+        main()
 
 
 def test_empty_volume_closes_bootstrap_and_hold_survives_restart(tmp_path, monkeypatch, cheap_password_hash):

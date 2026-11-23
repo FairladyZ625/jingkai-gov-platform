@@ -189,6 +189,20 @@
         "label": "承担国家或北京市重大科技专项"
       }
     ],
+    "RP-028": [
+      {
+        "f": "supplyChainFinanceProvider",
+        "op": "==",
+        "v": true,
+        "label": "属于商业保理或融资租赁公司，并提供相应融资服务"
+      },
+      {
+        "f": "financingContractAmount",
+        "op": ">=",
+        "v": 100000000,
+        "label": "当年相关业务合同金额不少于 1 亿元"
+      }
+    ],
     "RP-029": [
       {
         "f": "privateFundManager",
@@ -207,6 +221,36 @@
         "op": ">=",
         "v": 100000000,
         "label": "所管理基金实缴规模合计不低于 1 亿元"
+      }
+    ],
+    "RP-038": [
+      {
+        "f": "exportCreditInsuredEnterprise",
+        "op": "==",
+        "v": true,
+        "label": "属于投保出口信用险或海外投资险的外贸企业"
+      },
+      {
+        "f": "exportAmount",
+        "op": ">",
+        "v": 50000000,
+        "label": "出口额超过 5000 万元"
+      }
+    ],
+    "RP-050": [
+      {
+        "f": "recognizedIncubator",
+        "op": "==",
+        "v": true,
+        "label": "属于经认定的科技企业孵化器"
+      }
+    ],
+    "RP-062": [
+      {
+        "f": "assemblyProject",
+        "op": "==",
+        "v": true,
+        "label": "申报方为亦庄新城范围内相应新建装配式公共或工业建筑项目的建设单位"
       }
     ],
     "RP-070": [

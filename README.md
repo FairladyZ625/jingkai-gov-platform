@@ -82,6 +82,7 @@ install -d -m 0700 /var/lib/jkq-demo/data
 另外两个常用但不在 `env.example` 里的变量：
 
 - `DEMO_STATE_DIR`：宿主机持久目录的绝对路径，默认 `/var/lib/jkq-demo`。若修改，须先创建其下的 `data` 子目录。
+- `JKQ_ENTERPRISE_PRIVATE_DB`：企业原值库的容器内绝对路径。演示容器未设置时默认用数据卷内的 `/state/live/enterprise-private.sqlite`。已有原值库的部署请保留原路径；默认值不会覆盖显式配置，也不迁移旧数据。
 - `JKQ_DEPLOY_RUNTIME`：由 compose 自动设为 `1`，不必手写。为 `1` 且前端模式为 `http` 时，入口只会改**容器内**前端配置，仓库里的原型文件保持 mock。
 
 生成口令示例（把输出粘贴进 `.env`，不要提交、不要发到聊天或工单）：

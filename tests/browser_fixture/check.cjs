@@ -10,7 +10,7 @@ function walk(dir) {
   return fs.readdirSync(dir,{withFileTypes:true}).flatMap(d => {
     const p = path.join(dir,d.name);
     assert(!d.isSymbolicLink() && !d.name.startsWith('.'), '归档不能含隐藏项/符号链接');
-    return d.isDirectory() ? walk(p) : [path.relative(root,p)];
+    return d.isDirectory() ? walk(p) : [path.relative(root,p).replaceAll('\\', '/')];
   });
 }
 assert.deepEqual(walk(root).sort(), [...Object.keys(manifest.files),'MANIFEST.json'].sort());
@@ -30,7 +30,7 @@ function load(entry = start) {
   function asset(url) {
     const u = new URL(url,start);
     assert.equal(u.protocol,'file:'); assert.equal(u.host,'');
-    const rel = path.relative(root,fileURLToPath(u));
+    const rel = path.relative(root,fileURLToPath(u)).replaceAll('\\', '/');
     assert.ok(Object.hasOwn(manifest.files,rel), '未列入本地清单：'+rel);
     loaded.add(rel);return fileURLToPath(u);
   }
@@ -89,11 +89,11 @@ async function main() {
   // 以下为正在修复的 #186 观测，日志保留实际答案，不把“无依据”记作问答通过。
   await probeAnswer('群雁计划上市辅导补贴最高多少？');
   await probeAnswer('群雁计划对境内上市辅导费用怎么补贴？');
-  const historical=fs.readFileSync(path.join(root,'parking-original.txt'),'utf8').trim();
+  const historical=fs.readFileSync(path.join(root,'parking-original.txt'),'utf8').replaceAll('\r\n','\n').trim();
   const oldNote=await kb.importNow({items:[{name:'隔离样例园区停车管理通知',text:historical}],space:'rules'});
   assert.equal((await kb.get(oldNote.docs[0].id)).item.text.trim(),historical);
   await probeAnswer('园区停车最长能停多久？');
-  const text=fs.readFileSync(path.join(root,'parking.txt'),'utf8');
+  const text=fs.readFileSync(path.join(root,'parking.txt'),'utf8').replaceAll('\r\n','\n');
   const preview=(await kb.preview([{name:'【T38虚拟】鹿桥园区访客停车规程',text,parse:'real',from:'粘贴'}])).items;
   preview[0].meta.space='rules';
   const parking=(await kb.commit(preview,'粘贴')).docs[0];

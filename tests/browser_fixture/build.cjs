@@ -62,21 +62,25 @@ for (const f of [...runtime].sort()) {
   }
   write(v4 + f, result); files[v4 + f].sourceSha256 = sha256(original);
 }
-const start = entry.indexOf('<script src="config/app.config.js">'), end = entry.indexOf('</head>');
+const headStart = entry.indexOf('<script>'), headEnd = entry.indexOf('</head>');
+const configStart = entry.indexOf('<script src="config/app.config.js">'), end = entry.indexOf('</body>');
 const hook = '<script src="mock/mock-api.js"></script>';
-if (start < 0 || end <= start || !entry.slice(start,end).includes(hook) ||
-    /<(script|link)\b/i.test(entry.slice(0,start)) || /<script\b/i.test(entry.slice(end))) throw Error('入口顺序变化，请复核隔离边界');
-// 保留入口原有顶层 parser-blocking 脚本标签，不能将整个 head 置入一次
-// document.write：那可能让依赖 DOMContentLoaded 的真实外壳错过启动事件。
-const fragment = entry.slice(start,end).replace(/<script>([\s\S]*?)<\/script>/g,
-  (_,src)=>'<script>if(window.T38?.ready){\n'+src+'\n}</script>')
+const bootRoot = /<div id="root">\s*<div class="app-boot"[\s\S]*?<\/div>\s*<\/div>/;
+if (headStart < 0 || headEnd <= headStart || configStart <= headEnd || end <= configStart ||
+    !entry.slice(configStart, end).includes(hook) || !bootRoot.test(entry.slice(headEnd, configStart)) ||
+    /<(script|link)\b/i.test(entry.slice(0, headStart)) ||
+    /<(script|link)\b/i.test(entry.slice(headEnd, configStart)) ||
+    /<(script|link)\b/i.test(entry.slice(end))) throw Error('入口顺序变化，请复核隔离边界');
+// 保留入口原有顶层 parser-blocking 脚本标签，确保 CSP 与 isolate.js 先于首屏主题脚本及全部业务脚本执行。
+const fragment = entry.slice(headStart, end)
+  .replace(/<script>([\s\S]*?)<\/script>/g, (_, src) => '<script>if(window.T38?.ready){\n' + src + '\n}</script>')
+  .replace(bootRoot, '<div id="root"><div class="app-boot" role="status" data-op="startup.loading"><strong>经开区共享智能体工作站</strong><span>T38 隔离启动中。若一直停在这里，请确认使用 file:// 打开完整解压包，勿降低浏览器安全设置。</span></div></div>')
   .replace(hook, '<script src="../../qa/seed.js"></script>\n' + hook)
-  + '<script src="../../qa/probe.js"></script>';
+  + '<script src="../../qa/probe.js"></script>\n';
 const csp = "default-src 'none'; script-src file: 'unsafe-inline'; style-src file: 'unsafe-inline'; img-src file: data: blob:; font-src file: data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
-const page = entry.slice(0,start).replace(/<title>/, '<title>【T38 隔离验收】')
+const page = entry.slice(0, headStart).replace(/<title>/, '<title>【T38 隔离验收】')
   + '<meta http-equiv="Content-Security-Policy" content="' + csp + '"><meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">\n'
-  + '<script src="../../qa/isolate.js"></script>\n' + fragment + entry.slice(end).replace('<div id="root"></div>',
-    '<div id="root">T38 隔离启动中。若一直停在这里，请确认使用 file:// 打开完整解压包，勿降低浏览器安全设置。</div>');
+  + '<script src="../../qa/isolate.js"></script>\n' + fragment + entry.slice(end);
 write(v4 + 'index.html', page); files[v4 + 'index.html'].sourceSha256 = sha256(entry);
 for (const name of ['isolate.js','seed.js','probe.js']) write('qa/' + name, fs.readFileSync(path.join(__dirname,name)));
 for (const name of ['README.md','parking.txt','parking-original.txt']) write(name, fs.readFileSync(path.join(__dirname,name)));

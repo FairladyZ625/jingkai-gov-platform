@@ -115,7 +115,7 @@
         const r = S.prof; if (!r) { $('#es').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel" style="height:120px"></div></div>'; foot(back(), ''); return; }
         const e = r.item; const openIssues = r.issues.filter((i) => i.status !== '已办结'); const lastV = r.visits[0];
         const q0 = (e.qualifications || [])[0];
-        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short)}</div><div class="meta clip">${esc(e.name)}${e.creditCode ? ' · ' + esc(e.creditCode) : ''}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${(e.tags || []).slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
+        $('#es').innerHTML = `<div class="ent-head" data-op="enterprise.profile"><div class="row gap3 ent-hd">${ini(e, true)}<div class="grow"><div class="t-lg" style="font-weight:500">${esc(e.short || e.name)}</div><div class="meta clip">${esc(e.name)}${e.creditCode ? ' · ' + esc(e.creditCode) : ''}</div></div><div class="row wrap ent-hd-tags">${exampleBadge(e)}${(e.tags || []).slice(0, 3).map((t) => tag(t, 'entTag')).join('')}</div></div></div>
           <div class="card ent-brief" data-op="enterprise.brief"><div class="card-h"><span class="t-3">${icon('sparkles')}</span><span class="ttl">30 秒速览</span><span class="sp"></span><span class="meta">走访前看这里</span></div>
             <div class="ent-kv4">
               <div><div class="meta">做什么</div><div>${esc(e.products || e.industry)}</div></div>
@@ -198,19 +198,29 @@
           <select class="select" style="width:130px" id="lind" data-op="enterprise.list-ind"><option value="">全部行业</option>${FACETS.industries.map((t) => `<option ${S.lind === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
           <label class="check"><input type="checkbox" id="lal" data-op="enterprise.list-alert" ${S.lalert ? 'checked' : ''}>只看有提醒</label></div><div id="ltb"><div class="skel-list"><div class="skel"></div></div></div>`;
         const go = () => renderTable();
-        let tm; $('#lq').oninput = (ev) => { clearTimeout(tm); tm = setTimeout(() => { S.lq = ev.target.value; go(); }, 200); };
+        let tm; $('#lq').oninput = (ev) => { S.lq = ev.target.value; clearTimeout(tm); tm = setTimeout(go, 200); };
         $('#ltag').onchange = (ev) => { S.ltag = ev.target.value; go(); }; $('#lind').onchange = (ev) => { S.lind = ev.target.value; go(); }; $('#lal').onchange = (ev) => { S.lalert = ev.target.checked; go(); };
         go();
       }
+      let tableRequest = 0;
       async function renderTable() {
         const box = $('#ltb'); if (!box) return;
-        let r; try { r = await E.list({ q: S.lq.trim(), tag: S.ltag, industry: S.lind, alert: S.lalert ? 1 : '', sort: S.lsort }); } catch (e) { box.innerHTML = ui.empty({ icon: 'alert', title: '加载失败', desc: e.message }); return; }
-        S.listIds = r.items.map((e) => e.id); S.tableKey = [S.lq.trim(), S.ltag, S.lind, S.lalert, S.lsort].join('|'); const alertIds = new Set(ALERTS.map((a) => a.entId));
-        box.innerHTML = `<div class="row" style="margin-bottom:var(--s2)"><span class="meta" data-op="enterprise.list-count">${r.total} 家${S.sel.size ? ` · 已选 ${S.sel.size}` : ''}</span><span class="sp"></span>
+        const params = { q: S.lq.trim(), tag: S.ltag, industry: S.lind, alert: S.lalert ? 1 : '', sort: S.lsort };
+        const key = [params.q, params.tag, params.industry, S.lalert, params.sort].join('|');
+        const request = ++tableRequest;
+        const current = () => request === tableRequest && box === $('#ltb');
+        let r; try { r = await E.list(params); } catch (e) { if (current()) box.innerHTML = ui.empty({ icon: 'alert', title: '加载失败', desc: e.message }); return; }
+        if (!current()) return;
+        const filtered = !!(params.q || params.tag || params.industry || params.alert);
+        const emptyLedger = !r.total && !filtered;
+        S.listIds = r.items.map((e) => e.id); S.tableKey = key; const alertIds = new Set(ALERTS.map((a) => a.entId));
+        box.innerHTML = `<div class="row wrap" style="margin-bottom:var(--s2)"><span class="meta" data-op="enterprise.list-count">${r.total} 家${S.sel.size ? ` · 已选 ${S.sel.size}` : ''}</span><span class="sp"></span>
             <select class="select sm" style="width:120px;height:28px" id="lsort"><option value="lastVisit" ${S.lsort === 'lastVisit' ? 'selected' : ''}>最久未走访</option><option value="revenue" ${S.lsort === 'revenue' ? 'selected' : ''}>营收</option><option value="name" ${S.lsort === 'name' ? 'selected' : ''}>名称</option></select>
-            ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
+            ${canOp ? `<button class="btn sm ghost" data-act="import" data-op="enterprise.import">${icon('upload')}导入</button>${emptyLedger ? '<button class="btn sm primary" data-act="newEnt" data-op="enterprise.new">新建企业</button>' : ''}` : ''}<button class="btn sm" data-act="export" data-op="enterprise.export">${icon('download')}导出 CSV</button></div>
           ${r.items.length ? `<div class="card flat ent-tbl scroll"><table class="tbl"><thead><tr><th style="width:32px"><input type="checkbox" class="pol-ck" data-selall></th><th>企业</th><th>行业</th><th class="r">人数</th><th class="r">营收(万元)</th><th>服务专员</th><th class="r">最近走访</th></tr></thead><tbody>
-            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked || !e.revenue ? 'mask' : ''}">${e.revenue ? esc(e.revenue.value) : '***'}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
+            ${r.items.map((e) => `<tr class="${S.sel.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-sel="${e.id}" ${S.sel.has(e.id) ? 'checked' : ''}></td><td><a class="link" data-ent="${e.id}">${esc(e.short || e.name)}</a> ${exampleBadge(e)}${alertIds.has(e.id) ? ` <span class="sdot h-amber" title="有提醒"></span>` : ''}</td><td class="t-2">${esc(e.industry.split(' · ')[0])}</td><td class="r num">${e.employees}</td><td class="r num ${e.masked || !e.revenue ? 'mask' : ''}">${e.revenue ? esc(e.revenue.value) : '***'}</td><td class="t-2">${esc(e.servicer)}</td><td class="r num ${e.lastVisitDays > C.staleDays ? 'ent-stale' : 't-2'}">${e.lastVisitDays ? e.lastVisitDays + ' 天' : '—'}</td></tr>`).join('')}</tbody></table></div>` : emptyLedger
+            ? ui.empty({ icon: 'inbox', title: '还没有企业', desc: canOp ? '可以导入台账或新建企业。' : '暂时没有可查看的企业。' })
+            : ui.empty({ icon: 'filter', title: '没有符合条件的企业', action: '清空筛选' })}`;
         $('#lsort') && ($('#lsort').onchange = (ev) => { S.lsort = ev.target.value; renderTable(); });
       }
 
