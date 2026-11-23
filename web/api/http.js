@@ -230,6 +230,7 @@
       const maySyncSession = isLogin || (!authPending && sessionPaths.test(operation));
       const retryable = (module === 'platform' || module === 'kb') && !onEvent && !decodeHttp &&
         (method === 'GET' || (method === 'POST' && readPosts.has(route)));
+      const maxRetries = Number.isInteger(c.retryLimit) && c.retryLimit >= 0 ? c.retryLimit : retryLimit;
       const sameOrigin = /^https?:$/.test(window.location?.protocol) && c.baseUrl === 'http://127.0.0.1:8080';
       const base = (sameOrigin ? '' : c.baseUrl || '').replace(/\/$/, '');
       const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
@@ -270,8 +271,8 @@
             clearMockSession();
             emitEvent('unauthenticated', error);
           } else if ((error.status === 0 || error.status >= 500) && retryable &&
-                     attempt < retryLimit && revision === sessionRevision) {
-            emitEvent('notice', { message: error.message + `，正在重试（${attempt + 1}/${retryLimit}）` });
+                     attempt < maxRetries && revision === sessionRevision) {
+            emitEvent('notice', { message: error.message + `，正在重试（${attempt + 1}/${maxRetries}）`, retrying: true });
             await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
             if (revision === sessionRevision) continue;
           } else if (error.status === 403 || error.status === 0 || error.status >= 500) {

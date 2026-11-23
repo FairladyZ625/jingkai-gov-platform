@@ -15,7 +15,13 @@
   const loginDemoAccounts = () => offlineDemo() || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
 
   window.addEventListener?.('jk:api:notice', ({ detail }) => {
-    toast(detail.message, { type: 'err' });
+    if (detail?.retrying) return toast(detail.message, { type: 'err' });
+    const before = new Set($$('.toasts .toast'));
+    setTimeout(() => {
+      const current = $$('.toasts .toast');
+      if (current.some((el) => (el.classList.contains('err') && !before.has(el)) || el.textContent === String(detail?.message ?? '')) || $('#lf [role="alert"]')) return;
+      toast(detail.message, { type: 'err' });
+    }, 0);
   });
   window.addEventListener?.('jk:api:unauthenticated', () => {
     if (!S.me) return;

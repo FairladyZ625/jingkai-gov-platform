@@ -3,7 +3,9 @@
  * ===================================================================== */
 const jkUseMock = typeof URLSearchParams !== 'undefined' &&
   new URLSearchParams(window.location?.search).get('api') === 'mock';
-const jkModuleMode = !jkUseMock && /^https?:$/.test(window.location?.protocol) ? 'http' : 'mock';
+const jkHttpModules = !jkUseMock && /^https?:$/.test(window.location?.protocol)
+  ? { platform: 'http', kb: 'http' }
+  : {};
 
 window.JK_CONFIG = {
   platformName: '经开智能体工作站',
@@ -64,10 +66,7 @@ window.JK_CONFIG = {
     mode: 'mock',
     baseUrl: 'http://127.0.0.1:8080',
     timeoutMs: 20000,
-    modules: {
-      platform: jkModuleMode,
-      kb: jkModuleMode,
-    },
+    modules: jkHttpModules,
   },
 };
 
