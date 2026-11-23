@@ -40,7 +40,7 @@ def test_document_audit_is_visible_without_browser_write(server):
         page.on("request", lambda request: posts.append(request.url)
                 if request.url == audit_url and request.method == "POST" else None)
         page.locator('[data-op="nav.document"]').click()
-        page.locator('[data-op="document.tpl-T03"]').click()
+        page.locator('[data-op="document.tpl-T06"]').click()
         page.locator('[data-op="document.sample"]').click()
         drafts = server.url + "/api/apps/document/drafts"
         with page.expect_response(lambda r: r.url == drafts and r.request.method == "POST") as created:
@@ -55,6 +55,10 @@ def test_document_audit_is_visible_without_browser_write(server):
             page.locator('[data-op="document.save"]').click()
         assert saved.value.ok, saved.value.text()
         expect(page.locator('[data-op="document.save"]')).to_have_count(0)
+        policy_draft = page.request.post(drafts, data={
+            "templateId": "T03", "inputs": {"policy": "RP-023", "start": "2026-11-11", "end": "2026-11-30"},
+        })
+        assert policy_draft.ok, policy_draft.text()
         result = page.request.get(audit_url, params={"app": "document"})
         assert result.ok, result.text()
         rows = [row for row in result.json()["items"] if row["detail"].get("recordId") == did]
@@ -67,4 +71,5 @@ def test_document_audit_is_visible_without_browser_write(server):
         page.locator('[data-op="admin.tab-audit"]').click()
         audit = page.locator('.audit-row').filter(has_text="公文协作")
         expect(audit.filter(has_text="起草公文初稿（模拟）").first).to_be_visible()
+        expect(audit.filter(has_text="生成政策模板初稿").first).to_be_visible()
         expect(audit.filter(has_text="保存公文记录").first).to_be_visible()

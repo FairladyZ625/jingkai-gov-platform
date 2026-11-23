@@ -8,11 +8,20 @@ from contextlib import closing
 from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 
+from apps.policy.api.policy_catalog import catalog, item_with_doc
+
 from .api.drafting_router import error
 from .api.drafts import RECORD_TYPE
 
 LOCK_FAILURE = "document_draft_locked"
 records_guard = APIRouter(prefix="/api/v1/apps/document")
+
+
+def _public_policy_lookup(policy_id: str) -> dict | None:
+    """为公文模板提供公开政策目录只读查询，避免应用 API 直接跨应用导入。"""
+    items, docs = catalog()
+    item = items.get(policy_id)
+    return item_with_doc(item, docs[item["doc"]]) if item else None
 
 
 @records_guard.post("/records", include_in_schema=False)
@@ -68,6 +77,7 @@ def _install_storage_guard(platform):
 
 def install(app):
     """在实例对外监听前调用一次。"""
+    app.state.public_policy_lookup = _public_policy_lookup
     _install_storage_guard(app.state.platform)
 
     @app.exception_handler(sqlite3.IntegrityError)

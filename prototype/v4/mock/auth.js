@@ -31,7 +31,7 @@
   /* ---------- 会话 ---------- */
   X.first('POST', '/api/v1/auth/login', (b) => {
     const u = S().users.find((x) => x.username === (b.username || '').trim());
-    if (!u?.password || u.password !== b.password) X.err(401, 'BAD_CREDENTIALS', '账号或密码不正确');
+    if (typeof u?.password !== 'string' || u.password !== b.password) X.err(401, 'BAD_CREDENTIALS', '账号或密码不正确');
     if (u.status !== 'active') X.err(403, 'ACCOUNT_DISABLED', '该账号已停用，请联系管理员');
     S().session = { userId: u.id, at: X.now() }; S().me = u.id; u.lastLogin = X.now();
     log('登录'); return { user: pub(u) };

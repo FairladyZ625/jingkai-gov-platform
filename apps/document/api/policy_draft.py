@@ -2,8 +2,6 @@
 
 from haiknow_sdk import DataError
 
-from apps.policy.api.policy_catalog import catalog, item_with_doc
-
 from . import templates
 from .checks import read_date
 
@@ -16,13 +14,13 @@ def _line(value, missing):
     return (value or "").strip().rstrip("。") or f"【待补：{missing}】"
 
 
-def reward_notice(spec, inputs, extra):
+def reward_notice(spec, inputs, extra, *, lookup):
+    if lookup is None:
+        raise DataError("app_unavailable", "政策公开目录尚未接入")
     policy_id = inputs["policy"].strip()
-    items, docs = catalog()
-    item = items.get(policy_id)
-    if not item:
+    policy = lookup(policy_id)
+    if not policy:
         raise DataError("not_found", "所选政策不在公开目录中，请重新选择")
-    policy = item_with_doc(item, docs[item["doc"]])
     times = policy["times"]
     if (policy.get("historical") or times.get("valid", "").startswith("已替代")
             or policy["docState"] in {"已失效", "已废止", "已替代"}):

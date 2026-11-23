@@ -31,11 +31,15 @@ def test_reward_notice_can_fill_missing_header_fields_and_reach_leader(server):
             editor = paper.locator(f'[data-ed="{key}"]')
             editor.fill(value)
             editor.press("Tab")
-        # 样例正文的申报材料仍需人工填写，不能靠放宽核查来送审。
-        paper.locator('[data-op="document.p-2"]').click()
-        editor = paper.locator('[data-ed="2"]')
-        editor.fill("申报材料仅限本次测试的虚构申请表。")
-        editor.press("Tab")
+        # 样例正文的申报方式与咨询电话仍需人工填写，不能靠放宽核查来送审。
+        for para, value in (
+            (5, "五、申报方式。仅用于本次隔离测试演练，不对外受理。"),
+            (6, "六、咨询电话。010-00000000（测试专用）。"),
+        ):
+            paper.locator(f'[data-op="document.p-{para}"]').click()
+            editor = paper.locator(f'[data-ed="{para}"]')
+            editor.fill(value)
+            editor.press("Tab")
         with member.expect_response(lambda r: r.url == f'{endpoint}/{draft["id"]}' and r.request.method == "PUT") as saved:
             member.locator('[data-op="document.save"]').click()
         assert saved.value.ok, saved.value.text()

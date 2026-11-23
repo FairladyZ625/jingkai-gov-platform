@@ -100,7 +100,8 @@ def create_draft(body: DraftIn, ctx: Operator, request: Request):
     platform = request.app.state.platform
     platform.data.projects.require(ctx.user, drafts.PROJECT)
     reward_notice = body.templateId == "T03"
-    content = (policy_draft.reward_notice(spec, body.inputs, body.extra) if reward_notice
+    lookup = getattr(request.app.state, "public_policy_lookup", None)
+    content = (policy_draft.reward_notice(spec, body.inputs, body.extra, lookup=lookup) if reward_notice
                else templates.mock_draft(spec, body.inputs, body.extra))
     citations = drafts.resolve_citations(getattr(platform, "kb", None), ctx.user, body.refs, content)
     policy_id = (body.inputs.get("policy") or "").strip() or None
