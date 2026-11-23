@@ -42,12 +42,13 @@ def resolve_citations(knowledge, user, references, content):
     return citations
 
 
-def create(ctx, template_id, policy_id, content, citations):
+def create(ctx, template_id, policy_id, content, citations, *, provider="mock"):
+    label = "政策模板初稿" if provider == "policy-template" else "AI 初稿"
     record = ctx.records.save(project=PROJECT, type=RECORD_TYPE, data={
         "templateId": template_id, "policyId": policy_id, "author": ctx.user.name,
-        "by": f"{ctx.user.name}（AI 初稿）", "content": content, "citations": citations, "comments": [],
+        "by": f"{ctx.user.name}（{label}）", "content": content, "citations": citations, "comments": [],
     })
-    ctx.audit("document.draft.mock", {"recordId": record["id"], "provider": "mock"})
+    ctx.audit(f"document.draft.{provider}", {"recordId": record["id"], "provider": provider})
     return _draft(record, [_edition(record)])
 
 
