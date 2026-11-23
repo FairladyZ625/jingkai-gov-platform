@@ -46,7 +46,8 @@
       /** → {items:Review[]} */ list: () => H.get('/api/v1/reviews').then(reviewView),
       /** {decision:'approve'|'reject', comment} → {item} */ decide: (id, b) => H.post(`/api/v1/reviews/${id}/decisions`, reviewDecision(id, b)),
     },
-    todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id, b) },
+    todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id,
+      H.mode() === 'http' && b.status === '已完成' ? { done: true } : b) },
     feed: { list: () => H.get('/api/v1/feed') },
     audit: { /** → {items:AuditEntry[]} */ list: () => H.get('/api/v1/audit') },
     kb: { /* 知识库适配：知识库模块的 api/kb.js 会扩展/覆盖这里 */

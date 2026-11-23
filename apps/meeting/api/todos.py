@@ -52,18 +52,24 @@ def commit_todos(ctx, record, ids):
     return {'committed': committed, 'skipped': skipped}
 
 
-def my_todos(ctx, *, now):
+def assigned_todos(records, recipient_id):
+    """从调用方已通过权限检查的会议版本投影原始派发回执。"""
     items = []
-    for record in ctx.records.list(type='meeting')['items']:
+    for record in records:
         for todo in record['data'].get('todos', []):
             assignment = todo.get('assignment') or {}
-            if assignment.get('recipientId') == ctx.user.id:
+            if assignment.get('recipientId') == recipient_id:
                 items.append({
                     'id': assignment['id'], 'title': todo['task'], 'task': todo['task'],
                     'owner': todo['owner'], 'due': todo['due'], 'app': 'meeting', 'kind': 'todo',
                     'from': assignment['sender'], 'at': assignment['at'], 'status': 'pending', 'done': False,
                     'ref': {'meetingId': record['id'], 'tab': 'todos', 'todoId': todo['id']},
                 })
+    return items
+
+
+def my_todos(ctx, *, now):
+    items = assigned_todos(ctx.records.list(type='meeting')['items'], ctx.user.id)
     # 日期表达式仍可派发，能解析为 ISO 时间的期限才参与逾期计算。
     plan = c04.plan([
         c04.Node(item['id'], item['task'], ctx.user.id, item['due']) for item in items

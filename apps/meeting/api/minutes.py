@@ -106,8 +106,8 @@ def minutes_for(data):
                     body.append({'h': '会议议定', 'p': f'{speaker}：{match[1] or match[2]}', 'refs': [ts]})
         if not body:
             body = [
-                {'h': '发言摘录', 'p': f'{speaker}：{words}', 'refs': [ts]}
-                for ts, speaker, words in lines
+                {'h': f'发言片段 {index} · {speaker}', 'p': words, 'refs': [ts]}
+                for index, (ts, speaker, words) in enumerate(lines, start=1)
             ]
         view = {
             'title': f"{data['title']}纪要",

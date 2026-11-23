@@ -319,6 +319,7 @@
     slot.panel = { app: id, route: slot.tab || 'home', params: {} };
     rememberPanel(slot.panel);
     activate(id); if (S.layout !== 'max') setLayout('split');
+    if (id === 'inbox') return refreshInbox();
     return sleep(30);
   }
   function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
@@ -804,17 +805,24 @@
 
   /* ---------------- 收件箱 ---------------- */
   // 角标 = 待我处理 + 未完成的我的待办，与收件箱两栏条数一致（#19）。
-  function pendingCount() { return S.inbox.length + S.todos.filter((t) => t.status !== '已完成').length; }
+  const pendingTodos = () => S.todos.filter((t) => !t.done && t.status !== '已完成');
+  function pendingCount() { return S.inbox.length + pendingTodos().length; }
+  let inboxLoad;
   async function refreshInbox() {
-    try { const r = await API.reviews.list(); S.inbox = (r.items || []).filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && S.me && S.me.role === 'leader'))); }); } catch (e) { S.inbox = []; }
-    try { S.todos = (await API.todos.list()).items || []; } catch (e) { S.todos = []; }
+    const who = S.me;
+    const items = async (read) => { try { return (await read()).items || []; } catch (_) { return []; } };
+    const load = inboxLoad = Promise.all([items(API.reviews.list), items(API.todos.list)]);
+    const [reviews, todos] = await load;
+    if (!who || who !== S.me || load !== inboxLoad) return;
+    S.inbox = reviews.filter((x) => { const a = x.app === 'market' ? 'skills' : x.app; return x.status === 'pending' && (x.approver ? can(a, 'approve') : (can(a, 'operate') && !(x.type === 'proposal' && who.role === 'leader'))); });
+    S.todos = todos;
     renderSide(); if (S.mounted.inbox) renderInbox(S.mounted.inbox.el);
   }
   JK.bus.on('api:write', (x) => { if (S.me && !/\/auth\//.test(x.path)) { clearTimeout(refreshInbox._t); refreshInbox._t = setTimeout(refreshInbox, 150); } });
   const TYPE_LABEL = { review: '待审签', proposal: '待确认', todo: '待确认', skill: '待上架审核' };
   function renderInbox(el) {
     const tab = el.dataset.tab || 'mine';
-    const list = S.inbox; const todos = S.todos.filter((t) => t.status !== '已完成');
+    const list = S.inbox; const todos = pendingTodos();
     el.innerHTML = `<div class="app-head">${appIcon('inbox', 'lg')}<div><h2>收件箱</h2><div class="sub">等你处理的事都在这里</div></div></div>
       <div class="tabs" style="margin-bottom:8px"><button class="tab ${tab === 'mine' ? 'on' : ''}" data-t="mine">待我处理 ${list.length ? `<span class="count muted">${list.length}</span>` : ''}</button><button class="tab ${tab === 'todo' ? 'on' : ''}" data-t="todo">我的待办 ${todos.length ? `<span class="count muted">${todos.length}</span>` : ''}</button></div>
       <div class="list">${tab === 'mine' ? (list.map((r) => { const app = r.app === 'market' ? 'skills' : r.app; return `<div class="inb-i">${appIcon(app, 'sm')}<div class="grow"><div class="row"><span class="ttl">${esc(r.title)}</span>${tag(TYPE_LABEL[r.type] || '待处理')}</div><div class="meta">${esc(r.meta || '')}</div></div><div class="row">${r.approver && can(app, 'approve') ? `<button class="btn sm" data-dec="reject" data-id="${r.id}" data-op="inbox.reject.${r.id}">退回</button><button class="btn sm soft" data-dec="approve" data-id="${r.id}" data-op="inbox.approve.${r.id}">通过</button>` : ''}<button class="btn sm ghost" data-open="${app}" data-ref="${esc(r.ref || '')}" data-type="${r.type}">查看 ${icon('chevron-right')}</button></div></div>`; }).join('') || JK.empty({ icon: 'check', title: '全部处理完了', desc: '新的审签、确认会出现在这里' })) : (todos.map((t) => `<div class="inb-i"><input type="checkbox" class="check" data-todo="${t.id}" style="margin-top:4px;accent-color:var(--accent)"><div class="grow"><div class="ttl">${esc(t.title || t.text)}</div><div class="meta">${esc([t.from, t.due && '截止 ' + t.due].filter(Boolean).join(' · '))}</div></div>${t.due ? tag(t.status || '待办') : ''}</div>`).join('') || JK.empty({ icon: 'check', title: '没有待办', desc: '会议纪要派发给你的待办会出现在这里' }))}</div>`;
