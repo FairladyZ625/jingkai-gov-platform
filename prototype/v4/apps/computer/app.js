@@ -34,18 +34,39 @@
       const KBAPI = (ctx.api && ctx.api.kb) || (window.JKApi && window.JKApi.kb);
       const SITES = window.JKCuSites;
       const sleepRaw = (ms) => new Promise((r) => setTimeout(r, ms));
-      const st = { view: 'home', tab: 'tasks', tasks: [], systems: [], runs: [], ents: [], setup: null, text: '', replay: null, shotSel: 0 };
+      const st = { view: 'home', tab: 'tasks', tasks: [], systems: [], runs: [], ents: [], setup: null, text: '', replay: null, shotSel: 0, loadState: 'loading' };
       let P = null; // 正在播放的任务
       let alive = true;
       const fast = () => !!(window.JK_DEMO_FAST || (ctx.operator && ctx.operator.fast && ctx.operator.fast()));
       const sleep = (ms) => sleepRaw(fast() ? Math.min(ms, 80) : ms);
       const canOp = () => ctx.perms.can('operate', 'computer');
 
-      async function load() {
-        if (!ctx.perms.can('view', 'computer')) return;
-        const [t, r] = await Promise.all([API.tasks(), API.runs()]);
-        st.tasks = t.items; st.systems = t.systems; st.runs = r.items;
-        if (!st.ents.length) { try { const e = await ctx.api.get('/api/apps/enterprise/companies'); st.ents = (e.items || []).map((x) => ({ id: x.id, short: x.short, name: x.name })); } catch (e) { st.ents = []; } }
+      const loadFeedback = {
+        loading: { icon: 'computer', title: '正在加载电脑操作' },
+        disabled: { icon: 'computer', title: '当前环境未启用电脑操作', desc: '请联系管理员确认服务是否已配置。' },
+        login: { icon: 'lock', title: '登录已失效', desc: '请重新登录后再打开电脑操作。' },
+        denied: { icon: 'lock', title: '没有电脑操作权限', desc: '请联系管理员开通。' },
+        error: { icon: 'alert', title: '电脑操作暂时无法加载', desc: '请检查连接后重试。', action: '重试' },
+      };
+      let pendingLoad;
+      function load() {
+        if (!alive || !ctx.perms.can('view', 'computer')) return Promise.resolve(false);
+        if (pendingLoad) return pendingLoad;
+        if (st.loadState !== 'ready') st.loadState = 'loading';
+        pendingLoad = (async () => {
+          try {
+            const [t, r] = await Promise.all([API.tasks(), API.runs()]);
+            if (![t.items, t.systems, r.items].every(Array.isArray)) throw Error('电脑操作列表格式无效');
+            st.tasks = t.items; st.systems = t.systems; st.runs = r.items;
+          } catch (error) {
+            st.loadState = ({ 404: 'disabled', 401: 'login', 403: 'denied' })[error?.status] || 'error';
+            return false;
+          }
+          if (!st.ents.length) { try { const e = await ctx.api.get('/api/apps/enterprise/companies'); st.ents = (e.items || []).map((x) => ({ id: x.id, short: x.short, name: x.name })); } catch (_) { st.ents = []; } }
+          st.loadState = 'ready';
+          return true;
+        })().finally(() => { pendingLoad = null; });
+        return pendingLoad;
       }
       const tagS = (s) => `<span class="tag dot" data-hue="${HUE[s] || 'gray'}">${STATUS[s] || s}</span>`;
       const head = (right) => `<div class="app-head cu-head">${ctx.ui.appIcon('computer', 'lg')}<div class="grow"><h2 class="h2">电脑操作</h2><div class="t-3 t-sm">AI 替你操作网页和业务系统，关键一步你说了算</div></div>${right || ''}</div>`;
@@ -57,6 +78,13 @@
         if (st.view === 'replay' && st.replay) return renderReplay();
         if (st.view === 'setup' && st.setup) return renderSetup();
         if (!ctx.perms.can('view', 'computer')) { el.innerHTML = `<div class="cu-wrap">${head()}${ctx.ui.empty({ icon: 'lock', title: '没有电脑操作权限', desc: '请联系管理员开通' })}</div>`; return; }
+        if (st.loadState !== 'ready') {
+          const feedback = loadFeedback[st.loadState];
+          el.innerHTML = `<div class="cu-wrap">${head()}<div role="status">${ctx.ui.empty(feedback)}</div></div>`;
+          const retry = el.querySelector('[data-empty-action]');
+          if (retry) retry.onclick = () => { load().then(render); render(); };
+          return;
+        }
         const n = st.runs.length;
         el.innerHTML = `<div class="cu-wrap">${head()}
           <div class="tabs cu-tabs">${[['tasks', '新任务'], ['runs', '操作记录', n], ['systems', '系统授权']].map(([v, l, c]) => `<button class="tab ${st.tab === v ? 'on' : ''}" data-tab="${v}" data-op="computer.tab.${v}">${l}${c ? `<span class="count muted">${c}</span>` : ''}</button>`).join('')}</div>
@@ -83,13 +111,13 @@
         el.querySelectorAll('[data-replay]').forEach((b) => (b.onclick = () => openReplay(b.dataset.replay)));
         el.querySelectorAll('[data-sys]').forEach((b) => (b.onclick = async () => { const s = st.systems.find((x) => x.id === b.dataset.sys); try { const r = await API.setSystem(s.id, !s.allowed); s.allowed = r.item.allowed; toast(s.allowed ? `已允许 AI 使用「${s.name}」` : `已停止 AI 使用「${s.name}」`); render(); } catch (e) { toast(e.message, { type: 'err' }); } }));
         const ask = el.querySelector('[data-ask]'); if (ask) { ask.oninput = () => (st.text = ask.value); ask.onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('[data-go]').click(); }; }
-        const go = el.querySelector('[data-go]'); if (go) go.onclick = async () => { const t = (st.text || '').trim(); if (!t) return toast('说说要去哪个系统做什么', { type: 'warn' }); const m = await API.match(t); if (!m.task) return toast('没听懂要做哪件事，可以直接点下面的任务', { type: 'warn' }); openSetup(m.task.id, { ent: m.entId }); };
+        const go = el.querySelector('[data-go]'); if (go) go.onclick = async () => { const t = (st.text || '').trim(); if (!t) return toast('说说要去哪个系统做什么', { type: 'warn' }); let m; try { m = await API.match(t); } catch (_) { return toast('暂时无法识别电脑操作任务，请稍后重试', { type: 'err' }); } if (!m.task) return toast('没听懂要做哪件事，可以直接点下面的任务', { type: 'warn' }); openSetup(m.task.id, { ent: m.entId }); };
       }
 
       /* ---------- 准备：选企业，看 AI 会做哪几步 ---------- */
       function abandon() { if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status)) { P.stopped = true; P.paused = false; P.manual = false; if (P.resolveWait) P.resolveWait('__stop'); } }
       let NAV = 0; // 导航序号：异步 go() 返回时若已被别的导航取代则不再覆盖
-      function openSetup(taskId, o) { NAV++; abandon(); const t = st.tasks.find((x) => x.id === taskId); st.setup = { task: t, ent: (o && o.ent) || '', month: '2026 年 10 月' }; st.view = 'setup'; render(); }
+      function openSetup(taskId, o) { const t = st.tasks.find((x) => x.id === taskId); if (!t || !alive) return false; NAV++; abandon(); st.setup = { task: t, ent: (o && o.ent) || '', month: '2026 年 10 月' }; st.view = 'setup'; render(); return true; }
       const PREVIEW = { apply: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['找到申报事项'], ['填写企业信息'], ['填写申报内容、上传材料'], ['停在“提交”前', 'hand'], ['提交并取回执']], stats: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['打开本月报表'], ['按台账填数'], ['平台数据审核'], ['停在“上报”前', 'hand']], notice: [['打开官网通知公告'], ['找到最新申报通知'], ['读通知要点'], ['下载原文'], ['存进知识库', 'hand']], status: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['打开“我的申报”'], ['读取办理状态']] };
       function renderSetup() {
         const s = st.setup, t = s.task;
@@ -322,11 +350,14 @@
 
       /* ---------- 操作员动作（对话里一句话发起） ---------- */
       const entOf = (slot, text) => { if (slot && typeof slot === 'object') return slot.id; const t = String(slot || '') + ' ' + String(text || ''); const e = st.ents.find((x) => t.includes(x.short) || t.includes(x.name)); return e ? e.id : ''; };
+      function reportLoadFailure(run) { render(); return run.fail(loadFeedback[st.loadState]?.title || '电脑操作暂时无法加载'); }
       async function viaChat(task, slots, run) {
-        slots = slots || {}; if (!st.tasks.length || !st.ents.length) await load();
         if (!canOp()) { run.fail('当前账号没有“电脑操作”权限'); return; }
+        slots = slots || {};
+        if ((st.loadState !== 'ready' || !st.ents.length) && !(await load())) return reportLoadFailure(run);
         const eid = entOf(slots.ent, slots.text);
         const t = st.tasks.find((x) => x.id === task);
+        if (!t) return run.fail('当前环境未提供该电脑操作任务');
         if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把纸鹿二号智驾的申报表填了”'); return; }
         openSetup(task, { ent: eid }); await run.step(0);
         if (t.needsEnt) await run.select('[data-op="computer.ent"]', eid);
@@ -347,14 +378,28 @@
       }
       const actions = {
         apply: (s, run) => viaChat('apply', s, run), stats: (s, run) => viaChat('stats', s, run), notice: (s, run) => viaChat('notice', s, run), status: (s, run) => viaChat('status', s, run),
-        async run(s, run) { const m = await API.match((s && s.text) || ''); if (!m.task) { st.view = 'home'; st.tab = 'tasks'; render(); run.done('电脑操作已打开，选一个任务，或者告诉我要去哪个系统做什么'); return; } return viaChat(m.task.id, Object.assign({}, s, { ent: (s && s.ent) || m.entId }), run); },
+        async run(s, run) { if (st.loadState !== 'ready' && !(await load())) return reportLoadFailure(run); let m; try { m = await API.match((s && s.text) || ''); } catch (_) { return run.fail('暂时无法识别电脑操作任务，请稍后重试'); } if (!m.task) { st.view = 'home'; st.tab = 'tasks'; render(); run.done('电脑操作已打开，选一个任务，或者告诉我要去哪个系统做什么'); return; } return viaChat(m.task.id, Object.assign({}, s, { ent: (s && s.ent) || m.entId }), run); },
       };
 
       /* ---------- 启动 ---------- */
-      (async () => { const nav = NAV; await load(); if (nav !== NAV) return; const p = ctx.params || {}; if (p.task && (p.route === 'run' || p.autostart || p.ent)) { openSetup(p.task, { ent: p.ent }); if (p.ent || p.task === 'notice') start(p.task, { ent: p.ent, from: p.from }); } else render(); })();
+      render();
+      (async () => { const nav = NAV; const ready = await load(); if (!alive || nav !== NAV) return; const p = ctx.params || {}; if (ready && p.task && (p.route === 'run' || p.autostart || p.ent) && openSetup(p.task, { ent: p.ent })) { if (p.ent || p.task === 'notice') start(p.task, { ent: p.ent, from: p.from }); } else render(); })();
       if (ctx.bus) ctx.bus.on('data:reset', () => { P = null; st.view = 'home'; load().then(render); });
       return {
-        async go(route, params) { params = params || {}; const nav = ++NAV; await load(); if (nav !== NAV) return; if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status) && !params.task && !['runs', 'systems', 'replay'].includes(route)) { st.view = 'run'; return renderRun(); } if ((route === 'run' || route === 'setup') && params.task) { openSetup(params.task, { ent: params.ent }); if (route === 'run' && (params.ent || params.task === 'notice')) start(params.task, { ent: params.ent, from: params.from }); return; } if (route === 'replay' && params.id) return openReplay(params.id); st.view = 'home'; st.tab = route === 'runs' ? 'runs' : route === 'systems' ? 'systems' : 'tasks'; render(); },
+        async go(route, params) {
+          params = params || {};
+          const nav = ++NAV;
+          const ready = await load();
+          if (!alive || nav !== NAV) return;
+          if (!ready) { if (st.view !== 'run' || !P) st.view = 'home'; return render(); }
+          if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status) && !params.task && !['runs', 'systems', 'replay'].includes(route)) { st.view = 'run'; return renderRun(); }
+          if ((route === 'run' || route === 'setup') && params.task && openSetup(params.task, { ent: params.ent })) {
+            if (route === 'run' && (params.ent || params.task === 'notice')) start(params.task, { ent: params.ent, from: params.from });
+            return;
+          }
+          if (route === 'replay' && params.id) return openReplay(params.id);
+          st.view = 'home'; st.tab = route === 'runs' ? 'runs' : route === 'systems' ? 'systems' : 'tasks'; render();
+        },
         actions,
         unmount() { alive = false; if (P) P.stopped = true; },
       };
