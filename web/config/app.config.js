@@ -55,6 +55,11 @@ window.JK_CONFIG = {
       { id: 'vision', name: '读图 / OCR', route: '混元 Hy4' }, { id: 'search', name: '联网搜索', route: 'DeepSeek 搜索（仅公开资料）' },
     ],
   },
-  /* 接口：'mock' = 浏览器内模拟后端（mock/ 目录）；'http' = 真实后端（把 baseUrl 指向服务地址即可，界面代码不用改） */
-  api: { mode: 'mock', baseUrl: 'http://127.0.0.1:8080', timeoutMs: 20000 },
+  /* 接口默认使用浏览器内模拟后端。modules 可单独覆盖任一模块，未配置的模块沿用 mode。 */
+  api: {
+    mode: 'mock',
+    baseUrl: 'http://127.0.0.1:8080',
+    timeoutMs: 20000,
+    // modules: { policy: 'http' },
+  },
 };

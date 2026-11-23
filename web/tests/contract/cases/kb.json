@@ -1,0 +1,22 @@
+{
+  "routes": [
+    {"method": "GET", "path": "/api/v1/kb/spaces", "response": {"items": ["@space"]}},
+    {"method": "PATCH", "path": "/api/v1/kb/spaces/{id}", "response": {"ok": "boolean"}, "body": {"roles": ["admin", "leader", "member", "partner"]}, "params": {"id": "policy"}},
+    {"method": "POST", "path": "/api/v1/kb/search", "response": {"hits": ["@hit"], "total": "number", "terms": ["string"], "facets": "@kbFacets"}, "body": {"q": "数据券", "limit": 5}},
+    {"method": "POST", "path": "/api/v1/kb/ask", "response": {"answer": "string", "confidence": "string", "citations": ["@kbCitation"], "notFound?": "boolean", "near?": ["@hit"], "followups": [{"label": "string", "say": "string"}]}, "body": {"q": "数据券补贴最高能拿多少？"}},
+    {"method": "GET", "path": "/api/v1/kb/docs", "response": {"hits": ["@kbDoc"], "total": "number", "facets": "@kbFacets"}, "query": {"limit": "3"}},
+    {"method": "POST", "path": "/api/v1/kb/import", "response": {"docs": ["@kbDoc"], "chunks": "number", "skipped": [{"name": "string", "reason": "string"}]}, "body": {"title": "{{fixture.kbTitle}}", "text": "{{fixture.kbTitle}}。工作站核对知识库导入、编辑与版本字段，所有信息均为自动化测试数据。", "space": "policy"}, "save": "imported"},
+    {"method": "GET", "path": "/api/v1/kb/docs/{id}", "response": {"item": "@kbDetail"}, "params": {"id": "{{imported.docs.0.id|fixture.kbDocId}}"}},
+    {"method": "PATCH", "path": "/api/v1/kb/docs/{id}", "response": {"item": "@kbDoc"}, "sameId": "{{imported.docs.0.id}}", "body": {"tags": ["契约测试"]}, "params": {"id": "{{imported.docs.0.id}}"}},
+    {"method": "DELETE", "path": "/api/v1/kb/docs/{id}", "response": {"ok": "boolean", "item": {"id": "string", "title": "string"}}, "sameId": "{{imported.docs.0.id}}", "params": {"id": "{{imported.docs.0.id}}"}, "after": {"method": "GET", "path": "/api/v1/kb/docs/{id}", "params": {"id": "{{imported.docs.0.id}}"}, "status": 404, "error": "NOT_FOUND"}},
+    {"method": "POST", "path": "/api/v1/kb/docs/{id}/restore", "response": {"ok": "boolean"}, "body": {}, "params": {"id": "{{imported.docs.0.id}}"}, "after": {"method": "GET", "path": "/api/v1/kb/docs/{id}", "params": {"id": "{{imported.docs.0.id}}"}, "response": {"item": "@kbDetail"}, "sameId": "{{imported.docs.0.id}}"}},
+    {"method": "POST", "path": "/api/v1/kb/import/preview", "response": {"items": ["@importItem"]}, "body": {"items": [{"name": "契约测试示例.txt", "ext": "txt", "text": "仅用于契约测试的虚构资料。工作站核对知识库导入、编辑与版本字段，所有信息均为自动化测试数据。"}]}, "save": "preview"},
+    {"method": "POST", "path": "/api/v1/kb/import/url", "response": {"item": "@importItem", "snapshot": "boolean"}, "body": {"url": "{{fixture.kbUrl}}"}},
+    {"method": "POST", "path": "/api/v1/kb/import/commit", "response": {"docs": ["@kbDoc"], "chunks": "number"}, "body": {"items": "{{preview.items}}", "from": "粘贴"}},
+    {"method": "GET", "path": "/api/v1/kb/stats", "response": {"docs": "number", "chunks": "number", "status": {"$values": "number"}, "real": "number", "example?": "number", "recent": ["@kbDoc"], "log": [{"at": "string", "by": "string", "from": "string", "n": "number"}]}},
+    {"method": "GET", "path": "/api/v1/kb/suggest", "response": {"items": ["string"]}}
+  ],
+  "errors": [
+    {"method": "GET", "path": "/api/v1/kb/docs/{id}", "params": {"id": "contract-missing"}, "status": 404, "error": "NOT_FOUND"}
+  ]
+}

@@ -110,3 +110,20 @@ jobs:
           npm test
           npx --no-install playwright install --with-deps chromium
           npm run test:browser
+
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test web/tests/contract/*.test.cjs
+      - run: npm --prefix web run contract
+      - name: Chromium 混合会话
+        run: |
+          npm --prefix web ci
+          (cd web && npx --no-install playwright install --with-deps chromium)
+          node --test web/tests/contract/browser.cjs
