@@ -798,7 +798,7 @@
   on('POST', '/api/v1/skills/:id/rate', (b, p) => { const s = S.skills.find((x) => x.id === p.id); s.myRating = b.useful; return { item: s }; });
   // 管理
   on('GET', '/api/v1/admin/usage', () => ({ usage: S.usage, audit: S.audit.slice(0, 30), seats: S.org }));
-  on('GET', '/api/v1/audit', () => ({ items: S.audit }));
+  on('GET', '/api/v1/audit', (_, _path, q) => { const offset = Number(q.offset) || 0; const limit = Number(q.limit) || 50; return { items: S.audit.slice(offset, offset + limit), total: S.audit.length }; });
   on('GET', '/api/v1/feed', () => ({ items: S.feed }));
 
   // 小应用工具调用（对话编排 / 自建技能通过它调用官方应用能力；与界面同一套权限和留痕）

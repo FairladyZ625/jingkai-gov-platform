@@ -307,7 +307,7 @@ def test_confidential_does_not_send_to_unapproved_local_fallback(model_client, i
         entries = client.app.state.platform.store.audit_list("platform")
         assert [(r["app"], r["user"], r["detail"]) for r in entries if r["action"] == "ai.chat"] == [
             ("platform", "sampleoperator", {"provider": "local", "model": "local-configured-name",
-              "status": "provider_error", "usage": {"input": None, "output": None}}),
+              "status": "provider_error", "usage": {"input": None, "output": None}, "providerKind": "local"}),
         ]
 
 
@@ -353,12 +353,12 @@ def test_retry_next_and_audit_each_attempt(model_client, monkeypatch, failure):
         assert [(r["user"], r["app"]) for r in entries] == [("sampleoperator", audit_app)] * 2
         assert entries[0]["detail"] == {
             "provider": "cloud", "model": "cloud-configured-name", "status": "success",
-            "usage": {"input": 8, "output": 5},
+            "usage": {"input": 8, "output": 5}, "providerKind": "cloud",
         }
         assert entries[1]["detail"] == {
             "provider": "deepseek", "model": "deepseek-configured-name",
             "status": "provider_error" if failure == "5xx" else "timeout",
-            "usage": {"input": None, "output": None},
+            "usage": {"input": None, "output": None}, "providerKind": "cloud",
         }
 
 
@@ -422,9 +422,9 @@ def test_application_sdk_shares_routing_and_token_audit(model_client, monkeypatc
         assert [(r["action"], r["detail"]) for r in events] == [
             ("ai.outbound_denied", {"capability": "chat", "classification": "confidential"}),
             *[("ai.chat", {"provider": "cloud", "model": "cloud-configured-name", "status": "success",
-                          "usage": {"input": 8, "output": 5}})] * 2,
+                          "usage": {"input": 8, "output": 5}, "providerKind": "cloud"})] * 2,
             ("ai.chat", {"provider": "deepseek", "model": "deepseek-configured-name", "status": "provider_error",
-                         "usage": {"input": None, "output": None}}),
+                         "usage": {"input": None, "output": None}, "providerKind": "cloud"}),
         ]
         # #19 用量统计直接汇总网关逐次审计，三个维度与上面的记录一致。
         from jkq.admin.usage import usage_page
