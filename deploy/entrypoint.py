@@ -91,9 +91,14 @@ def main() -> int:
     require_demo_passwords()
     root = Path(os.environ.get("HAIKNOW_ROOT", "/srv/app"))
     use_same_origin_http(root)
-    write_boot_token(Path(os.environ.get("HAIKNOW_DATA_DIR", "/state/live")))
+    data_dir = Path(os.environ.get("HAIKNOW_DATA_DIR", "/state/live"))
+    write_boot_token(data_dir)
     port = os.environ.get("APP_PORT", "8000")
-    process = subprocess.Popen(uvicorn_command(port))
+    app_env = os.environ.copy()
+    # 演示台账使用独立原值库；缺省放进同一持久数据卷，由快照一并备份。
+    if app_env.get("JKQ_DEPLOY_RUNTIME") == "1" and app_env.get("JKQ_DEMO_MODE") == "1":
+        app_env.setdefault("JKQ_ENTERPRISE_PRIVATE_DB", str(data_dir / "enterprise-private.sqlite"))
+    process = subprocess.Popen(uvicorn_command(port), env=app_env)
 
     def stop(*_args):
         if process.poll() is None:
