@@ -6,7 +6,7 @@ window.JK_APPCFG.document = {
   name: '公文协作',
   summary: '选事项、填要素，AI 起草并核查',
   steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'],
-  tabs: [['flow', '起草'], ['list', '我的文稿']],
+  tabs: [['flow', '起草'], ['list', '可见文稿']],
   /* 红头（版头）文字与发文机关 */
   redHead: '【待补：发文机关】',
   approvers: ['李阳'],
