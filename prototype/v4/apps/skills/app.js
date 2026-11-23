@@ -53,6 +53,7 @@
       const catHue = (c) => ctx.ui.hue(c, 'skillCat');
       const st = { view: 'home', q: '', cat: '全部', list: [], apps: [], mine: [], review: [], detail: null, dtab: 'use', make: null, opts: null, ents: null, out: null };
       let alive = true;
+      let runEpoch = 0;
 
       /* ---------- 数据 ---------- */
       async function loadLists() {
@@ -173,7 +174,18 @@
         flush(); return out.join('');
       }
       function outHtml(o) {
-        if (o.status !== 'done') return `<div class="plan sk-plan"><div class="plan-h">${icon('sparkles')}正在运行</div>${o.steps.map((x) => `<div class="pstep ${x.status === 'done' ? 'done' : x.status === 'run' ? 'run' : ''}"><span class="pi"></span>${esc(x.label)}</div>`).join('')}</div>`;
+        if (o.status !== 'done') {
+          const stepStatus = { done: '已完成', run: '执行中', pending: '未开始', failed: '失败', skipped: '已跳过', cancelled: '已取消' };
+          const steps = (o.steps || []).map(x => `<div class="pstep ${x.status === 'done' ? 'done' : x.status === 'run' && o.status === 'running' ? 'run' : ''}"><span class="pi"></span>${esc(x.label)}${o.status !== 'running' && stepStatus[x.status] ? ` · ${stepStatus[x.status]}` : ''}</div>`).join('');
+          if (o.status === 'failed') {
+            const advice = ['OUTBOUND_DENIED', 'NOT_CONFIGURED', 'MODEL_DISABLED'].includes(o.errorCode)
+              ? '请联系管理员检查与资料密级匹配、已获准的模型配置。'
+              : '请检查当前输入后重试；若再次失败，请联系管理员。';
+            return `<div class="plan sk-plan" data-op="skills.failed" role="alert"><div class="plan-h">${icon('alert')}运行失败</div><div class="meta">${esc(o.error || '任务未完成')}。 ${advice}</div>${steps}</div>`;
+          }
+          if (o.status === 'unknown') return `<div class="plan sk-plan" data-op="skills.status-unknown" role="alert"><div class="plan-h">${icon('alert')}未能确认运行结果</div><div class="meta">${esc(o.error || '任务状态暂不可读取')}。请检查网络，避免重复提交。</div>${steps}</div>`;
+          return `<div class="plan sk-plan"><div class="plan-h">${icon('sparkles')}正在运行</div>${steps}</div>`;
+        }
         const r = o.result;
         return `<div class="card sk-result" data-op="skills.result"><div class="sk-md">${mdToHtml(r.markdown)}</div>
           ${r.citations.length ? `<div class="sk-srcs">${r.citations.slice(0, 3).map((c) => `<div class="src" data-cite-open="${c.n}"><span class="cite">${c.n}</span><span class="clip grow">${esc(c.title)}</span>${icon('chevron-right')}</div>`).join('')}</div>` : ''}
@@ -181,16 +193,37 @@
           ${r.computer ? `<button class="btn sm soft" data-computer>${icon('computer')}继续电脑操作</button>` : ''}
           <button class="btn sm ghost" data-copy title="复制">${icon('copy')}</button><button class="btn sm ghost" data-dl title="下载">${icon('download')}</button>${o.trial ? '' : `<button class="btn sm ghost" data-tochat title="发到对话">${icon('chat')}</button><button class="btn sm ghost" data-rate="1" title="有用">有用</button>`}</div></div>`;
       }
-      async function execute(root, skill, inputs, trial) {
-        const box = root.querySelector('[data-out]');
+      async function execute(skill, inputs, trial) {
         const missing = skill.spec.inputs.filter((f) => f.required && !inputs[f.key]);
         if (missing.length) { toast('先填：' + missing.map((f) => f.label).join('、'), { type: 'warn' }); return null; }
-        let { job } = trial ? await API.trial({ name: skill.name, spec: skill.spec }, inputs) : await API.run(skill.id, inputs);
-        st.out = job; box.innerHTML = outHtml(job);
-        while (job.status === 'running') { await sleep(220); job = (await API.job(job.id)).job; st.out = job; if (box.isConnected) box.innerHTML = outHtml(job); }
-        if (job.status === 'failed') { toast('运行失败：' + job.error, { type: 'err' }); return null; }
-        bindOut(box, job);
-        if (job.result.computer) ctx.nav.open('computer', 'run', { task: job.result.computer.task, ent: job.result.computer.ent, from: skill.name });
+        const epoch = ++runEpoch, owner = trial ? st.make : st.detail;
+        const owns = () => alive && epoch === runEpoch && (trial ? st.make === owner && owner.step === 2 : st.detail === owner);
+        function paint(job) {
+          if (!owns()) return null;
+          st.out = job;
+          const visible = trial ? st.view === 'make' : st.view === 'detail' && st.dtab === 'use';
+          const box = visible && el.querySelector('[data-out]');
+          if (box) box.innerHTML = outHtml(job);
+          return box;
+        }
+        let job;
+        try {
+          ({ job } = trial ? await API.trial({ name: skill.name, spec: skill.spec }, inputs) : await API.run(skill.id, inputs));
+          while (job.status === 'running' && owns()) {
+            paint(job);
+            await sleep(220);
+            if (!owns()) return null;
+            job = (await API.job(job.id)).job;
+          }
+        } catch (e) {
+          paint({ status: 'unknown', steps: job?.steps, error: e.message, trial });
+          return null;
+        }
+        if (!owns()) return null;
+        const box = paint(job);
+        if (job.status !== 'done') return null;
+        if (box) bindOut(box, job);
+        if (box && job.result.computer) ctx.nav.open('computer', 'run', { task: job.result.computer.task, ent: job.result.computer.ent, from: skill.name });
         return job;
       }
       function bindOut(box, job) {
@@ -306,8 +339,16 @@
       }
       function bindDetail(s) {
         el.querySelectorAll('[data-dtab]').forEach((b) => (b.onclick = () => { st.dtab = b.dataset.dtab; render(); }));
-        const smp = el.querySelector('[data-sample]'); if (smp) smp.onclick = () => { st.useVals = sampleInputs(s.spec); st.out = null; render(); };
-        const runB = el.querySelector('[data-run]'); if (runB) runB.onclick = async () => { st.useVals = readInputs(el, s.spec); runB.disabled = true; try { await execute(el, s, st.useVals, false); } catch (e) { toast(e.message || '运行失败', { type: 'err' }); } runB.disabled = false; };
+        const smp = el.querySelector('[data-sample]'); if (smp) smp.onclick = () => {
+          const sample = sampleInputs(s.spec), current = readInputs(el, s.spec);
+          if (Object.entries(sample).some(([key, value]) => String(value).trim() !== current[key])) {
+            st.out = null;
+            runEpoch++;
+          }
+          st.useVals = sample;
+          render();
+        };
+        const runB = el.querySelector('[data-run]'); if (runB) runB.onclick = async () => { st.useVals = readInputs(el, s.spec); runB.disabled = true; try { await execute(s, st.useVals, false); } catch (e) { toast(e.message || '运行失败', { type: 'err' }); } runB.disabled = false; };
         if (st.out && st.out.status === 'done') bindOut(el.querySelector('[data-out]'), st.out);
         const fk = el.querySelector('[data-fork]'); if (fk) fk.onclick = () => forkSkill(s.id);
         el.querySelectorAll('[data-restore]').forEach((b) => (b.onclick = async () => { if (!(await ctx.ui.confirm(`回到 v${b.dataset.restore} 的内容？会生成一个新版本，原版本保留。`))) return; const r = await API.restore(s.id, b.dataset.restore); st.detail = r.item; toast('已回到 v' + b.dataset.restore + '，当前 v' + r.item.version); render(); }));
@@ -386,7 +427,7 @@
         if (m.step === 2) {
           const k = m.skill;
           q('[data-sample]').onclick = () => { m.trialVals = sampleInputs(k.spec); render(); };
-          q('[data-trial]').onclick = async (e) => { m.trialVals = readInputs(w, k.spec); e.currentTarget.disabled = true; try { const j = await execute(w, k, m.trialVals, true); if (j) m.tried = true; } catch (err) { toast(err.message, { type: 'err' }); } const b = w.querySelector('[data-trial]'); if (b) b.disabled = false; };
+          q('[data-trial]').onclick = async (e) => { m.trialVals = readInputs(w, k.spec); e.currentTarget.disabled = true; try { const j = await execute(k, m.trialVals, true); if (j) m.tried = true; } catch (err) { toast(err.message, { type: 'err' }); } const b = w.querySelector('[data-trial]'); if (b) b.disabled = false; };
           if (st.out && st.out.status === 'done' && st.out.trial) bindOut(w.querySelector('[data-out]'), st.out);
           q('[data-prev]').onclick = () => { m.trialVals = readInputs(w, k.spec); m.step = 1; render(); };
           q('[data-next]').onclick = () => { m.trialVals = readInputs(w, k.spec); if (!m.tried && !m.editing) toast('建议先试运行一次，确认结果对不对', { type: 'warn' }); m.step = 3; render(); };
