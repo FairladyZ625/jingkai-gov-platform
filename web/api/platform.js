@@ -4,6 +4,23 @@
  * ===================================================================== */
 (function () {
   const H = window.JKHttp;
+  // 真后端审签单不带界面用的 approver/type/title，决定须带版本号；HTTP 模式下在适配层补齐，模拟后端原样。
+  const reviewVersions = {};
+  const reviewView = (r) => {
+    if (H.mode() !== 'http' || !r) return r;
+    const me = window.JKShell && JKShell.S && JKShell.S.me;
+    (r.items || []).forEach((x) => {
+      reviewVersions[x.id] = x.version;
+      if (x.approver === undefined) x.approver = !!me && (!x.assignee || x.assignee === me.id) && x.submitter !== me.id;
+      x.type = x.type || 'review'; x.title = x.title || '待审签文稿';
+    });
+    return r;
+  };
+  const reviewDecision = (id, b) => {
+    if (H.mode() !== 'http' || !b) return b;
+    const { comment, ...body } = b;
+    return { ...body, reason: body.reason ?? comment ?? '', version: body.version ?? reviewVersions[id] };
+  };
   window.JKApi = window.JKApi || {};
   Object.assign(window.JKApi, {
     auth: {
@@ -29,12 +46,13 @@
     },
     apps: { /** → {items:App[], skills} */ list: () => H.get('/api/v1/apps') },
     reviews: {
-      /** → {items:Review[]} */ list: () => H.get('/api/v1/reviews'),
-      /** {decision:'approve'|'reject', comment} → {item} */ decide: (id, b) => H.post(`/api/v1/reviews/${id}/decisions`, b),
+      /** → {items:Review[]} */ list: () => H.get('/api/v1/reviews').then(reviewView),
+      /** {decision:'approve'|'reject', comment} → {item} */ decide: (id, b) => H.post(`/api/v1/reviews/${id}/decisions`, reviewDecision(id, b)),
     },
-    todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id, b) },
+    todos: { list: () => H.get('/api/v1/todos'), patch: (id, b) => H.patch('/api/v1/todos/' + id,
+      H.mode() === 'http' && b.status === '已完成' ? { done: true } : b) },
     feed: { list: () => H.get('/api/v1/feed') },
-    audit: { /** → {items:AuditEntry[]} */ list: () => H.get('/api/v1/audit') },
+    audit: { /** {offset,limit} → {items:AuditEntry[],total} */ list: (query) => H.get('/api/v1/audit', query) },
     kb: { /* 知识库适配：知识库模块的 api/kb.js 会扩展/覆盖这里 */
       search: (b) => H.post('/api/v1/kb/search', b), ask: (b) => H.post('/api/v1/kb/ask', b),
       libraries: () => H.get('/api/v1/kb/libraries'), file: (id) => H.get('/api/v1/kb/files/' + encodeURIComponent(id)),
@@ -46,7 +64,7 @@
       grants: () => H.get('/api/v1/admin/grants'), setGrant: (role, app, actions) => H.put(`/api/v1/admin/grants/${role}/${encodeURIComponent(app)}`, { actions }),
       patchRole: (id, b) => H.patch('/api/v1/admin/roles/' + id, b), patchApp: (id, b) => H.patch('/api/v1/admin/apps/' + id, b),
       settings: () => H.get('/api/v1/admin/settings'), saveSettings: (b) => H.put('/api/v1/admin/settings', b),
-      usage: () => H.get('/api/v1/admin/usage'),
+      usage: () => H.get(H.mode() === 'http' ? '/api/v1/admin/usage/summary' : '/api/v1/admin/usage'),
     },
     skills: { list: () => H.get('/api/v1/skills') },
     /** 演示环境：重置模拟数据（http 模式下调用服务端演示重置接口） */

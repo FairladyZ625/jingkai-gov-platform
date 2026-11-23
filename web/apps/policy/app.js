@@ -3,9 +3,12 @@
  * 契约：APP_CONTRACT.md（mount(el, ctx) 返回 { go, actions }）；颜色只走 ctx.ui.tag / theme 变量；文案在 config.js */
 (function () {
   const clz = (c) => String(c || '').replace(/第\s*([^\s第]+?)\s*(项|条|款|章)/g, '第$1$2').replace(/、\s+/g, '、');
-  const DEF = { name: '政策兑现', summary: '按企业情况逐条核对兑现事项', steps: ['选对象', '核对条件', '试算额度', '告知单'], tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']], samples: [], objects: ['企业', '个人', '其他组织'], manualTags: [], licenses: [], fields: {}, sampleFill: {}, levels: { ok: ['可进一步核对'], check: ['待确认'], no: ['不满足'] }, windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' }, noticeTail: '仅供参考，以正式申报审核为准。', contact: '', signer: '', text: {} };
+  const seedShort = (id) => window.JK_DATA?.enterprises?.find((e) => e.id === id)?.short || '示例企业';
+  const DEF = { name: '政策兑现', summary: '按企业情况逐条核对兑现事项', steps: ['选对象', '核对条件', '试算额度', '告知单'], tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']], samples: [], objects: ['企业', '个人', '其他组织'], manualTags: [], licenses: [], fields: {}, sampleFill: {}, levels: { ok: ['可进一步核对'], check: ['待确认'], no: ['不满足'] }, windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' }, text: {} };
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).policy || {});
-  const T = Object.assign({ pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况', resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签是否完整', viewOnly: '你的角色只能查看事项库', demoBadge: '示例事项' }, C.text);
+  const T = Object.assign({ pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况', resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签是否完整', viewOnly: '你的角色只能查看事项库', demoBadge: '示例（无对应原文）' }, C.text);
+  const flowRoutes = ['home', 'match', 'estimate', 'notice'];
+  const restoringText = '正在恢复试算，请稍候。';
 
   JK.registerApp({
     manifest: {
@@ -20,19 +23,20 @@
       ],
       accepts: [{ kind: '政策文件', ext: ['pdf', 'doc', 'docx', 'txt', 'wps'], match: /政策|办法|细则|措施|若干|实施意见|申报指南/ }],
       intents: [
-        { id: 'policy.match', action: 'match', examples: ['帮我查一下星河智驾能申报哪些政策', '书香里文化能申请哪些支持？', '书香里能拿哪些补贴'], keywords: ['政策', '申报', '补贴', '兑现', '能报', '支持', '奖励'], slots: { ent: 'enterprise' }, plan: ['打开政策兑现', '选择企业', '逐条核对事项', '汇总结论'] },
-        { id: 'policy.fill', action: 'fill', examples: ['补填数据采购额 30 万', '数据采购额是 30 万'], keywords: ['补填', '补充', '采购额', '重算'], slots: { amount: 'amount' }, plan: ['找到待确认项', '填入数值', '重新核对'] },
+        { id: 'policy.match', requires: 'operate', action: 'match', examples: [`帮我查一下${seedShort('E002')}能申报哪些政策`, `${seedShort('E001')}能申请哪些支持？`], keywords: ['政策', '申报', '补贴', '兑现', '能报', '支持', '奖励'], slots: { ent: 'enterprise' }, plan: ['打开政策兑现', '选择企业', '逐条核对事项', '汇总结论'] },
+        { id: 'policy.fill', requires: 'operate', action: 'fill', examples: ['补填数据采购额 30 万', '数据采购额是 30 万'], keywords: ['补填', '补充', '采购额', '重算'], slots: { amount: 'amount' }, plan: ['找到待确认项', '填入数值', '重新核对'] },
         { id: 'policy.calc', action: 'calc', examples: ['数据采购 200 万能补多少', '书店年房租 42 万能补多少', '算一下算力采购 680 万的补贴'], keywords: ['能补多少', '试算', '算一下', '额度'], slots: { amount: 'amount', policy: 'policy' }, plan: ['打开试算', '选择事项', '填入金额', '给出额度'] },
-        { id: 'policy.notice', action: 'notice', examples: ['给书香里生成政策告知单', '生成一次性告知单'], keywords: ['告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成告知单', '等你确认'] },
+        { id: 'policy.notice', requires: 'operate', action: 'notice', examples: [`给${seedShort('E002')}生成政策告知单`, '生成一次性告知单'], keywords: ['告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成告知单', '等你确认'] },
         { id: 'policy.detail', action: 'detail', examples: ['实体书店房租补贴的条件是什么', '数据券的申报条件'], keywords: ['条件是什么', '什么条件', '怎么申请', '要求'], slots: { policy: 'policy' }, plan: ['打开事项库', '找到事项', '展示条件与原文'] },
         { id: 'policy.items', action: 'items', examples: ['看看面向个人的政策', '打开政策事项库'], keywords: ['事项库', '有哪些政策', '个人政策'], plan: ['打开事项库', '筛选'] },
-        { id: 'policy.toDocument', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
+        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
-      starters: ['书香里文化能申请哪些支持？', '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
+      starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
+      // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。
       demo: [
-        { title: '政策匹配', say: '书香里文化能申请哪些支持？' },
+        { title: '政策匹配', say: `帮我查一下${seedShort('E020')}能申报哪些政策` },
         { title: '补填再算', say: '补填数据采购额 30 万' },
-        { title: '告知单', say: '给书香里生成政策告知单' },
+        { title: '告知单', say: `给${seedShort('E020')}生成政策告知单` },
       ],
     },
 
@@ -41,6 +45,17 @@
       const canOp = perms.can('operate');
       const S = { tab: canOp ? 'flow' : 'items', step: 0, mode: 'ent', entId: null, manual: { object: '企业', tags: [], license: [], yearsInZone: '', amounts: {} }, overrides: {}, match: null, filter: null, picked: new Set(), open: new Set(), calc: {}, notice: '', q: '', obj: '', win: '', busy: false, error: null };
       let ITEMS = [], DOCS = [], ENTS = [], loaded = false, loadErr = null;
+      let matchVersion = 0;
+      let restoringFlow = false;
+      let restoringAmounts = false;
+      function invalidateMatch() {
+        matchVersion++;
+        restoringFlow = false;
+        restoringAmounts = false;
+        S.busy = false;
+        S.match = null;
+      }
+      const restoreStatus = () => restoringAmounts ? '<span class="meta" role="status">' + restoringText + '</span>' : '';
       const byId = (id) => ITEMS.find((x) => x.id === id);
       const ent = () => ENTS.find((e) => e.id === S.entId);
       const F = (k) => C.fields[k] || [k, '', 1];
@@ -48,7 +63,9 @@
       const toUnit = (k, v) => (v == null || v === '' ? '' : +(v / F(k)[2]).toFixed(2));
       const fmt = ui.fmtMoney;
       const docOf = (p) => DOCS.find((d) => d.id === p.doc) || {};
-      const srcUrl = (p) => (p.source && p.source.url) || p.url || docOf(p).url || '';
+      const srcUrl = (p) => p.example ? '' : p.source?.url || p.url || docOf(p).url || '';
+      const refOf = (p) => p.example ? T.demoBadge : [p.docNo, clz(p.clause)].filter(Boolean).join(' ');
+      const exampleTag = (p) => p.example ? tag(T.demoBadge, 'status', { cls: 'plain' }) : '';
 
       /* ---------- 加载 ---------- */
       async function load() {
@@ -89,7 +106,7 @@
         $('#ps').innerHTML = `<div class="q">${esc(T.pickQ)}</div><div class="q-sub">${esc(T.pickSub)}</div>
           <div class="seg" style="margin-bottom:var(--s4)"><button class="${S.mode === 'ent' ? 'on' : ''}" data-mode="ent" data-op="policy.mode-ent">从企业台账选</button><button class="${S.mode === 'manual' ? 'on' : ''}" data-mode="manual" data-op="policy.mode-manual">手动描述</button></div>
           ${S.mode === 'ent' ? `<div class="pick"><div class="search">${icon('search')}<input class="input" id="pq" data-op="policy.ent" placeholder="企业名称、简称或信用代码" autocomplete="off" value="${e ? esc(e.short) : ''}"></div><div id="pdd"></div></div>
-            ${e ? profileCard(e) : `<div class="sec">常用示例</div><div class="chips">${C.samples.filter(([id]) => ENTS.some((x) => x.id === id)).map(([id, n]) => `<button class="chip-btn" data-ent="${id}" data-op="policy.sample-${id}">${esc(n)}</button>`).join('')}</div>`}`
+            ${e ? profileCard(e) : `<div class="sec">常用示例</div><div class="chips">${C.samples.map((id) => ENTS.find((x) => x.id === id)).filter(Boolean).map((e) => `<button class="chip-btn" data-ent="${e.id}" data-op="policy.sample-${e.id}">${esc(e.short)}</button>`).join('')}</div>`}`
           : manualForm()}`;
         foot('', `<button class="btn primary" data-act="run" data-op="policy.go" ${S.mode === 'ent' && !e ? 'disabled' : ''}>开始核对${ITEMS.length ? ` ${ITEMS.length} 项` : ''}</button>`);
         const q = $('#pq'); if (q) { q.oninput = () => showDD(q.value.trim()); q.onfocus = () => showDD(q.value.trim() === (e && e.short) ? '' : q.value.trim()); q.onblur = () => setTimeout(() => { const d = $('#pdd'); if (d) d.innerHTML = ''; }, 200); }
@@ -116,7 +133,10 @@
       }
 
       /* ---------- 第 2 步：核对条件 ---------- */
-      function who() { const e = ent(); return S.mode === 'ent' && e ? e.short : `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`; }
+      function who() {
+        if (S.mode === 'ent') return ent()?.short || (S.entId ? `企业 ${S.entId}` : '未选择企业');
+        return `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`;
+      }
       function step1() {
         const r = S.match; if (!r) { $('#ps').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>'; foot(back(), ''); return; }
         const sm = r.summary; const L = C.levels;
@@ -128,8 +148,12 @@
           <div class="kpis pol-kpis x-stats">${kp('ok', sm.ok)}${kp('check', sm.check)}${kp('no', sm.no)}</div>
           <div class="pol-groups" id="pres">${!r.results.length ? ui.empty({ icon: 'search', title: T.resultEmpty, desc: T.resultEmptyDesc }) : ['ok', 'check'].map((lv) => { const g = okCheck.filter((x) => x.level === lv); return g.length ? `${grpH(lv, okCheckAll.filter((x) => x.level === lv).length)}<div class="stack rows">${g.map(resCard).join('')}</div>` : ''; }).join('')}${okCheckAll.length > okCheck.length ? `<button class="btn ghost sm pol-more" data-act="showAll" data-op="policy.show-all">再看 ${okCheckAll.length - okCheck.length} 项</button>` : ''}
           ${no.length ? `<details class="pol-no" ${S.filter === 'no' ? 'open' : ''}><summary class="sect" data-op="policy.no-toggle"><span class="x-ring h-${ui.hue(L.no[0], 'policyLevel')}"></span>${esc(L.no[0])}<span class="t-3 num">${no.length}</span><span class="sp"></span><span class="t-3 pol-why-t">看原因</span></summary><div class="stack rows">${no.map(resCard).join('')}</div></details>` : ''}</div>`;
-        const pick = [...S.picked].filter((id) => r.results.some((x) => x.id === id && x.level !== 'no'));
-        foot(back(), `<span class="meta">已选 ${pick.length} 项</span><button class="btn primary" data-act="toCalc" data-op="policy.next" ${pick.length ? '' : 'disabled'}>试算额度</button>`);
+        matchFooter();
+      }
+      function matchFooter() {
+        const r = S.match;
+        const pick = chosen();
+        foot(back(), `<span class="meta" data-op="policy.selection">已选 ${pick.length} 项 · 默认选中 ${r.defaultItemIds.length} 项 · 本批已结束 ${r.summary.ended} 项</span>${restoreStatus()}<button class="btn primary" data-act="toCalc" data-op="policy.next" ${pick.length && !restoringAmounts ? '' : 'disabled'}>试算额度</button>`);
       }
       function resCard(x) {
         const p = byId(x.id) || {}; const L = C.levels[x.level]; const open = S.open.has(x.id);
@@ -139,16 +163,17 @@
         const hint = x.level === 'no' ? noHint(p, x) : '';
         return `<div class="card tight pol-res lv-${x.level}" data-res="${x.id}">
           <div class="pol-r1">${x.level !== 'no' ? `<input type="checkbox" class="cb pol-ck" data-pick="${x.id}" data-op="policy.pick-${x.id}" ${S.picked.has(x.id) ? 'checked' : ''}>` : ''}
-            <div class="grow row-click" data-toggle="${x.id}"><div class="pol-t">${esc(x.title)}</div><div class="meta clip">${esc(x.doc || '')} ${esc(clz(x.clause))}${x.category ? ' · ' + esc(x.category) : ''}${p.example ? ' · ' + esc(T.demoBadge) : ''}</div></div>
+            <div class="grow row-click" data-toggle="${x.id}"><div class="pol-t">${esc(x.title)}</div><div class="meta clip">${esc(refOf({ ...x, docNo: x.doc }))}${x.category ? ' · ' + esc(x.category) : ''}</div></div>
             ${amount}</div>
           ${x.level === 'check' && unknown.length ? `<div class="pol-fill">${unknown.map(({ c, cond }) => fillCtl(x.id, cond, c)).join('')}</div>` : ''}
           ${x.level === 'no' ? `<div class="pol-why">${failed.map((c) => `<span class="pol-x"><span class="ck h-red">✕</span>${esc(c.label)}</span>`).join('')}${hint ? `<div class="meta">${esc(hint)}</div>` : ''}</div>` : ''}
           ${open ? detailFold(x, p) : ''}
-          <div class="pol-r2 ${x.level !== 'no' ? 'ind' : ''}">${tag(winOf(p), 'policyWindow')}<span class="sp"></span><button class="link" data-toggle="${x.id}" data-op="policy.more-${x.id}">${open ? '收起' : '条件与时间'}</button><button class="link" data-src="${x.id}" data-op="policy.src-${x.id}">看原文</button></div></div>`;
+          <div class="pol-r2 ${x.level !== 'no' ? 'ind' : ''}">${tag(winOf(p), 'policyWindow')}<span class="sp"></span><button class="link" data-toggle="${x.id}" data-op="policy.more-${x.id}">${open ? '收起' : '条件与时间'}</button><button class="link" data-src="${x.id}" data-op="policy.src-${x.id}">${p.example ? '看示例说明' : '看原文'}</button></div></div>`;
       }
       function fillCtl(id, cond, c) {
         if (cond.trigger && /有相关投入/.test(cond.label || '')) return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>需人工确认：投入是否属于本事项支持范围</span><button class="link" data-src="${id}">看原文</button></div>`;
         if (cond.f === 'license' || cond.op === 'has') return `<label class="check pol-fill-i"><input type="checkbox" data-lic="${esc([].concat(cond.v)[0])}" data-op="policy.fill-license">${esc(c.label)}？已持有</label>`;
+        if (typeof cond.v === 'boolean') return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>需人工确认：${esc(c.label)}</span><button class="link" data-src="${id}">看原文</button></div>`;
         const f = F(cond.f);
         return `<div class="pol-fill-i"><span class="ck h-amber">?</span><span>缺：${esc(f[0] || c.label)}</span><input class="input sm num" type="number" min="0" data-fill="${cond.f}" data-op="policy.fill-${cond.f}" placeholder="${esc(f[1])}" style="width:110px"><span class="meta">${esc(f[1])}</span><button class="btn sm" data-act="refill" data-op="policy.refill-${cond.f}">重算</button><button class="link" data-sample="${cond.f}">填入示例</button></div>`;
       }
@@ -160,7 +185,7 @@
       function detailFold(x, p) {
         const t = p.times || {};
         return `<div class="fold stack">${x.checks.map((c) => `<div class="ck-row"><span class="ck h-${c.state === 'ok' ? 'green' : c.state === 'no' ? 'red' : 'amber'}">${c.state === 'ok' ? '✓' : c.state === 'no' ? '✕' : '?'}</span>${esc(c.label)}</div>`).join('')}
-          <div class="times"><div><b>政策有效期</b>${esc(t.valid || '—')}</div><div><b>事项发生期</b>${esc(t.occur || '—')}</div><div><b>申报窗口</b>${esc(t.window || '—')}</div></div>
+          <div class="times"><div><b>政策有效期</b>${esc(t.valid || '—')}</div><div><b>事项发生期</b>${esc(t.occur || '—')}</div><div><b>申报窗口</b>${esc(t.deadlineText || t.window || '—')}</div></div>
           <div class="meta">支持标准：${esc(x.rule || (p.rule && p.rule.text) || '—')}</div>
           ${(x.pending || []).length ? `<div class="meta">尚需确认：${x.pending.map(esc).join('、')}</div>` : ''}${p.versionNote ? `<div class="callout h-amber">${icon('alert')}<div>${esc(p.versionNote)}</div></div>` : ''}</div>`;
       }
@@ -168,35 +193,79 @@
       /* ---------- 第 3 步：试算 ---------- */
       const chosen = () => (S.match ? S.match.results.filter((x) => x.level !== 'no' && S.picked.has(x.id)) : []);
       const profile = () => (S.match && S.match.profile) || {};
+      const baseAmount = (x) => {
+        const base = byId(x.id)?.rule?.base;
+        return x.calc?.base ?? (base ? profile()[base] : null);
+      };
       function step2() {
         const list = chosen();
-        list.forEach((x) => { const p = byId(x.id); if (!S.calc[x.id]) { const base = p.rule && p.rule.base; const v = base ? (S.overrides[base] != null ? S.overrides[base] : profile()[base]) : null; S.calc[x.id] = { amount: v, result: x.calc }; } });
-        const res = (x) => S.calc[x.id] && S.calc[x.id].result; const total = list.reduce((s, x) => s + (res(x) && res(x).kind !== 'fixed' ? res(x).amount : 0), 0); const fixed = list.filter((x) => res(x) && res(x).kind === 'fixed'); const fixedSum = fixed.reduce((s, x) => s + res(x).amount, 0);
-        $('#ps').innerHTML = `<div class="q">预计最高可支持</div><div class="big pol-total num" data-op="policy.total">${fmt(total)}</div><div class="q-sub" style="margin-top:4px">${fixed.length ? `另有 ${fixed.length} 项定额奖励，最高合计 ${fmt(fixedSum)} · ` : ''}按原文规则试算，以评审为准</div>
+        list.forEach((x) => { S.calc[x.id] ??= { amount: baseAmount(x), result: x.calc, edited: false }; });
+        $('#ps').innerHTML = `<div class="pol-calc-summary">${calcSummary(list)}</div><div class="q-sub" style="margin-top:4px">各项金额单独列示，叠加规则和实际支持额度以正式审核为准。</div>
           <div class="stack rows">${list.map((x) => calcRow(x)).join('')}</div>`;
-        foot(back(), `<button class="btn primary" data-act="toNotice" data-op="policy.to-notice">生成告知单</button>`);
+        foot(back(), `${restoreStatus()}<button class="btn primary" data-act="toNotice" data-op="policy.to-notice" ${restoringAmounts ? 'disabled' : ''}>生成告知单</button>`);
+      }
+      function calcSummary(list) {
+        const ratios = list.map((x) => S.calc[x.id]?.result).filter((r) => r?.kind === 'ratio');
+        const summary = ratios.length === 1 ? fmt(ratios[0].amount) : `${ratios.length} 项`;
+        return `<div class="q">${ratios.length === 1 ? '按比例试算金额' : '已按比例试算'}</div><div class="big pol-total num" data-op="policy.total">${summary}</div>`;
       }
       function calcRow(x) {
-        const p = byId(x.id); const base = p.rule && p.rule.base; const c = S.calc[x.id] || {}; const r = c.result;
-        return `<div class="card tight pol-calc"><div class="grow pol-cl"><div class="pol-t">${esc(x.title)}</div><div class="meta clip" title="${esc(p.rule ? p.rule.text : '')}">${esc(p.rule ? p.rule.text : '')}</div>${r && r.kind !== 'fixed' ? `<div class="t-sm t-2 num" style="margin-top:4px">${esc(r.text)} ${r.capped ? tag('已按封顶', 'status', { cls: 'plain' }) : ''}</div>` : ''}</div>
-          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}"></div>` : ''}
-          <div class="pol-amt pol-ca num">${r ? (r.upTo ? '<span class="meta">最高</span> ' : '') + fmt(r.amount) : '<span class="meta">经评审确定</span>'}</div></div>`;
+        const p = byId(x.id) || {}; const base = p.rule && p.rule.base; const c = S.calc[x.id] || {}; const r = c.result;
+        return `<div class="card tight pol-calc"><div class="grow pol-cl"><div class="pol-t">${esc(x.title)} ${exampleTag(p)}</div><div class="meta clip" title="${esc(p.rule ? p.rule.text : '')}">${esc(p.rule ? p.rule.text : '')}</div><div class="pol-calc-text">${calcResultText(r)}</div></div>
+          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}" ${restoringAmounts ? 'disabled' : ''}></div>` : ''}
+          <div class="pol-amt pol-ca num">${calcResultAmount(p, r)}</div></div>`;
       }
-      async function recalc(id, unitVal) {
-        const p = byId(id); const base = p.rule.base; const amount = unitVal === '' ? null : +unitVal * F(base)[2];
-        S.calc[id] = { amount, result: amount ? (await P.calc({ itemId: id, amount })).result : null };
+      const calcResultText = (r) => r && r.kind !== 'fixed' ? `<div class="t-sm t-2 num" style="margin-top:4px">${esc(r.text)} ${r.capped ? tag('已按封顶', 'status', { cls: 'plain' }) : ''}</div>` : '';
+      const calcResultAmount = (p, r) => r ? (r.upTo ? '<span class="meta">最高</span> ' : '') + fmt(r.amount) : p.rule?.manual ? '<span class="meta">需人工核对</span>' : '<span class="meta">经评审确定</span>';
+      function setCalcAmount(input) {
+        const id = input.dataset.camt;
+        const base = byId(id).rule.base;
+        const amount = input.valueAsNumber > 0 ? input.valueAsNumber * F(base)[2] : null;
+        S.calc[id] = { amount, result: null, edited: true };
+      }
+      async function recalc(id) {
+        const calc = S.calc[id];
+        try {
+          const result = calc.amount == null ? null : (await P.calc({ itemId: id, amount: calc.amount })).result;
+          if (S.calc[id] !== calc) return;
+          calc.result = result;
+          if (S.tab !== 'flow' || S.step !== 2) return;
+          const row = $(`[data-camt="${id}"]`)?.closest('.pol-calc');
+          if (!row) return;
+          row.querySelector('.pol-calc-text').innerHTML = calcResultText(result);
+          row.querySelector('.pol-ca').innerHTML = calcResultAmount(byId(id), result);
+          $('.pol-calc-summary').innerHTML = calcSummary(chosen());
+        } catch (e) {
+          if (S.calc[id] === calc) ui.toast(e.message || '试算失败', { type: 'err' });
+        }
       }
 
       /* ---------- 第 4 步：告知单 ---------- */
-      function buildNotice() {
-        const e = ent(); const list = chosen(); const L = [];
-        L.push(`${e && S.mode === 'ent' ? e.name : '申请人'}：`, '根据你单位情况，经初步核对，可关注以下政策事项：');
-        list.forEach((x, i) => { const p = byId(x.id); const c = S.calc[x.id]; L.push(`${i + 1}. ${p.title}（${p.docNo || ''} ${clz(p.clause)}）`); L.push(`   支持标准：${p.rule.text}`); if (c && c.result) L.push(`   试算参考：${c.result.text}`); L.push(`   申报时间：${p.times.window}`); if ((p.materials || []).length) L.push(`   需准备材料：${p.materials.join('、')}`); if ((p.pending || []).length) L.push(`   尚需确认：${p.pending.join('、')}`); const u = srcUrl(p); if (u) L.push(`   原文：${u}`); });
-        L.push(C.noticeTail); if (C.contact) L.push(C.contact); if (C.signer) L.push(`${C.signer}　${new Date().getFullYear()}年${new Date().getMonth() + 1}月${new Date().getDate()}日`);
-        return L.join('\n');
+      async function showNotice() {
+        if (restoringAmounts) { ui.toast(restoringText); return; }
+        if (!chosen().length || S.busy) return;
+        const match = S.match, step = S.step;
+        const list = chosen();
+        const inputs = list.map((x) => [x, S.calc[x.id]]);
+        const amounts = Object.fromEntries(inputs.map(([x, calc]) => [
+          x.id, calc ? calc.amount : x.calc?.base ?? null,
+        ]));
+        S.busy = true;
+        try {
+          const target = S.mode === 'ent' ? { entId: S.entId } : { profile: { subjectType: S.manual.object } };
+          const { text } = await P.notice({ ...target, itemIds: list.map((x) => x.id), amounts });
+          if (S.match !== match || S.step !== step) return;
+          if (inputs.some(([x, calc]) => S.calc[x.id] !== calc)) return;
+          S.notice = text;
+          S.step = 3;
+          if (S.tab === 'flow') body();
+        } catch (e) {
+          ui.toast(e.message || '生成告知单失败', { type: 'err' });
+        } finally {
+          S.busy = false;
+        }
       }
       function step3() {
-        if (!S.notice) { S.notice = buildNotice(); ctx.audit('生成一次性告知单', who()); }
         const e = ent();
         $('#ps').innerHTML = `<div class="q">告知单已生成</div><div class="q-sub">可直接修改，复制后发给企业</div>
           <textarea class="textarea pol-notice" id="pn" data-op="policy.notice-text" spellcheck="false">${esc(S.notice)}</textarea>
@@ -213,8 +282,8 @@
         pb.innerHTML = `<div class="row gap3 wrap pol-filt" style="margin-bottom:var(--s4)"><div class="search grow">${icon('search')}<input class="input" id="iq" data-op="policy.items-q" placeholder="说法也能搜：买数据、房租、首店…" value="${esc(S.q)}"></div>
           <div class="seg">${['', ...C.objects].map((o) => `<button class="${S.obj === o ? 'on' : ''}" data-obj="${o}" data-op="policy.obj-${o || 'all'}">${o || '全部'}</button>`).join('')}</div>
           <select class="select" style="width:130px" id="iw" data-op="policy.items-win"><option value="">全部窗口</option>${Object.values(C.windowText).map((w) => `<option ${S.win === w ? 'selected' : ''}>${w}</option>`).join('')}</select></div>
-          <div class="meta" style="margin-bottom:var(--s2)">${list.length} 项${ITEMS.some((p) => p.sample !== false && !srcUrl(p)) ? ` · ${esc(T.demoBadge)}` : ''}</div>
-          ${list.length ? `<div class="card flat"><div class="list lined">${list.map((p) => `<div class="li" data-detail="${p.id}" data-op="policy.item-${p.id}"><div class="grow"><div class="ttl clip">${esc(p.title)}</div><div class="meta clip">${esc(p.sub || '')} · ${esc(p.rule ? p.rule.text : '')}</div></div><span class="pol-tg">${tag(p.object, 'policyObj', { cls: 'plain' })}${tag(winOf(p), 'policyWindow')}</span><span class="t-3">${icon('chevron-right')}</span></div>`).join('')}</div></div>` : ui.empty({ icon: 'search', title: '没有找到事项', desc: '换个说法，或清空筛选', action: '清空筛选' })}`;
+          <div class="meta" style="margin-bottom:var(--s2)">${list.length} 项</div>
+          ${list.length ? `<div class="card flat"><div class="list lined">${list.map((p) => `<div class="li" data-detail="${p.id}" data-op="policy.item-${p.id}"><div class="grow"><div class="ttl clip">${esc(p.title)}</div><div class="meta clip">${esc(p.sub || '')} · ${esc(p.rule ? p.rule.text : '')}</div></div><span class="pol-tg">${exampleTag(p)}${tag(p.object, 'policyObj', { cls: 'plain' })}${tag(winOf(p), 'policyWindow')}</span><span class="t-3">${icon('chevron-right')}</span></div>`).join('')}</div></div>` : ui.empty({ icon: 'search', title: '没有找到事项', desc: '换个说法，或清空筛选', action: '清空筛选' })}`;
         const iq = pb.querySelector('#iq'); let tm; iq.oninput = () => { clearTimeout(tm); tm = setTimeout(() => { S.q = iq.value; body(); const n = el.querySelector('#iq'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }, 220); };
         pb.querySelector('#iw').onchange = (ev) => { S.win = ev.target.value; body(); };
       }
@@ -225,13 +294,14 @@
       /* ---------- 抽屉：原文 / 事项详情 / 试算器 ---------- */
       async function openSource(id) {
         const p = byId(id); if (!p) return; const d = docOf(p); const u = srcUrl(p);
-        const dr = ui.drawer({ title: '原文依据', body: `<div class="stack app-policy">
-          <div><div class="t-lg" style="font-weight:500">${esc(d.title || p.docTitle || '')}</div><div class="meta">${esc(p.docNo || d.no || '')} · ${esc(clz(p.clause))}</div></div>
-          <div class="row wrap">${tag(d.state || p.docState || '现行有效', 'status')}${p.verifiedAt ? `<span class="meta">核验 ${esc(p.verifiedAt)}</span>` : ''}${u ? '' : tag(T.demoBadge, 'status', { cls: 'plain' })}</div>
+        const dr = ui.drawer({ title: p.example ? '示例说明' : '原文依据', body: `<div class="stack app-policy">
+          <div><div class="t-lg" style="font-weight:500">${esc(p.docTitle || d.title || '')}</div><div class="meta">${esc(refOf(p) || '无文号')}</div></div>
+          <div class="row wrap">${p.example ? exampleTag(p) : tag(p.docState || d.state || '有效状态待核实', 'status')}${p.verifiedAt ? `<span class="meta">核验 ${esc(p.verifiedAt)}</span>` : ''}</div>
           <div class="quote"><mark>${esc(p.original || '')}</mark></div>
           ${p.versionNote ? `<div class="callout h-amber">${icon('alert')}<div>${esc(p.versionNote)}</div></div>` : ''}
           ${u ? `<a class="btn sm" href="${esc(u)}" target="_blank" rel="noopener">${icon('external')}打开官网原文</a>` : ''}
-          <div class="sec">知识库里的相关内容</div><div id="kbrel" class="stack"><div class="skel"></div></div></div>`, width: 520 });
+          ${p.example ? '' : '<div class="sec">知识库里的相关内容</div><div id="kbrel" class="stack"><div class="skel"></div></div>'}</div>`, width: 520 });
+        if (p.example) return;
         try {
           const r = await ctx.kb.search(`${p.title} ${p.docNo || ''}`, { space: 'policy', limit: 3 });
           const box = dr.el.querySelector('#kbrel'); const hits = (r.hits || []).slice(0, 3);
@@ -242,7 +312,7 @@
       function openDetail(id) {
         const p = byId(id); if (!p) return; const t = p.times || {};
         const dr = ui.drawer({ title: p.title, body: `<div class="stack app-policy">
-          <div class="row wrap">${tag(p.object, 'policyObj')}${tag(winOf(p), 'policyWindow')}${p.sub ? `<span class="meta">${esc(p.sub)}</span>` : ''}</div>
+          <div class="row wrap">${tag(p.object, 'policyObj')}${tag(winOf(p), 'policyWindow')}${exampleTag(p)}${p.sub ? `<span class="meta">${esc(p.sub)}</span>` : ''}</div>
           <div><div class="meta">支持标准</div><div class="t-lg" style="font-weight:500">${esc(p.rule ? p.rule.text : '—')}</div></div>
           <div><div class="sec" style="margin-top:0">条件</div>${(p.conditions || []).map((c) => `<div class="ck-row"><span class="ck h-gray">·</span>${esc(c.label)}</div>`).join('')}</div>
           <div class="times"><div><b>政策有效期</b>${esc(t.valid || '—')}</div><div><b>事项发生期</b>${esc(t.occur || '—')}</div><div><b>申报窗口</b>${esc(t.window || '—')}</div></div>
@@ -250,13 +320,15 @@
           ${(p.pending || []).length ? `<div><div class="sec">尚需确认</div><div class="meta">${p.pending.map(esc).join('、')}</div></div>` : ''}
           ${p.subjectRole ? `<div class="meta">申请主体：${esc(p.subjectRole)}</div>` : ''}
           ${(p.keywords || []).length ? `<div class="meta">也能这样搜：${p.keywords.map(esc).join('、')}</div>` : ''}
-          <div class="row wrap"><button class="btn sm primary" data-d="src">看原文</button>${p.rule && p.rule.base ? '<button class="btn sm" data-d="calc">试算</button>' : ''}${canOp ? '<button class="btn sm" data-d="draft">起草申报通知</button>' : ''}</div></div>`, width: 520 });
+          <div class="row wrap"><button class="btn sm primary" data-d="src">${p.example ? '看示例说明' : '看原文'}</button>${p.rule?.base ? `<button class="btn sm" data-d="calc">${p.times?.open === false ? '回顾试算' : '试算'}</button>` : ''}${canOp && p.times?.open !== false ? '<button class="btn sm" data-d="draft">起草申报通知</button>' : ''}</div></div>`, width: 520 });
         dr.el.querySelectorAll('[data-d]').forEach((b) => (b.onclick = () => { const a = b.dataset.d; dr.close(); if (a === 'src') openSource(id); if (a === 'calc') calcModal(id); if (a === 'draft') ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T03', inputs: { policy: id } }); }));
         return dr;
       }
       function calcModal(id, amountYuan) {
-        const list = ITEMS.filter((p) => p.rule && p.rule.base); const cur = byId(id) && byId(id).rule.base ? id : (list[0] || {}).id; if (!cur) return;
-        const m = ui.modal({ title: '额度试算', ok: false, body: `<div class="stack app-policy"><div class="field"><label>事项</label><select class="select" id="cp" data-op="policy.cm-item">${list.map((p) => `<option value="${p.id}" ${p.id === cur ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></div>
+        const list = ITEMS.filter((p) => p.rule?.base);
+        const cur = id || list[0]?.id;
+        if (!list.some((p) => p.id === cur)) return;
+        const m = ui.modal({ title: '额度试算', ok: false, body: `<div class="stack app-policy"><div class="field"><label>事项</label><select class="select" id="cp" data-op="policy.cm-item">${list.map((p) => `<option value="${p.id}" ${p.id === cur ? 'selected' : ''}>${esc(p.title)}${p.example ? ' · ' + esc(T.demoBadge) : ''}</option>`).join('')}</select></div>
           <div class="field"><label id="cl"></label><input class="input num" type="number" min="0" id="ca" data-op="policy.cm-amount"></div><div class="meta" id="crule"></div>
           <div class="pol-cm"><div class="big num" id="cres" data-op="policy.cm-result">—</div><div class="meta" id="ctext"></div></div></div>` });
         const box = m.el; const sel = box.querySelector('#cp'), inp = box.querySelector('#ca');
@@ -267,16 +339,44 @@
       }
 
       /* ---------- 业务动作 ---------- */
-      async function runMatch() {
-        S.busy = true; S.match = null; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
+      function normalizeMatch(response) {
+        const results = response.results.map((result) => ({
+          ...result,
+          ended: result.ended ?? ((result.open ?? byId(result.id)?.times?.open) === false),
+        }));
+        const applicable = results.filter((x) => x.level !== 'no');
+        const eligible = applicable.filter((x) => !x.ended);
+        const ok = eligible.filter((x) => x.level === 'ok');
+        const eligibleIds = new Set(eligible.map(x => x.id));
+        const defaults = Array.isArray(response.defaultItemIds)
+          ? [...new Set(response.defaultItemIds.filter(id => eligibleIds.has(id)))]
+          : (ok.length ? ok : eligible.slice(0, 2)).map(x => x.id);
+        return {
+          ...response,
+          results,
+          total: response.total ?? ITEMS.length,
+          summary: { ...response.summary, ended: response.summary.ended ?? applicable.length - eligible.length },
+          defaultItemIds: defaults,
+        };
+      }
+      async function runMatch(fromSnapshot = false) {
+        invalidateMatch();
+        const version = matchVersion;
+        restoringFlow = fromSnapshot;
+        S.busy = true; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
         try {
           let b;
           if (S.mode === 'ent') b = { entId: S.entId, overrides: S.overrides };
           else { const m = S.manual; b = { profile: Object.assign({ subjectType: m.object === '其他组织' ? '其他组织' : m.object, tags: [...m.tags], license: [...m.license], regInZone: true }, m.yearsInZone !== '' ? { yearsInZone: +m.yearsInZone } : {}, m.amounts, S.overrides) }; }
-          S.match = await P.match(b);
-          S.picked = new Set(S.match.results.filter((x) => x.level === 'ok' && !x.ended).map((x) => x.id));
-          if (!S.picked.size) S.match.results.filter((x) => x.level !== 'no').slice(0, 2).forEach((x) => S.picked.add(x.id));
-        } catch (e) { ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0; }
+          const response = await P.match(b);
+          if (version !== matchVersion) return;
+          S.match = normalizeMatch(response);
+          S.picked = new Set(S.match.defaultItemIds);
+        } catch (e) {
+          if (version !== matchVersion) return;
+          // 恢复失败时继续沿用原快照，直到用户开始新办理或下次返回重试。
+          ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0;
+        }
         S.busy = false; if (S.tab === 'flow') body(); return S.match;
       }
       async function applyFill(field, unitVal) {
@@ -286,8 +386,9 @@
       }
       async function copyNotice() { try { await navigator.clipboard.writeText(S.notice); } catch (e) { /* file:// 下可能无权限 */ } ui.toast('告知单已复制'); }
       function toDocument() {
-        const e = ent(); const ids = chosen().map((x) => x.id);
-        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: e ? e.id : '', policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
+        const entId = S.mode === 'ent' ? S.entId || '' : '';
+        const ids = chosen().map((x) => x.id);
+        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: entId, policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
       }
       async function logIssue() {
         const e = ent(); if (!e) return;
@@ -297,8 +398,10 @@
       function resolveEnt(slot, text) {
         if (slot && typeof slot === 'object' && slot.id) return slot.id;
         const s = String(slot || text || '');
-        const hit = ENTS.find((e) => s.includes(e.short) || s.includes(e.name) || (e.short.length >= 3 && s.includes(e.short.slice(0, 3)))) || ENTS.find((e) => s && e.short.includes(s));
-        return hit ? hit.id : null;
+        const hit = ENTS.find((e) => (e.name && s.includes(e.name)) || (e.short && s.includes(e.short)));
+        if (hit) return hit.id;
+        const partial = ENTS.filter((e) => s && (e.short?.includes(s) || (e.short?.length >= 3 && s.includes(e.short.slice(0, 3)))));
+        return partial.length === 1 ? partial[0].id : null;
       }
       function resolvePolicy(slot, text) {
         if (slot && typeof slot === 'object' && slot.id) return slot.id;
@@ -308,33 +411,116 @@
       }
       const ready = async () => { for (let i = 0; i < 60 && !loaded; i++) await new Promise((r) => setTimeout(r, 50)); };
 
+      /* ---------- 对话快照 ---------- */
+      function snapshotFlow() {
+        const params = S.mode === 'manual' ? { manual: structuredClone(S.manual) } : (S.entId ? { entId: S.entId } : {});
+        if (Object.keys(S.overrides).length) params.overrides = structuredClone(S.overrides);
+        if (!S.match || S.step === 0) return { route: 'home', params };
+
+        const defaults = S.match.defaultItemIds;
+        if (S.step > 1 || S.picked.size !== defaults.length || defaults.some((id) => !S.picked.has(id))) {
+          params.pickedIds = [...S.picked];
+        }
+        const amounts = Object.fromEntries(Object.entries(S.calc).filter(([, entry]) => entry.edited).map(([id, entry]) => [id, entry.amount]));
+        if (Object.keys(amounts).length) params.calcAmounts = amounts;
+        if (S.filter) params.filter = S.filter;
+        if (S.showAll) params.expanded = true;
+        if (S.step === 3) params.notice = S.notice;
+        return { route: flowRoutes[S.step], params };
+      }
+      function snapshot(route, params) {
+        if (!loaded || restoringFlow) return;
+        const flow = canOp ? snapshotFlow() : null;
+        if (S.tab === 'flow') return flow;
+        const next = {};
+        if (S.tab === 'items') {
+          const q = $('#iq')?.value;
+          if (q) next.q = q;
+          if (S.obj) next.object = S.obj;
+          if (S.win) next.win = S.win;
+        }
+        if (flow && (flow.route !== 'home' || Object.keys(flow.params).length)) next.flow = flow;
+        if (route === 'detail' && S.tab === 'items') return { route, params: { ...next, itemId: params.itemId || params.id } };
+        return { route: S.tab, params: next };
+      }
+      async function restore(route, params) {
+        const version = matchVersion;
+        restoringFlow = true;
+        await ready();
+        if (version !== matchVersion) return;
+        restoringFlow = false;
+        if (!el.isConnected || !loaded) return;
+        const browsing = ['items', 'docs', 'detail'].includes(route);
+        if (!browsing && !flowRoutes.includes(route)) return go(route, params);
+        S.tab = browsing ? (route === 'detail' ? 'items' : route) : 'flow';
+        if (browsing) {
+          S.q = params.q || ''; S.obj = params.object || ''; S.win = params.win || '';
+        }
+        const flow = browsing ? params.flow : { route, params };
+        const { manual, entId, overrides, pickedIds, expanded, filter, calcAmounts, notice } = flow?.params || {};
+        if (canOp && flow) {
+          S.mode = manual ? 'manual' : 'ent';
+          S.manual = manual ? structuredClone(manual) : S.manual;
+          S.entId = manual ? null : (entId || null);
+          S.overrides = structuredClone(overrides || {});
+        }
+        render();
+        if (route === 'detail') openDetail(params.itemId || params.id);
+        const step = flowRoutes.indexOf(flow?.route);
+        if (!canOp || step < 1 || !(manual || entId)) return;
+
+        const match = await runMatch(true);
+        if (!match || S.match !== match || !el.isConnected) return;
+        restoringFlow = false;
+        if (Array.isArray(pickedIds)) S.picked = new Set(pickedIds);
+        S.showAll = !!expanded;
+        S.filter = filter || null;
+        const ids = chosen().map((x) => x.id).filter((id) => calcAmounts && Object.hasOwn(calcAmounts, id) && byId(id)?.rule?.base);
+        for (const id of ids) S.calc[id] = { amount: calcAmounts[id], result: null, edited: true };
+        restoringAmounts = ids.length > 0;
+        const hasNotice = flow.route === 'notice' && typeof notice === 'string';
+        S.step = hasNotice ? 3 : Math.min(step, 2);
+        if (hasNotice) S.notice = notice;
+        if (S.tab === 'flow') body();
+
+        if (restoringAmounts) {
+          await Promise.all(ids.map(recalc));
+          if (S.match !== match) return;
+          restoringAmounts = false;
+          if (!el.isConnected) return;
+          if (S.tab === 'flow' && S.step === 1 && S.match) matchFooter();
+          if (S.tab === 'flow' && S.step === 2) body();
+        }
+        if (flow.route === 'notice' && !hasNotice && S.step === 2 && S.match === match) await showNotice();
+      }
+
       /* ---------- 事件 ---------- */
       el.addEventListener('click', async (ev) => {
         const t = ev.target.closest('[data-tab],[data-step],[data-mode],[data-ent],[data-act],[data-filter],[data-toggle],[data-src],[data-detail],[data-doc],[data-obj],[data-mobj],[data-mtag],[data-mlic],[data-sample],[data-empty-action]');
         if (!t) return; const d = t.dataset;
         if (d.tab) { S.tab = d.tab; render(); return; }
-        if (d.step != null && !t.disabled) { S.step = +d.step; body(); return; }
-        if (d.mode) { S.mode = d.mode; body(); return; }
-        if (d.ent) { S.entId = d.ent; S.overrides = {}; S.match = null; body(); return; }
+        if (d.step != null && !t.disabled) { S.step = +d.step; if (S.step === 0) invalidateMatch(); body(); return; }
+        if (d.mode) { if (S.mode !== d.mode) invalidateMatch(); S.mode = d.mode; body(); return; }
+        if (d.ent) { invalidateMatch(); S.entId = d.ent; S.overrides = {}; body(); return; }
         if (d.filter) { S.filter = S.filter === d.filter ? null : d.filter; body(); return; }
         if (d.toggle) { S.open.has(d.toggle) ? S.open.delete(d.toggle) : S.open.add(d.toggle); body(); return; }
         if (d.src) return openSource(d.src);
         if (d.detail) return openDetail(d.detail);
         if (d.doc) { const r = await ctx.kb.search(DOCS.find((x) => x.id === d.doc).title, { space: 'policy', limit: 1 }).catch(() => ({ hits: [] })); if (r.hits && r.hits[0]) ctx.kb.open(r.hits[0].id); else ui.toast('知识库里还没有这份文件'); return; }
         if (d.obj != null && t.closest('.seg')) { S.obj = d.obj; body(); return; }
-        if (d.mobj) { S.manual.object = d.mobj; body(); return; }
-        if (d.mtag) { const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
-        if (d.mlic) { const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
+        if (d.mobj) { if (S.manual.object !== d.mobj) invalidateMatch(); S.manual.object = d.mobj; body(); return; }
+        if (d.mtag) { invalidateMatch(); const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
+        if (d.mlic) { invalidateMatch(); const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
         if (d.sample) { const inp = t.parentElement.querySelector('[data-fill]'); if (inp) inp.value = toUnit(d.sample, C.sampleFill[d.sample] || 10 * F(d.sample)[2]); return; }
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); load(); } else { S.q = ''; S.obj = ''; S.win = ''; body(); } return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(ent() ? `${ent().short}能申请哪些支持？` : '实体书店房租补贴的条件是什么？');
-        if (a === 'clear') { S.entId = null; S.match = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
+        if (a === 'clear') { invalidateMatch(); S.entId = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
         if (a === 'run') return runMatch();
         if (a === 'refill') { const inp = t.parentElement.querySelector('[data-fill]'); if (!inp.value) { ui.toast('先填一个数', { type: 'warn' }); return; } return applyFill(inp.dataset.fill, inp.value); }
         if (a === 'showAll') { S.showAll = true; body(); return; }
-        if (a === 'toCalc') { S.step = 2; body(); return; }
-        if (a === 'toNotice') { S.step = 3; S.notice = ''; body(); return; }
+        if (a === 'toCalc' && !restoringAmounts) { S.step = 2; body(); return; }
+        if (a === 'toNotice') return showNotice();
         if (a === 'copy') return copyNotice();
         if (a === 'download') return ui.download(`政策告知单-${who()}.txt`, S.notice);
         if (a === 'toDoc') return toDocument();
@@ -343,12 +529,13 @@
       });
       el.addEventListener('change', async (ev) => {
         const t = ev.target; const d = t.dataset;
-        if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); S.calc = {}; body(); return; }
+        if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); delete S.calc[d.pick]; body(); return; }
         if (d.lic) { if (t.checked) applyFill('license', d.lic); return; }
-        if (d.camt) { await recalc(d.camt, t.value); body(); return; }
-        if (d.mnum) { S.manual[d.mnum] = t.value; return; }
-        if (d.mamt) { if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
+        if (d.camt) { if (S.calc[d.camt]?.edited) await recalc(d.camt); return; }
+        if (d.mnum) { invalidateMatch(); S.manual[d.mnum] = t.value; return; }
+        if (d.mamt) { invalidateMatch(); if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
       });
+      el.addEventListener('input', (ev) => { if (ev.target.dataset.camt) setCalcAmount(ev.target); });
       el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.dataset.fill) { const b = ev.target.parentElement.querySelector('[data-act=refill]'); b && b.click(); } });
 
       load();
@@ -360,12 +547,13 @@
           await ready(); const id = resolveEnt(es, text);
           if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (!canOp) { run && run.fail(T.viewOnly); return; }
-          gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.match = null; S.overrides = {}; body();
+          invalidateMatch(); gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.overrides = {}; body();
           const e = ENTS.find((x) => x.id === id);
           if (run) { await run.step(1); await run.fill('[data-op="policy.ent"]', e.short); await run.wait(`[data-op="policy.opt-${id}"]`); await run.click(`[data-op="policy.opt-${id}"]`); await run.step(2); await run.click('[data-op="policy.go"]'); await run.wait(() => S.match && el.querySelector('[data-op="policy.kpi-ok"]')); await run.step(3); await run.highlight('[data-op="policy.kpi-ok"]'); }
           else { S.entId = id; await runMatch(); }
+          if (!S.match) return;
           const sm = S.match.summary; const firstCheck = S.match.results.find((x) => x.level === 'check');
-          run && run.done(`${e.short}：${sm.ok} 项可进一步核对${sm.check ? `，${sm.check} 项待确认` : ''}${sm.no ? `，${sm.no} 项不满足` : ''}`, [...(firstCheck ? [{ label: '补填缺的信息', say: '补填数据采购额 30 万' }] : []), { label: '生成告知单', say: `给${e.short}生成政策告知单` }, { label: '起草答复函', say: '把告知单转成公文答复' }]);
+          run && run.done(`${e.short}：核对 ${S.match.total} 项事项，${sm.ok} 项可进一步核对${sm.check ? `，${sm.check} 项待确认` : ''}${sm.no ? `，${sm.no} 项不满足` : ''}。默认选中 ${S.match.defaultItemIds.length} 项，本批已结束 ${sm.ended} 项。`, [...(firstCheck ? [{ label: '补填缺的信息', say: '补填数据采购额 30 万' }] : []), { label: '生成告知单', say: `给${e.short}生成政策告知单` }, { label: '起草答复函', say: '把告知单转成公文答复' }]);
           return S.match;
         },
         async fill({ amount, field, value, text } = {}, run) {
@@ -389,24 +577,28 @@
         async calc({ amount, policy, text } = {}, run) {
           await ready();
           if (amount == null) { const mm = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (mm) amount = +mm[1] * 1e4; }
-          if (S.match && !policy && !amount) { gotoTab('flow'); if (run) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.total"]'); await run.highlight('[data-op="policy.total"]'); run.done(`预计最高可支持 ${el.querySelector('[data-op="policy.total"]').textContent}`, [{ label: '生成告知单', say: '生成一次性告知单' }]); } else { S.step = 2; body(); } return; }
+          if (restoringAmounts && S.match && !policy && !amount) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
+          if (S.match && !policy && !amount) { gotoTab('flow'); if (run) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.total"]'); await run.highlight('[data-op="policy.total"]'); run.done('已按事项分别列出试算参考和支持标准', [{ label: '生成告知单', say: '生成一次性告知单' }]); } else { S.step = 2; body(); } return; }
           const id = resolvePolicy(policy, text) || (ITEMS.find((p) => p.rule && p.rule.base) || {}).id;
           let amt = amount; if (amt == null) { const m = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (m) amt = +m[1] * 1e4; }
-          const m = calcModal(id); if (!m) return;
-          if (run) { await run.step(1); await run.select('[data-op="policy.cm-item"]', id); await run.step(2); if (amt) await run.fill('[data-op="policy.cm-amount"]', String(toUnit(byId(id).rule.base, amt))); await run.wait(() => m.last || !amt, 4000); await run.step(3); await run.highlight('[data-op="policy.cm-result"]'); const r = m.last && m.last.result; run.done(r ? `${byId(id).title}：${r.text}，可支持 ${fmt(r.amount)}${r.capped ? '（已按封顶）' : ''}` : '请输入金额', [{ label: '看原文', say: `${byId(id).title}的条件是什么` }]); }
+          const m = calcModal(id); if (!m) { run && run.fail('该事项需按原文人工核对金额'); return; }
+          if (run) { await run.step(1); await run.select('[data-op="policy.cm-item"]', id); await run.step(2); if (amt) await run.fill('[data-op="policy.cm-amount"]', String(toUnit(byId(id).rule.base, amt))); await run.wait(() => m.last || !amt, 4000); await run.step(3); await run.highlight('[data-op="policy.cm-result"]'); const r = m.last && m.last.result; run.done(r ? `${byId(id).title}：${r.text}。试算参考金额 ${fmt(r.amount)}。 ${m.last.note}` : '请输入金额', [{ label: '看原文', say: `${byId(id).title}的条件是什么` }]); }
           return m;
         },
         async notice({ ent: es, text } = {}, run) {
-          await ready(); const id = resolveEnt(es, text) || S.entId;
+          await ready();
+          if (restoringAmounts) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
+          const id = resolveEnt(es, text) || (S.mode === 'ent' ? S.entId : null);
           if (!S.match || (id && id !== S.entId)) { if (!id) { run && run.fail('要给哪家企业生成？'); return; } await actions.match({ ent: { id } }, run ? Object.assign(Object.create(run), { done() {} }) : null); }
+          if (!chosen().length) { run && run.fail('请先勾选要告知的事项'); return; }
           gotoTab('flow');
-          if (run) { await run.step(1); if (S.step < 2) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.to-notice"]'); } await run.step(2); await run.click('[data-op="policy.to-notice"]'); await run.wait('[data-op="policy.notice-text"]'); await run.step(3); await run.highlight('[data-op="policy.copy"]', '确认无误后复制给企业'); run.done(`告知单已生成（${chosen().length} 项），确认后点“复制告知单”`, [{ label: '转为公文答复', say: '把告知单转成公文答复' }, { label: '记入企业诉求', say: '把这次咨询记入企业诉求' }]); }
-          else { S.step = 3; S.notice = ''; body(); }
+          if (run) { await run.step(1); if (S.step < 2) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.to-notice"]'); } await run.step(2); if (S.step === 2) await run.click('[data-op="policy.to-notice"]'); await run.wait('[data-op="policy.notice-text"]'); await run.step(3); await run.highlight('[data-op="policy.copy"]', '确认无误后复制给企业'); run.done(`告知单已生成（${chosen().length} 项），确认后点“复制告知单”`, [{ label: '转为公文答复', say: '把告知单转成公文答复' }, { label: '记入企业诉求', say: '把这次咨询记入企业诉求' }]); }
+          else await showNotice();
           return S.notice;
         },
         async detail({ policy, text } = {}, run) {
           await ready(); const id = resolvePolicy(policy, text); if (!id) { run && run.fail('没找到对应的事项，可以换个说法'); return; }
-          gotoTab('items'); if (run) { await run.step(1); await run.fill('[data-op="policy.items-q"]', byId(id).title.slice(0, 4)); await new Promise((r) => setTimeout(r, 300)); await run.wait(`[data-op="policy.item-${id}"]`); await run.step(2); await run.click(`[data-op="policy.item-${id}"]`); const p = byId(id); run.done(`${p.title}：${(p.conditions || []).map((c) => c.label).join('；')}。标准：${p.rule.text}`, [{ label: '看原文', say: '看原文' }]); }
+          gotoTab('items'); if (run) { await run.step(1); await run.fill('[data-op="policy.items-q"]', byId(id).title.slice(0, 4)); await new Promise((r) => setTimeout(r, 300)); await run.wait(`[data-op="policy.item-${id}"]`); await run.step(2); await run.click(`[data-op="policy.item-${id}"]`); const p = byId(id); run.done(`${p.title}${p.example ? ' · ' + T.demoBadge : ''}：${(p.conditions || []).map((c) => c.label).join('；')}。标准：${p.rule.text}`, p.example ? [] : [{ label: '看原文', say: '看原文' }]); }
           else openDetail(id);
         },
         async items({ q, object, text } = {}, run) {
@@ -414,8 +606,8 @@
           if (run) { await run.step(1); if (obj) await run.click(`[data-op="policy.obj-${obj}"]`); if (q) await run.fill('[data-op="policy.items-q"]', q); run.done(`事项库：${el.querySelectorAll('[data-detail]').length} 项`); }
           else { S.obj = obj; S.q = q || ''; body(); }
         },
-        async toDocument(a, run) { if (!S.match) { run && run.fail('先完成一次匹配和告知单'); return; } if (run) { gotoTab('flow'); if (S.step !== 3) { S.step = 3; body(); } await run.click('[data-op="policy.to-doc"]'); run.done('已带上企业和政策依据，打开公文协作（答复意见）'); } else toDocument(); },
-        async logIssue(a, run) { if (run) { gotoTab('flow'); if (S.step !== 3) { S.step = 3; body(); } await run.click('[data-op="policy.issue"]'); run.done('已记入企业诉求'); } else logIssue(); },
+        async toDocument(a, run) { if (!chosen().length) { run && run.fail('请先勾选要告知的事项'); return; } if (S.step !== 3) await showNotice(); if (S.step !== 3) return; if (run) { gotoTab('flow'); await run.click('[data-op="policy.to-doc"]'); run.done('已带上企业和政策依据，打开公文协作（答复意见）'); } else toDocument(); },
+        async logIssue(a, run) { if (run) { gotoTab('flow'); if (S.step !== 3) await showNotice(); if (S.step !== 3) return; await run.click('[data-op="policy.issue"]'); run.done('已记入企业诉求'); } else logIssue(); },
         async intake({ file } = {}, run) {
           await ready(); gotoTab('docs');
           let n = 0; try { const r = await ctx.kb.import([file], { space: 'policy', from: '政策匹配' }); n = (r.docs || []).length; } catch (e) { /* 知识库不可用时只提示 */ }
@@ -423,20 +615,22 @@
           run && run.done(`这是一份政策文件，已存入知识库“政策文件”。可以直接问：“这份文件里企业能申请什么？”`, [{ label: '在知识库里问', say: `${file.name.replace(/\.\w+$/, '')}里企业能申请什么支持？` }, { label: '查看事项库', say: '打开政策事项库' }]);
         },
       };
+      async function go(route, params = {}) {
+        await ready();
+        if (route === 'items' || route === 'docs') { S.tab = route; if (params.q != null) S.q = params.q; if (params.object != null) S.obj = params.object; render(); return; }
+        if (route === 'detail') { S.tab = 'items'; render(); openDetail(params.itemId || params.id); return; }
+        S.tab = 'flow';
+        if (params.entId && params.entId !== S.entId) { invalidateMatch(); S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; }
+        if (route === 'calc' && params.itemId) { render(); calcModal(params.itemId, params.amount); return; }
+        render();
+        if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then((match) => { if (match && route === 'notice') return showNotice(); });
+      }
       return {
-        go(route, params = {}) {
-          ready().then(() => {
-            if (route === 'items' || route === 'docs') { S.tab = route; if (params.q != null) S.q = params.q; if (params.object != null) S.obj = params.object; render(); return; }
-            if (route === 'detail') { S.tab = 'items'; render(); openDetail(params.itemId || params.id); return; }
-            S.tab = 'flow';
-            if (params.entId && params.entId !== S.entId) { S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; S.match = null; }
-            if (route === 'calc' && params.itemId) { render(); calcModal(params.itemId, params.amount); return; }
-            render();
-            if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then(() => { if (route === 'notice') { S.step = 3; S.notice = ''; body(); } });
-          });
-        },
+        go,
+        snapshot,
+        restore,
         actions,
-        unmount() {},
+        unmount() { invalidateMatch(); },
       };
     },
   });

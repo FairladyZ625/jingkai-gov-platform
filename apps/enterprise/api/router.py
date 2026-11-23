@@ -1,0 +1,41 @@
+"""企业管理的健康检查与公开参考资料种子入口。"""
+import json
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from haiknow_sdk import KV, PermissionDenied, app_context
+
+from . import visit_tools, visits
+from .ledger import router as ledger_router
+from .reminders import register
+
+router = APIRouter()
+# 走访路由先于台账挂载：企业列表和详情由其补上最近走访与待确认建议。
+router.include_router(visits.router)
+router.include_router(ledger_router)
+router.include_router(visit_tools.router)
+# 诉求、提醒查询及每日扫描任务；任务与调度声明合入本入口模块。
+register(router, globals())
+
+
+def reset_seed(kv: KV, seed_dir: Path) -> None:
+    """用完整快照替换本应用的参考资料，保留其他业务数据。"""
+    rows = json.loads((seed_dir / "real" / "enterprises.json").read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("企业管理参考资料须为对象数组")
+    kv.put("reference:enterprises", rows)
+
+
+@router.get("/health")
+def health(request: Request):
+    try:
+        ctx = app_context(request)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "未登录", "details": {}}}, status_code=401)
+    except PermissionDenied as exc:
+        details = {"app": exc.app_id, "need": exc.action}
+        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "无权查看此应用", "details": details}}, status_code=403)
+    return {"id": ctx.app_id, "status": "ok"}

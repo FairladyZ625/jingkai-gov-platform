@@ -31,7 +31,17 @@ async function openLogin(page, url) {
 }
 
 async function login(page) {
-  await page.locator('[data-u="wangmin"]').click();
+  const card = page.locator('[data-u="wangmin"]');
+  if (await card.count()) {
+    await card.click();
+  } else {
+    const password = await page.evaluate(
+      () => (window.JK_CONFIG?.demoAccounts || []).find(a => a.username === 'wangmin')?.password || '',
+    );
+    await page.locator('[data-op="login.user"]').fill('wangmin');
+    await page.locator('[data-op="login.pass"]').fill(password);
+    await page.locator('[data-op="login.go"]').click();
+  }
   await expect(page.locator('.hello')).toContainText('王敏');
 }
 

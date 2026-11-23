@@ -1,0 +1,40 @@
+# 顺序为自动选择的优先级。JKQ_MODEL_PROVIDER 可将其中一个可用模型移到队首。
+# 各前缀下的 _BASE_URL、_NAME、_API_KEY 由部署环境注入。
+# 无参数冒烟只选择默认启用、已部署的真实兼容服务。
+# confidential 要求 ID 在下列白名单中，且实际地址与独立的 <前缀>_CONFIDENTIAL_BASE_URL 一致。
+# 部署方负责审批地址及域名解析、控制出站网络，使批准的域名始终指向获准的内网服务。
+models:
+  - id: cloud
+    kind: openai
+    group: 国产云端
+    provider: OpenAI 兼容云服务
+    env: JKQ_CLOUD_MODEL
+  - id: deepseek
+    kind: deepseek
+    group: 国产云端
+    provider: DeepSeek
+    env: JKQ_DEEPSEEK_MODEL
+  - id: local
+    kind: openai
+    group: 本地部署
+    provider: 内网 OpenAI 兼容服务
+    env: JKQ_LOCAL_MODEL
+  - id: mock
+    kind: mock
+    group: 推荐
+    provider: 模拟服务
+    name: 经开区 Mock
+  - id: overseas
+    kind: openai
+    group: 海外模型（默认关闭）
+    provider: 海外 OpenAI 兼容服务
+    env: JKQ_OVERSEAS_MODEL
+    enabled: false
+  # 仅 JKQ_CODEX_MODEL_ENABLED=1 时部署，保留现有模型的自动路由优先级。
+  - id: codex-cli
+    kind: codex-cli
+    group: 本地部署
+    provider: Codex CLI
+    env: JKQ_CODEX_MODEL
+
+confidential_providers: [local]

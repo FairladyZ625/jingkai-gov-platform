@@ -5,6 +5,32 @@
 (function () {
   const { esc, icon, tag, toast, modal, confirm, appIcon } = JK; const API = window.JKApi;
   const TABS = [['users', '账号', 'users'], ['org', '组织', 'building'], ['grants', '角色与授权', 'shield'], ['models', '模型', 'cpu'], ['skills', '技能审核', 'skill'], ['audit', '审计日志', 'history'], ['usage', '用量', 'chart']];
+  const AUDIT_PAGE = 50;
+  const APP_LABELS = { platform: '平台', policy: '政策兑现', enterprise: '企业管理', meeting: '会议记录', document: '公文协作', kb: '知识库', skills: '技能中心', computer: '电脑操作', admin: '管理后台' };
+  const ACTION_LABELS = {
+    login: '登录', logout: '退出登录', 'auth.login': '登录', 'auth.logout': '退出登录', 'auth.login.failed': '登录失败',
+    'job.failed': '任务失败', 'job.start': '启动任务', 'job.done': '任务完成', 'job.step.running': '步骤执行中', 'job.step.done': '步骤已完成',
+    'ai.chat': '对话模型调用', 'ai.outbound_denied': '外发被拦截', 'ai.route.test': '测试模型路由', 'model.select': '选择模型', 'model.enable': '调整模型启用状态',
+    'document.draft.mock': '起草公文初稿（模拟）', 'document.draft.policy-template': '生成政策模板初稿', 'document.check': '核查公文', 'audit.export': '导出审计日志', 'todo.patch': '更新待办状态',
+  };
+  const appLabel = (code) => Object.hasOwn(APP_LABELS, code) ? APP_LABELS[code] : (JK.registry[code]?.manifest?.name || code);
+  const actionLabel = (code, app) => {
+    if (code === 'v1.record.save') return app === 'document' ? '保存公文记录' : '保存业务记录';
+    return Object.hasOwn(ACTION_LABELS, code) ? ACTION_LABELS[code] : code;
+  };
+  const auditClock = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  function auditTime(value) {
+    const raw = String(value || '');
+    const stamp = new Date(raw.replace(' ', 'T') + (/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?$/.test(raw) ? '+08:00' : ''));
+    if (Number.isNaN(stamp.getTime())) return raw || '—';
+    const { month, day, hour, minute } = Object.fromEntries(auditClock.formatToParts(stamp).map(({ type, value }) => [type, value]));
+    return `${month}月${day}日 ${hour}:${minute}`;
+  }
+  function csvCell(value) {
+    const text = String(value ?? '');
+    const safe = /^[\t\r\n]|^[\s\uFEFF]*[=+\-@＝＋－＠]/.test(text) ? "'" + text : text;
+    return `"${safe.replace(/"/g, '""')}"`;
+  }
   let SH = null;
   async function render(el, tab, shell) {
     SH = shell; el.dataset.tab = tab;
@@ -15,6 +41,27 @@
     try { await (V[tab] || V.users)(body, el); } catch (e) { body.innerHTML = JK.empty({ icon: 'alert', title: '加载失败', desc: e.message }); }
   }
   const re = (el) => render(el, el.dataset.tab, SH);
+  function issuePassword() {
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  function showIssuedPassword(username, secret, created) {
+    modal({ title: created ? '账号已创建' : '口令已重置', width: 460, okText: '我已保存', ok: () => {},
+      body: `<div class="stack"><p ${created ? 'data-op="admin.u-created"' : ''}>账号 <b>${esc(username)}</b> 的口令仅在本次弹窗查看；关闭后无法找回。请在非共享屏幕下查看，并安全交付给本人。</p><div data-secret-slot></div><button class="btn" data-reveal-password>查看口令</button><p class="t-3 t-xs">登录后可在个人设置中修改口令。</p></div>`,
+      onMount(d) {
+        const reveal = d.querySelector('[data-reveal-password]');
+        reveal.onclick = () => {
+          reveal.disabled = true;
+          const field = document.createElement('input');
+          field.className = 'input mono'; field.readOnly = true; field.autocomplete = 'off'; field.spellcheck = false;
+          field.setAttribute('aria-label', '本次生成的口令'); field.setAttribute('data-issued-password', '');
+          field.value = secret; secret = '';
+          d.querySelector('[data-secret-slot]').append(field);
+          field.focus(); field.select();
+        };
+      },
+    });
+  }
   const V = {
     async users(b, el) {
       const r = await API.admin.users(); const roles = r.roles, deps = r.departments; const q = el.dataset.q || '';
@@ -25,11 +72,30 @@
       b.querySelectorAll('[data-role]').forEach((s) => (s.onchange = async () => { try { await API.admin.patchUser(s.dataset.role, { role: s.value }); toast('角色已更新，立即生效'); } catch (e) { toast(e.message, { type: 'err' }); re(el); } }));
       b.querySelectorAll('[data-more]').forEach((x) => (x.onclick = () => { const on = x.dataset.st === 'active'; JK.menu(x, [{ v: 'reset', icon: 'key', label: '重置密码' }, { v: 'toggle', icon: on ? 'lock' : 'check', label: on ? '停用账号' : '启用账号' }], async (v) => {
         const id = x.dataset.more;
-        if (v === 'reset') { if (!(await confirm('密码将重置为 jk123456。'))) return; await API.admin.patchUser(id, { resetPassword: true }); toast('已重置为 jk123456'); }
+        if (v === 'reset') {
+          if (!(await confirm('将生成独立的新口令，原口令不再可用。确认重置？', { okText: '重置', danger: true }))) return;
+          try {
+            const password = issuePassword();
+            const reply = await API.admin.patchUser(id, { resetPassword: password });
+            if (reply.item?.id !== id) throw Error('没有收到口令重置回执，请核对账号状态');
+            if (el.isConnected) showIssuedPassword(reply.item.username, password, false);
+          } catch (e) { toast(e.message, { type: 'err' }); }
+          return;
+        }
         if (v === 'toggle') { if (on && !(await confirm('停用后该账号无法登录，已有数据保留。', { okText: '停用', danger: true }))) return; try { await API.admin.patchUser(id, { status: on ? 'disabled' : 'active' }); toast(on ? '已停用' : '已启用'); re(el); } catch (e) { toast(e.message, { type: 'err' }); } }
       }); }));
-      b.querySelector('[data-op="admin.add-user"]').onclick = () => modal({ title: '新增账号', width: 460, okText: '创建', body: `<div class="col gap3"><div class="grid g2"><div class="field"><label>姓名</label><input class="input" data-op="admin.u-name" placeholder="如 张晓"></div><div class="field"><label>账号</label><input class="input" data-op="admin.u-username" placeholder="登录名，如 zhangxiao"></div></div><div class="grid g2"><div class="field"><label>角色</label><select class="select" data-op="admin.u-role">${roles.map((ro) => `<option value="${ro.id}" ${ro.id === 'member' ? 'selected' : ''}>${esc(ro.name)}</option>`).join('')}</select></div><div class="field"><label>部门</label><select class="select" data-op="admin.u-dept">${deps.filter((d) => d.parent).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div></div><div class="hint t-3 t-xs">初始密码 jk123456，首次登录后可在个人设置修改。</div></div>`,
-        foot: '', ok: async (d) => { const v = (s) => d.querySelector(`[data-op="admin.u-${s}"]`).value.trim(); try { await API.admin.createUser({ name: v('name'), username: v('username'), role: v('role'), deptId: v('dept') }); toast('账号已创建'); re(el); } catch (e) { toast(e.message, { type: 'err' }); return false; } },
+      b.querySelector('[data-op="admin.add-user"]').onclick = () => modal({ title: '新增账号', width: 460, okText: '创建', body: `<div class="col gap3"><div class="grid g2"><div class="field"><label>姓名</label><input class="input" data-op="admin.u-name" placeholder="如 张晓"></div><div class="field"><label>账号</label><input class="input" data-op="admin.u-username" placeholder="登录名，如 zhangxiao"></div></div><div class="grid g2"><div class="field"><label>角色</label><select class="select" data-op="admin.u-role">${roles.map((ro) => `<option value="${ro.id}" ${ro.id === 'member' ? 'selected' : ''}>${esc(ro.name)}</option>`).join('')}</select></div><div class="field"><label>部门</label><select class="select" data-op="admin.u-dept">${deps.filter((d) => d.parent).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div></div><div class="hint t-3 t-xs">系统为新账号生成独立口令。创建成功后，该口令可在结果弹窗查看一次。</div></div>`,
+        foot: '', ok: async (d) => {
+          const submit = d.querySelector('[data-ok]'); if (submit.disabled) return false;
+          submit.disabled = true;
+          const v = (s) => d.querySelector(`[data-op="admin.u-${s}"]`).value.trim();
+          try {
+            const password = issuePassword();
+            const reply = await API.admin.createUser({ name: v('name'), username: v('username'), role: v('role'), deptId: v('dept') || null, password });
+            if (!reply.item?.id || reply.item.status !== 'active') throw Error('没有收到账号创建并启用的回执，请核对账号状态');
+            if (el.isConnected) { showIssuedPassword(reply.item.username, password, true); re(el); }
+          } catch (e) { submit.disabled = false; toast(e.message, { type: 'err' }); return false; }
+        },
         onMount: (d) => { const ok = d.querySelector('[data-ok]'); ok.dataset.op = 'admin.u-save'; } });
     },
     async org(b, el) {
@@ -60,18 +126,42 @@
       b.querySelectorAll('[data-d]').forEach((x) => (x.onclick = async () => { await API.reviews.decide(x.dataset.id, { decision: x.dataset.d, comment: x.dataset.d === 'reject' ? '请补充效果样例' : '' }); toast(x.dataset.d === 'approve' ? '已上架' : '已驳回'); re(el); }));
     },
     async audit(b, el) {
-      const r = await API.audit.list(); const items = (r.items || []).map((x) => Array.isArray(x) ? { at: x[0], user: x[1], app: x[2], action: x[3], model: x[4] } : x);
-      const f = el.dataset.af || ''; const list = items.filter((x) => !f || [x.user, x.app, x.action].join(' ').includes(f));
-      b.innerHTML = `<div class="row" style="margin-bottom:16px"><div class="search grow" style="max-width:280px">${icon('filter')}<input class="input sm" placeholder="按人 / 应用 / 动作筛选" value="${esc(f)}" data-af></div><span class="sp"></span><span class="t-3 t-sm">${list.length} 条</span><button class="btn" data-csv>${icon('download')}导出 CSV</button></div>
-        <div class="card flat" style="overflow:auto"><table class="tbl"><thead><tr><th>时间</th><th>人员</th><th>应用</th><th>动作</th><th>模型</th></tr></thead><tbody>${list.slice(0, 60).map((x) => `<tr class="audit-row"><td class="num" style="white-space:nowrap">${esc((x.at || '').slice(5))}</td><td style="white-space:nowrap">${esc(x.user)}</td><td>${tag(x.app, null, { cls: 'plain' })}</td><td>${esc(x.action)}</td><td class="t-3" style="white-space:nowrap">${esc(x.model || '—')}</td></tr>`).join('')}</tbody></table></div>`;
-      const fi = b.querySelector('[data-af]'); fi.oninput = () => { el.dataset.af = fi.value; clearTimeout(fi._t); fi._t = setTimeout(() => re(el).then(() => { const n = el.querySelector('[data-af]'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }), 300); };
-      b.querySelector('[data-csv]').onclick = () => { const csv = '\ufeff时间,人员,应用,动作,模型\n' + list.map((x) => [x.at, x.user, x.app, x.action, x.model || ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'); JK.download('审计日志.csv', csv, 'text/csv;charset=utf-8'); toast('已导出'); };
+      const offset = Number(el.dataset.auditOffset) || 0;
+      const r = await API.audit.list({ limit: AUDIT_PAGE, offset });
+      if (!b.isConnected) return;
+      const items = (r.items || []).map((x) => Array.isArray(x) ? { at: x[0], user: x[1], app: x[2], action: x[3], model: x[4] } : x);
+      const total = r.total ?? items.length;
+      if (!items.length && offset && total <= offset) { el.dataset.auditOffset = Math.max(0, offset - AUDIT_PAGE); return re(el); }
+      const range = total ? `第 ${offset + 1}–${offset + items.length} 条 · 共 ${total} 条` : '暂无审计记录';
+      b.innerHTML = `<div class="row wrap gap2" style="margin-bottom:16px"><div class="search grow" style="max-width:280px">${icon('filter')}<input class="input sm" placeholder="筛选本页人员、应用或动作" aria-label="筛选本页人员、应用或动作" value="${esc(el.dataset.af || '')}" data-af></div><span class="sp"></span><span class="t-3 t-sm">${range}</span><button class="btn sm" data-audit-step="-1" ${offset ? '' : 'disabled'}>上一页</button><button class="btn sm" data-audit-step="1" ${offset + items.length < total ? '' : 'disabled'}>下一页</button><button class="btn" title="导出本页筛选结果" data-csv>${icon('download')}导出 CSV</button></div>
+        <div class="card flat" style="overflow:auto"><table class="tbl"><thead><tr><th>时间</th><th>人员</th><th>应用</th><th>动作</th><th>模型</th></tr></thead><tbody></tbody></table></div>`;
+      const input = b.querySelector('[data-af]'), body = b.querySelector('tbody'), exportButton = b.querySelector('[data-csv]');
+      let list = [];
+      const draw = () => {
+        const query = input.value.trim().toLowerCase();
+        list = items.filter((x) => !query || [x.user, x.app, x.action, appLabel(x.app), actionLabel(x.action, x.app)].join(' ').toLowerCase().includes(query));
+        body.innerHTML = list.map((x) => `<tr class="audit-row"><td class="num" title="${esc(x.at)}" style="white-space:nowrap">${esc(auditTime(x.at))}</td><td style="white-space:nowrap">${esc(x.user || '—')}</td><td title="${esc(x.app)}">${tag(appLabel(x.app), null, { cls: 'plain' })}</td><td title="${esc(x.action)}">${esc(actionLabel(x.action, x.app) || '—')}</td><td class="t-3" style="white-space:nowrap">${esc(x.model || '—')}</td></tr>`).join('') || `<tr><td colspan="5" class="t-3">${query ? '本页未找到符合条件的记录' : '暂无审计记录'}</td></tr>`;
+        exportButton.disabled = !list.length;
+      };
+      input.oninput = () => { el.dataset.af = input.value; draw(); };
+      draw();
+      b.querySelectorAll('[data-audit-step]').forEach((button) => (button.onclick = () => { el.dataset.auditOffset = offset + Number(button.dataset.auditStep) * AUDIT_PAGE; return re(el); }));
+      exportButton.onclick = () => { const csv = '\ufeff时间,人员,应用,动作,模型\r\n' + list.map((x) => [x.at, x.user, x.app, x.action, x.model || ''].map(csvCell).join(',')).join('\r\n'); JK.download('审计日志.csv', csv, 'text/csv;charset=utf-8'); toast('已导出本页审计日志'); };
     },
     async usage(b) {
-      const r = await API.admin.usage(); const u = r.usage || {}; const byApp = u.byApp || {}; const names = { policy: '政策兑现', enterprise: '企业管理', meeting: '会议记录', document: '公文协作' }; const tot = Object.values(byApp).reduce((a, c) => a + c, 0) || 1;
-      b.innerHTML = `<div class="grid g3" style="margin-bottom:16px"><div class="card"><div class="kpi"><span class="v num">${u.today || 0}</span><span class="l">今日调用</span></div></div><div class="card"><div class="kpi"><span class="v num">${u.week || 0}</span><span class="l">本周调用</span></div></div><div class="card"><div class="kpi"><span class="v num">${(u.byModel || []).find((x) => /本地/.test(x[0])) ? (u.byModel.find((x) => /本地/.test(x[0]))[1]) + '%' : '—'}</span><span class="l">本地模型占比</span></div></div></div>
-        <div class="grid g2"><div class="card"><div class="card-h"><span class="ttl">按应用</span></div>${Object.entries(byApp).map(([k, v]) => `<div class="bar-row"><span class="l row">${appIcon(k, 'sm')}${names[k] || k}</span><span class="bar"><i style="width:${Math.round((v / tot) * 100)}%"></i></span><span class="v num">${v}%</span></div>`).join('')}</div>
-        <div class="card"><div class="card-h"><span class="ttl">按模型</span></div>${(u.byModel || []).map(([k, v]) => `<div class="bar-row"><span class="l clip">${esc(k)}</span><span class="bar"><i style="width:${v}%"></i></span><span class="v num">${v}%</span></div>`).join('')}</div></div>`;
+      const { usage: u } = await API.admin.usage();
+      if (!u) throw Error('用量接口未返回统计');
+      const live = Array.isArray(u.byApp);
+      const note = live ? `北京时间统计对话模型调用尝试，含失败与模拟；任务状态不计入调用。今日外发拦截 ${u.blockedToday} 次，本周 ${u.blockedWeek} 次，均未发给模型。` : '以下为离线演示数据。';
+      const local = live ? u.localShare : (u.byModel || []).find(([name]) => /本地/.test(name))?.[1];
+      const kpi = (label, count, title = '') => `<div class="card" title="${esc(title)}"><div class="kpi"><span class="v num">${esc(count)}</span><span class="l">${label}</span></div></div>`;
+      const breakdown = (label, suffix, rows, isApp) => `<div class="card"><div class="card-h"><span class="ttl">${label}</span></div>${rows.map(({ name, calls }) => {
+        const width = live ? (u.week ? calls * 100 / u.week : 0) : calls;
+        return `<div class="bar-row"><span class="l clip">${esc(isApp ? appLabel(name) : name)}</span><span class="bar"><i style="width:${Math.max(0, Math.min(100, Number(width) || 0))}%"></i></span><span class="v num">${esc(calls)}${suffix}</span></div>`;
+      }).join('') || '<div class="t-3 t-sm" style="padding:12px">本周暂无模型调用记录</div>'}</div>`;
+      const arrays = (rows) => rows.map(([name, calls]) => ({ name, calls }));
+      b.innerHTML = `<p class="t-3 t-sm" style="margin-bottom:12px">${esc(note)}</p><div class="grid g3" style="margin-bottom:16px">${kpi('今日调用', u.today ?? '—')}${kpi('本周调用', u.week ?? '—')}${kpi('本地模型占比', local == null ? '—' : `${local}%`, local == null ? '无调用或历史记录缺少模型来源' : '本周真实本地调用尝试占比，不含模拟')}</div>
+        <div class="grid g2">${breakdown('按应用', live ? ' 次' : '%', live ? u.byApp : arrays(Object.entries(u.byApp || {})), true)}${breakdown('按模型', live ? ' 次' : '%', live ? u.byModel : arrays(u.byModel || []), false)}</div>`;
     },
   };
   window.JKAdmin = { render };

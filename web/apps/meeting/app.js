@@ -7,7 +7,16 @@
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).meeting || {});
   const T = Object.assign({ pickQ: '整理哪场会？', pickSub: '', runQ: '正在整理', runSub: '', checkQ: '核对转写', checkSub: '', outQ: '纪要与待办', outSub: '', noAccess: '没有权限', local: '本地转写' }, C.text);
   const sec = (t) => { const p = String(t || '0').split(':').map(Number); return p.reduce((a, b) => a * 60 + (b || 0), 0); };
+  const mixedMeeting = () => window.JKHttp.mode() === 'http' && window.JKHttp.mode('meeting') === 'mock';
+  const httpMeeting = () => window.JKHttp.mode('meeting') === 'http';
+  const demoSample = { sampleId: 'park-service-v1', title: '【合成演示】园区服务清单核对', type: '专题推进会', source: 'demo' };
+  const demoPrompt = '把园区服务清单的合成录音整理成纪要';
   const hms = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(x).padStart(2, '0'); };
+  // 标签显示到秒；引用与跳转仍保留原始毫秒定位。
+  const atLabel = (stamp) => hms(Math.floor(sec(stamp)));
+  const dateLabel = (value) => String(value || '—').replace(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?/, (_, y, m, d, t) => y + '年' + (+m) + '月' + (+d) + '日 ' + t);
+  const sourceLabel = (source) => ({ demo: '合成演示录音', upload: '上传录音', live: '现场录音', nas: '会议档案' })[source] || source || '—';
+  const sectionLabel = (minutes) => minutes.body.every(({ h }) => /^发言(?:摘录|片段)/.test(h)) ? '发言片段' : '议题';
   const short = (n) => String(n || '').replace(/（.*?）/g, '');
 
   JK.registerApp({
@@ -23,10 +32,10 @@
       ],
       accepts: [{ kind: '会议录音', ext: C.audioExt, match: /会|录音|座谈|纪要/ }],
       intents: [
-        { id: 'meeting.summarize', action: 'summarize', examples: ['整理一下文化企业座谈会的纪要', '看看座谈会纪要', '上次座谈会说了什么'], keywords: ['纪要', '会上说了', '座谈会'], slots: { meeting: 'meeting' }, plan: ['打开会议记录', '找到会议', '打开纪要与待办'] },
-        { id: 'meeting.transcribe', action: 'transcribe', examples: ['整理局务会录音', '把 AI 原生企业推进会的录音转成纪要', '转写最新的会议录音'], keywords: ['转写', '录音', '整理录音'], slots: { meeting: 'meeting' }, plan: ['选中录音', '选纪要模板', '本地转写与分发言人', '生成纪要与待办'] },
+        { id: 'meeting.summarize', action: 'summarize', examples: [demoPrompt, '整理一下文化企业座谈会的纪要', '看看座谈会纪要', '上次座谈会说了什么'], keywords: ['纪要', '会上说了', '座谈会'], slots: { meeting: 'meeting' }, plan: ['打开会议记录', '找到会议', '打开纪要与待办'] },
+        { id: 'meeting.transcribe', requires: 'operate', action: 'transcribe', examples: ['整理局务会录音', '把 AI 原生企业推进会的录音转成纪要', '转写最新的会议录音'], keywords: ['转写', '录音', '整理录音'], slots: { meeting: 'meeting' }, plan: ['选中录音', '选纪要模板', '本地转写与分发言人', '生成纪要与待办'] },
         { id: 'meeting.todos', action: 'todos', examples: ['会上定了哪些待办', '把座谈会的待办派发下去', '还有哪些待办没认领'], keywords: ['待办', '派发', '认领'], slots: { meeting: 'meeting' }, plan: ['打开纪要与待办', '核对负责人', '等你确认派发'] },
-        { id: 'meeting.record', action: 'record', examples: ['开始现场录音', '帮我录一下这个会'], keywords: ['现场录音', '开始录音', '录一下'], plan: ['打开现场录音', '开始录制'] },
+        { id: 'meeting.record', requires: 'operate', action: 'record', examples: ['开始现场录音', '帮我录一下这个会'], keywords: ['现场录音', '开始录音', '录一下'], plan: ['打开现场录音', '开始录制'] },
         { id: 'meeting.export', action: 'export', examples: ['把座谈会纪要导出 Word', '导出纪要'], keywords: ['导出', 'Word'], slots: { meeting: 'meeting' }, plan: ['打开纪要', '导出 Word'] },
       ],
       starters: ['整理一下文化企业座谈会的纪要', '整理局务会录音', '还有哪些待办没认领？'],
@@ -87,7 +96,7 @@
 
       /* ---------- 第 1 步：选录音 ---------- */
       function meetRow(m) {
-        return `<div class="card tight li" data-open="${m.id}" data-op="meeting.m-${m.id}"><span class="ini h-${ui.hue(m.type, 'meetType')}">${icon('meeting')}</span><div class="grow"><div class="t clip">${esc(m.title)}</div><div class="s">${esc(m.date)} · ${esc(m.duration)} · ${esc(m.source || '')}</div></div>${tag(m.type, 'meetType')}${tag(statusLabel(m), 'meetStatus')}</div>`;
+        return `<div class="card tight li" data-open="${m.id}" data-op="meeting.m-${m.id}"><span class="ini h-${ui.hue(m.type, 'meetType')}">${icon('meeting')}</span><div class="grow"><div class="t clip">${esc(m.title)}</div><div class="s">${esc(dateLabel(m.date))} · ${esc(m.duration || '—')} · ${esc(sourceLabel(m.source))}</div></div>${tag(m.type, 'meetType')}${tag(statusLabel(m), 'meetStatus')}</div>`;
       }
       function step0() {
         const ms = $('#ms');
@@ -165,7 +174,7 @@
           ${unk ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('alert')}<div>有 <b>${unk}</b> 处没听清，点黄色部分补上</div></div>` : ''}
           <div class="mt-player"><button class="btn icon" data-act="play" data-op="meeting.play">${icon(S.playing ? 'pause' : 'play')}</button><div class="grow"><div class="mt-seek" data-act="seekbar" data-op="meeting.seek"><div class="h-violet mt-wave xs">${wave(120, false, m.title.length)}</div><i class="mt-ph" id="mph" style="left:${dur ? (S.pos / dur) * 100 : 0}%"></i></div></div><span class="num meta" id="mpt">${hms(S.pos)} / ${esc(m.duration)}</span></div>
           <div class="row wrap gap2" style="margin:var(--s3) 0">${speakers().map((s) => `<button class="chip-btn" data-spk="${esc(s)}" data-op="meeting.spk-${esc(s)}" title="点击改名"><span class="mt-dot h-${ui.hue(s)}"></span>${esc(s)} ${icon('edit')}</button>`).join('')}<span class="sp"></span><span class="meta">${tr.length} 段 · 热词 ${HOT.filter((w) => tr.some((l) => l[2].includes(w))).length} 个命中</span></div>
-          <div class="mt-tr" id="mtr">${tr.map((l, i) => `<div class="mt-line ${lineAt() === i ? 'on' : ''}" data-line="${i}"><button class="mt-t num" data-seek="${sec(l[0])}">${esc(l[0].replace(/^00:/, ''))}</button><span class="ini sm h-${ui.hue(l[1])}">${esc(short(l[1])[0] || '?')}</span><div class="grow"><div class="meta">${esc(l[1])}</div><div class="mt-x" ${canOp ? `data-edit="${i}"` : ''} data-op="meeting.line-${i}">${hiText(l[2])}</div></div></div>`).join('')}</div>`;
+          <div class="mt-tr" id="mtr">${tr.map((l, i) => `<div class="mt-line ${lineAt() === i ? 'on' : ''}" data-line="${i}"><button class="mt-t num" data-seek="${sec(l[0])}">${esc(atLabel(l[0]))}</button><span class="ini sm h-${ui.hue(l[1])}">${esc(short(l[1])[0] || '?')}</span><div class="grow"><div class="meta">${esc(l[1])}</div><div class="mt-x" ${canOp ? `data-edit="${i}"` : ''} data-op="meeting.line-${i}">${hiText(l[2])}</div></div></div>`).join('')}</div>`;
         foot(`<button class="btn ghost" data-step="0">换一场</button>`, `<button class="btn primary" data-step="3" data-op="meeting.to-minutes">看纪要与待办 ${icon('arrow-right')}</button>`);
       }
       const lineAt = () => { const tr = (S.cur && S.cur.transcript) || []; let k = -1; tr.forEach((l, i) => { if (sec(l[0]) <= S.pos) k = i; }); return k; };
@@ -191,12 +200,14 @@
         if (!m || !mi) { ms.innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>'; foot(); return; }
         const td = m.todos || []; const miss = td.filter((t) => t.owner === '待确认' || t.due === '待确认').length; const sent = td.filter((t) => t.status === '已派发').length;
         ms.innerHTML = `<div class="q">${esc(T.outQ)}</div><div class="q-sub">${esc(T.outSub)}</div>
-          <div class="mt-stats" style="margin-bottom:var(--s5)"><span><b class="num">${mi.body.length}</b> 议题</span><span><b class="num">${td.length}</b> 待办</span><span class="${miss ? 'warn' : ''}"><b class="num">${miss}</b> 缺负责人/时限</span><span><b class="num">${sent}</b> 已派发</span></div>
+          ${m.sampleId === demoSample.sampleId ? '<div class="callout">本页使用约 11 秒的合成录音和对应的示例逐字稿，不是实际会议记录。</div>' : ''}
+          ${mixedMeeting() ? '<div class="callout">本次为模拟会议，派发仅保留在演示数据中，不会写入真实收件箱。</div>' : ''}
+          <div class="mt-stats" style="margin-bottom:var(--s5)"><span><b class="num">${mi.body.length}</b> ${sectionLabel(mi)}</span><span><b class="num">${td.length}</b> 待办</span><span class="${miss ? 'warn' : ''}"><b class="num">${miss}</b> 缺负责人/时限</span><span><b class="num">${sent}</b> 已派发</span></div>
           <div class="sec row">待办<span class="sp"></span>${canOp ? `<button class="link" data-act="selAll">全选可派发</button>` : ''}</div>
           ${td.length ? `<div class="stack rows mt-todos">${td.map(todoRow).join('')}</div>` : '<div class="meta">会上没有形成待办</div>'}
           <div class="sec row">纪要 ${tag(mi.template || m.type, 'meetType')}<span class="sp"></span><span class="meta">点段落可修改</span></div>
-          <div class="mt-paper" data-op="meeting.minutes"><h3>${esc(mi.title)}</h3><div class="mt-meta">${esc(mi.meta)}</div><div class="mt-meta">参会：${esc(mi.attendees)}</div>
-            ${mi.body.map((b, i) => `<div class="mt-sec"><h4>${esc(b.h)}</h4><p ${canOp ? `data-mp="${i}"` : ''}>${esc(b.p)}</p><div class="mt-refs">${(b.refs || []).map((r) => `<button class="mt-ref num" data-ref="${esc(r)}" title="回到原话">${icon('play')}${esc(r.replace(/^00:/, ''))}</button>`).join('')}</div></div>`).join('')}</div>`;
+          <div class="mt-paper" data-op="meeting.minutes"><h3>${esc(mi.title)}</h3><div class="mt-meta">${esc(dateLabel(mi.meta))}</div><div class="mt-meta">参会：${esc(mi.attendees || '未登记')}</div>
+            ${mi.body.map((b, i) => `<div class="mt-sec"><h4>${esc(b.h)}</h4><p ${canOp ? `data-mp="${i}"` : ''}>${esc(b.p)}</p><div class="mt-refs">${(b.refs || []).map((r) => `<button class="mt-ref num" data-ref="${esc(r)}" title="回到原话">${icon('play')}${esc(atLabel(r))}</button>`).join('')}</div></div>`).join('')}</div>`;
         const n = [...S.sel].filter((id) => { const t = td.find((x) => x.id === id); return t && t.status !== '已派发' && t.owner !== '待确认'; }).length;
         foot(`<button class="btn ghost" data-step="2">${icon('chevron-left')}转写</button><button class="btn" data-act="word" data-op="meeting.word">${icon('download')}导出 Word</button>${canOp ? `<button class="btn" data-act="link" data-op="meeting.link">${icon('building')}关联企业诉求</button>` : ''}`,
           canOp ? `<button class="btn primary" data-act="commit" data-op="meeting.commit" ${n ? '' : 'disabled'}>${icon('send')}派发选中 ${n} 条</button>` : '');
@@ -206,7 +217,7 @@
         const doc = !done && canOp && (C.todoToDoc || []).find((x) => x.match.test(t.task + (t.deliverable || '')));
         return `<div class="card tight li mt-todo ${done ? 'done' : ''} ${miss ? 'miss' : ''}" data-op="meeting.todo-${t.id}">
           ${canOp && !done ? `<input type="checkbox" class="cb" data-tsel="${t.id}" ${S.sel.has(t.id) && !miss ? 'checked' : ''} ${miss ? 'disabled title="先选负责人"' : ''}>` : `<span class="t-3">${icon(done ? 'check' : 'flag')}</span>`}
-          <div class="grow"><div class="t">${esc(t.task)}</div><div class="s">${t.deliverable ? `交付：${esc(t.deliverable)} · ` : ''}<button class="link" data-ref="${esc(t.ref)}">${esc(t.ref.replace(/^00:/, ''))} 原话</button>${doc ? ` · <button class="link" data-todoc="${t.id}">${icon('doc')}起草公文</button>` : ''}</div></div>
+          <div class="grow"><div class="t">${esc(t.task)}</div><div class="s">${t.deliverable ? `交付：${esc(t.deliverable)} · ` : ''}<button class="link" data-ref="${esc(t.ref)}">${esc(atLabel(t.ref))} 原话</button>${doc ? ` · <button class="link" data-todoc="${t.id}">${icon('doc')}起草公文</button>` : ''}</div></div>
           ${canOp && !done ? `<select class="select sm mt-own ${miss ? 'warn' : ''}" data-towner="${t.id}" data-op="meeting.owner-${t.id}">${['待确认', ...ps.filter((p) => !p.includes('企业') && p.length <= 3), ...(ps.includes(t.owner) || t.owner === '待确认' ? [] : [t.owner])].filter((v, i, a) => a.indexOf(v) === i).map((p) => `<option ${p === t.owner ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
             <input class="input sm mt-due ${t.due === '待确认' ? 'warn' : ''}" data-tdue="${t.id}" value="${esc(t.due)}" title="完成时限">` : `<span class="meta">${esc(t.owner)} · ${esc(t.due)}</span>`}
           ${tag(miss ? '待确认' : t.status, 'todoStatus')}</div>`;
@@ -215,7 +226,7 @@
       async function commit() {
         const ids = [...S.sel]; const r = await M.commitTodos(S.id, { ids }); const g = await M.get(S.id); S.cur = g.item; S.minutes = g.minutes; S.sel = new Set(); ALLTODOS = null;
         ctx.audit('派发会议待办', `${S.cur.title} · ${r.committed.length} 条`); ctx.bus.emit('inbox:changed', { app: 'meeting' });
-        ui.toast(`已派发 ${r.committed.length} 条到负责人的“我的待办”${r.skipped && r.skipped.length ? `，${r.skipped.length} 条缺负责人未派发` : ''}`, { type: 'ok' }); step3(); return r;
+        ui.toast(`${mixedMeeting() ? '演示中已标记 ' : '已派发 '}${r.committed.length}${mixedMeeting() ? ' 条，未写入真实收件箱' : ' 条到负责人的“我的待办”'}${r.skipped?.length ? `；${r.skipped.length} 条未派发：${[...new Set(r.skipped.map((item) => item.reason))].join('、')}` : ''}`, { type: r.committed.length ? 'ok' : 'warn' }); step3(); return r;
       }
       function editPara(i) {
         const b = S.minutes.body[i];
@@ -248,7 +259,7 @@
       function renderAll(b) {
         const q = S.aq.trim(); const rows = LIST.filter((m) => !q || (m.title + m.type + (m.participants || []).join('')).includes(q));
         b.innerHTML = `<div class="row gap2" style="margin-bottom:var(--s3)"><div class="mt-search grow">${icon('search')}<input class="input" id="maq" placeholder="会议名称、类型、参会人" value="${esc(S.aq)}"></div>${canOp ? `<button class="btn" data-act="newUpload">${icon('upload')}上传录音</button>` : ''}</div>
-          ${rows.length ? `<div class="card mt-tblw"><table class="tbl"><thead><tr><th>会议</th><th>类型</th><th>时长</th><th>待办</th><th>状态</th></tr></thead><tbody>${rows.map((m) => `<tr data-open="${m.id}" class="click"><td><b>${esc(m.title)}</b><div class="meta">${esc(m.date)} · ${esc(m.source || '')}</div></td><td>${tag(m.type, 'meetType')}</td><td class="num">${esc(m.duration)}</td><td class="num">${m.status === 'done' ? m.todoCount : '—'}</td><td>${tag(statusLabel(m), 'meetStatus')}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'search', title: '没找到会议', desc: '换个关键词', action: '清空搜索' })}`;
+          ${rows.length ? `<div class="card mt-tblw"><table class="tbl"><thead><tr><th>会议</th><th>类型</th><th>时长</th><th>待办</th><th>状态</th></tr></thead><tbody>${rows.map((m) => `<tr data-open="${m.id}" class="click"><td><b>${esc(m.title)}</b><div class="meta">${esc(dateLabel(m.date))} · ${esc(sourceLabel(m.source))}</div></td><td>${tag(m.type, 'meetType')}</td><td class="num">${esc(m.duration || '—')}</td><td class="num">${m.status === 'done' ? m.todoCount : '—'}</td><td>${tag(statusLabel(m), 'meetStatus')}</td></tr>`).join('')}</tbody></table></div>` : ui.empty({ icon: 'search', title: '没找到会议', desc: '换个关键词', action: '清空搜索' })}`;
       }
       async function loadAllTodos() { const done = LIST.filter((m) => m.status === 'done'); const rs = await Promise.all(done.map((m) => M.get(m.id))); ALLTODOS = rs.flatMap((r) => (r.item.todos || []).map((t) => Object.assign({}, t, { mid: r.item.id, mtitle: r.item.title }))); }
       async function renderTodos(b) {
@@ -261,6 +272,11 @@
 
       /* ---------- 上传 / 现场录音 ---------- */
       function uploadModal(file) {
+        if (!file && httpMeeting()) {
+          return ui.modal({ title: '整理合成示例录音', okText: '开始整理',
+            body: '<p>园区服务清单核对 · 约 11 秒合成录音。已有示例会直接打开，不会另建一条会议。</p>',
+            ok: async () => { await createAndRun(demoSample); } });
+        }
         const s = C.sampleUpload; const name = file ? file.name : s.file;
         const title = file ? name.replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '') : s.title;
         return ui.modal({ title: '登记这份录音', okText: '上传并整理', body: `<div class="row gap2" style="margin-bottom:var(--s3)"><span class="t-3">${icon('file')}</span><b class="clip">${esc(name)}</b><span class="meta">${esc(file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size)}</span></div>
@@ -269,7 +285,19 @@
           <div class="field"><label>参会人（逗号分隔，帮助区分发言人）</label><input class="input" id="up" value="${esc(file ? '' : s.participants.join('，'))}"></div>`,
           ok: async (box) => { const b = { title: box.querySelector('#ut').value.trim() || title, type: box.querySelector('#uy').value, participants: box.querySelector('#up').value.split(/[,，、\s]+/).filter(Boolean), file: name, size: file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, duration: file ? undefined : s.duration, source: '网页上传' }; await createAndRun(b); } });
       }
-      async function createAndRun(b) { const r = await M.create(b); LIST.unshift(Object.assign({ todoCount: 0 }, r.item)); S.tab = 'flow'; render(); S.setup = null; await startJob(r.item.id, b.type); return r.item; }
+      async function registerMeeting(input) {
+        const { item } = await M.create(input);
+        LIST = [Object.assign({ todoCount: 0 }, item), ...LIST.filter((row) => row.id !== item.id)];
+        return item;
+      }
+      async function createAndRun(b) {
+        const meeting = await registerMeeting(b);
+        S.tab = 'flow'; render(); S.setup = null;
+        if (meeting.status === 'done') await openMeeting(meeting.id, 2);
+        else if (meeting.status === 'running' && meeting.jobId) { S.id = meeting.id; S.step = 1; body(); poll(meeting.id, meeting.jobId); }
+        else await startJob(meeting.id, b.type);
+        return meeting;
+      }
       function recStart() { S.rec = { on: true, t: 0 }; step0(); recTimer = setInterval(() => { S.rec.t += 1; const t = $('#rect'); if (t) t.textContent = hms(S.rec.t); const w = $('#recw'); if (w) w.innerHTML = wave(40, true); }, 1000); }
       async function recStop() { clearInterval(recTimer); const t = S.rec.t; S.rec = null; const d = new Date(); const b = { title: `现场录音 ${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, type: '专题推进会', participants: [ctx.user.name], file: '现场录音.m4a', size: Math.max(0.1, t * 0.03).toFixed(1) + ' MB', duration: hms(Math.max(t, 1)), source: '现场录音' }; return createAndRun(b); }
 
@@ -345,11 +373,19 @@
       }
       const actions = {
         async summarize({ meeting, text } = {}, run) {
-          await ready(); if (!canView) return noPerm(run); const id = resolveMeeting(meeting, text, 'done'); if (!id) { run && run.fail('没找到这场会议，请说出会议名称'); return; }
+          await ready(); if (!canView) return noPerm(run);
+          const wantsSample = httpMeeting() && /园区服务清单.*合成录音/.test(text || '');
+          let id;
+          if (wantsSample) {
+            const existing = LIST.find((row) => row.sampleId === demoSample.sampleId);
+            if (!existing && !canOp) return noPerm(run);
+            id = (existing || await registerMeeting(demoSample)).id;
+          } else id = resolveMeeting(meeting, text, 'done');
+          if (!id) { run && run.fail('没找到这场会议，请说出会议名称'); return; }
           if (mOf(id).status !== 'done') return actions.transcribe({ meeting: id, text }, run);
           await toMinutes(id, run);
           if (run) { await run.step(2); await run.highlight('[data-op="meeting.minutes"]'); const mi = S.minutes; const td = S.cur.todos || [];
-            run.done(`「${S.cur.title}」${mi.body.length} 个议题：${mi.body.map((b) => b.h.replace(/^[一二三四五六七八九]、/, '')).join('、')}；待办 ${td.length} 条，${td.filter((t) => t.owner === '待确认').length} 条缺负责人`, [{ label: '派发待办', say: `把${S.cur.title.slice(-6)}的待办派发下去` }, { label: '导出 Word', say: '把座谈会纪要导出 Word' }]); }
+            run.done(`「${S.cur.title}」整理出 ${mi.body.length} 个${sectionLabel(mi)}：${mi.body.map((b) => b.h.replace(/^[一二三四五六七八九]、/, '')).join('、')}；待办 ${td.length} 条，${td.filter((t) => t.owner === '待确认').length} 条缺负责人`, [{ label: '派发待办', say: `把${S.cur.title.slice(-6)}的待办派发下去` }, { label: '导出 Word', say: '把座谈会纪要导出 Word' }]); }
           return S.minutes;
         },
         async transcribe({ meeting, text, type } = {}, run) {
@@ -361,7 +397,7 @@
           else { S.id = id; S.step = 1; body(); poll(id, m.jobId); }
           await run.step(3); await run.wait(() => S.step === 2 && S.cur && S.cur.id === id, 30000); await run.step(4); await run.click('[data-op="meeting.to-minutes"]'); await run.wait('[data-op="meeting.minutes"]');
           const td = S.cur.todos || []; const unk = (S.cur.transcript || []).filter((l) => /\[听不清\]/.test(l[2])).length;
-          run.done(`「${S.cur.title}」整理好了：${S.cur.transcript.length} 段转写、${S.minutes.body.length} 个议题、${td.length} 条待办${unk ? `；有 ${unk} 处没听清，建议核对` : ''}`, [{ label: '派发待办', say: '把这场会的待办派发下去' }, { label: '导出 Word', say: '导出纪要' }]);
+          run.done(`「${S.cur.title}」整理好了：${S.cur.transcript.length} 段转写、${S.minutes.body.length} 个${sectionLabel(S.minutes)}、${td.length} 条待办${unk ? `；有 ${unk} 处没听清，建议核对` : ''}`, [{ label: '派发待办', say: '把这场会的待办派发下去' }, { label: '导出 Word', say: '导出纪要' }]);
         },
         async todos({ meeting, text } = {}, run) {
           await ready(); if (!canView) return noPerm(run);
@@ -388,10 +424,13 @@
           }
           const ok = td2.filter((t) => t.owner !== '待确认'); const miss = td2.length - ok.length;
           await run.highlight('[data-op="meeting.commit"]', '确认后才派发');
-          const c = await run.ask(`可派发 ${ok.length} 条${miss ? `，另有 ${miss} 条缺负责人（不会派发）` : ''}。确认派发到负责人的“我的待办”吗？`, ['确认派发', '我先改一下']);
+          const c = await run.ask(`拟派发 ${ok.length} 条${miss ? `，另有 ${miss} 条缺负责人（不会派发）` : ''}。${mixedMeeting() ? '本次为模拟会议，是否在演示数据中标记？' : '确认派发到负责人的“我的待办”吗？'}`, ['确认派发', '我先改一下']);
           if (c !== '确认派发') { run.done('好的，改好负责人后点“派发选中”即可'); return; }
-          await run.step(3); S.sel = new Set(ok.map((t) => t.id)); step3(); await run.click('[data-op="meeting.commit"]'); await run.wait(() => S.cur.todos.filter((t) => ok.some((o) => o.id === t.id)).every((t) => t.status === '已派发'));
-          run.done(`已派发 ${ok.length} 条：${ok.map((t) => `${t.owner}·${t.task}`).join('；')}${miss ? `。${miss} 条缺负责人，请补上` : ''}`);
+          await run.step(3); S.sel = new Set(ok.map((t) => t.id)); step3();
+          const result = await commit();
+          const delivered = ok.filter((item) => result.committed.includes(item.id));
+          const skipped = result.skipped || [];
+          run.done(`${mixedMeeting() ? '演示中标记 ' : '已派发 '}${delivered.length} 条${delivered.length ? `：${delivered.map((t) => `${t.owner}·${t.task}`).join('；')}` : ''}${skipped.length ? `。有 ${skipped.length} 条未派发：${[...new Set(skipped.map((item) => item.reason))].join('、')}` : ''}${miss ? `。另有 ${miss} 条缺负责人，请补上` : ''}`);
         },
         async record(a, run) {
           await ready(); if (!canOp) return noPerm(run); goFlow(); S.step = 0; S.setup = null; body();
@@ -406,11 +445,11 @@
           await ready(); if (!canOp) return noPerm(run); goFlow();
           const s = C.sampleUpload; const title = String(file.name || '会议录音').replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
           const type = (TEMPLATES.find((t) => title.includes(t.name.slice(0, 2))) || TEMPLATES[0] || {}).name;
-          const b = { title, type, participants: [], file: file.name, size: file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, source: '对话拖入' };
+          const b = httpMeeting() && file.id === 'rec-1117' ? demoSample : { title, type, participants: [], file: file.name, size: file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, source: '对话拖入' };
           if (!run) return createAndRun(b);
           await run.step(1); const m = await createAndRun(b); await run.step(2);
           await run.wait(() => S.step === 2 && S.cur && S.cur.id === m.id, 30000); await run.step(3);
-          run.done(`录音「${title}」已整理：${S.cur.transcript.length} 段转写、${(S.cur.todos || []).length} 条待办（按“${type}”模板）`, [{ label: '看纪要', say: `看看${title}纪要` }]);
+          run.done(`录音「${S.cur.title}」已整理：${S.cur.transcript.length} 段转写、${(S.cur.todos || []).length} 条待办（按“${S.cur.type}”模板）`, [{ label: '看纪要', say: `看看${S.cur.title}纪要` }]);
         },
       };
       return {

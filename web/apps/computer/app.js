@@ -15,15 +15,15 @@
       perms: { view: '查看操作记录', operate: '发起电脑操作任务', approve: '—', admin: '管理系统授权' },
       tools: [{ name: 'computer.start', desc: '让 AI 去某个系统完成任务（提交前停下）', params: { task: 'apply|stats|notice|status', ent: 'string' } }],
       intents: [
-        { id: 'computer.apply', examples: ['帮我把星河智驾的申报表填了', '去政策兑现平台帮灵犀大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
-        { id: 'computer.stats', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
-        { id: 'computer.notice', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
-        { id: 'computer.status', examples: ['查一下星河智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
-        { id: 'computer.run', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
+        { id: 'computer.apply', requires: 'operate', examples: ['帮我把纸鹿二号智驾的申报表填了', '去政策兑现平台帮折页五号大模型填申报'], keywords: ['申报表', '填申报', '帮我填', '代填', '兑现平台'], slots: { ent: 'enterprise' }, action: 'apply', plan: ['登录申报平台', '找到申报事项', '用台账填好申报表', '停在提交前等你确认', '提交并取回执'] },
+        { id: 'computer.stats', requires: 'operate', examples: ['帮书香里把统计月报填了', '去直报平台填 10 月月报'], keywords: ['月报', '直报', '统计填报', '统计报表'], slots: { ent: 'enterprise' }, action: 'stats', plan: ['登录直报平台', '按台账填数', '平台数据审核', '停在上报前等你确认'] },
+        { id: 'computer.notice', requires: 'operate', examples: ['去官网把最新的申报通知下载下来存到知识库', '下载最新通知入库'], keywords: ['下载通知', '最新通知', '官网通知', '通知入库', '存到知识库'], action: 'notice', plan: ['打开官网通知公告', '找到最新申报通知', '下载原文', '存进知识库'] },
+        { id: 'computer.status', requires: 'operate', examples: ['查一下纸鹿二号智驾的申报进度', '书香里的补贴办到哪一步了'], keywords: ['申报进度', '办到哪', '审核进度', '办理进度'], slots: { ent: 'enterprise' }, action: 'status', plan: ['登录申报平台', '打开我的申报', '读取办理状态'] },
+        { id: 'computer.run', requires: 'operate', examples: ['帮我去系统里操作一下', '打开电脑操作'], keywords: ['电脑操作', '帮我登录', '去系统', '去网站'], action: 'run', plan: ['识别要去的系统', '打开系统', '按步骤操作', '关键步骤等你确认'] },
       ],
-      starters: ['帮我把星河智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
+      starters: ['帮我把纸鹿二号智驾的申报表填了', '去官网把最新的申报通知下载下来存到知识库'],
       demo: [
-        { title: 'AI 代填申报表（停在提交前）', say: '帮我把星河智驾的申报表填了' },
+        { title: 'AI 代填申报表（停在提交前）', say: '帮我把纸鹿二号智驾的申报表填了' },
         { title: '下载官网通知并入库', say: '去官网把最新的申报通知下载下来存到知识库' },
       ],
     },
@@ -34,18 +34,39 @@
       const KBAPI = (ctx.api && ctx.api.kb) || (window.JKApi && window.JKApi.kb);
       const SITES = window.JKCuSites;
       const sleepRaw = (ms) => new Promise((r) => setTimeout(r, ms));
-      const st = { view: 'home', tab: 'tasks', tasks: [], systems: [], runs: [], ents: [], setup: null, text: '', replay: null, shotSel: 0 };
+      const st = { view: 'home', tab: 'tasks', tasks: [], systems: [], runs: [], ents: [], setup: null, text: '', replay: null, shotSel: 0, loadState: 'loading' };
       let P = null; // 正在播放的任务
       let alive = true;
       const fast = () => !!(window.JK_DEMO_FAST || (ctx.operator && ctx.operator.fast && ctx.operator.fast()));
       const sleep = (ms) => sleepRaw(fast() ? Math.min(ms, 80) : ms);
       const canOp = () => ctx.perms.can('operate', 'computer');
 
-      async function load() {
-        if (!ctx.perms.can('view', 'computer')) return;
-        const [t, r] = await Promise.all([API.tasks(), API.runs()]);
-        st.tasks = t.items; st.systems = t.systems; st.runs = r.items;
-        if (!st.ents.length) { try { const e = await ctx.api.get('/api/apps/enterprise/companies'); st.ents = (e.items || []).map((x) => ({ id: x.id, short: x.short, name: x.name })); } catch (e) { st.ents = []; } }
+      const loadFeedback = {
+        loading: { icon: 'computer', title: '正在加载电脑操作' },
+        disabled: { icon: 'computer', title: '当前环境未启用电脑操作', desc: '请联系管理员确认服务是否已配置。' },
+        login: { icon: 'lock', title: '登录已失效', desc: '请重新登录后再打开电脑操作。' },
+        denied: { icon: 'lock', title: '没有电脑操作权限', desc: '请联系管理员开通。' },
+        error: { icon: 'alert', title: '电脑操作暂时无法加载', desc: '请检查连接后重试。', action: '重试' },
+      };
+      let pendingLoad;
+      function load() {
+        if (!alive || !ctx.perms.can('view', 'computer')) return Promise.resolve(false);
+        if (pendingLoad) return pendingLoad;
+        if (st.loadState !== 'ready') st.loadState = 'loading';
+        pendingLoad = (async () => {
+          try {
+            const [t, r] = await Promise.all([API.tasks(), API.runs()]);
+            if (![t.items, t.systems, r.items].every(Array.isArray)) throw Error('电脑操作列表格式无效');
+            st.tasks = t.items; st.systems = t.systems; st.runs = r.items;
+          } catch (error) {
+            st.loadState = ({ 404: 'disabled', 401: 'login', 403: 'denied' })[error?.status] || 'error';
+            return false;
+          }
+          if (!st.ents.length) { try { const e = await ctx.api.get('/api/apps/enterprise/companies'); st.ents = (e.items || []).map((x) => ({ id: x.id, short: x.short, name: x.name })); } catch (_) { st.ents = []; } }
+          st.loadState = 'ready';
+          return true;
+        })().finally(() => { pendingLoad = null; });
+        return pendingLoad;
       }
       const tagS = (s) => `<span class="tag dot" data-hue="${HUE[s] || 'gray'}">${STATUS[s] || s}</span>`;
       const head = (right) => `<div class="app-head cu-head">${ctx.ui.appIcon('computer', 'lg')}<div class="grow"><h2 class="h2">电脑操作</h2><div class="t-3 t-sm">AI 替你操作网页和业务系统，关键一步你说了算</div></div>${right || ''}</div>`;
@@ -57,6 +78,13 @@
         if (st.view === 'replay' && st.replay) return renderReplay();
         if (st.view === 'setup' && st.setup) return renderSetup();
         if (!ctx.perms.can('view', 'computer')) { el.innerHTML = `<div class="cu-wrap">${head()}${ctx.ui.empty({ icon: 'lock', title: '没有电脑操作权限', desc: '请联系管理员开通' })}</div>`; return; }
+        if (st.loadState !== 'ready') {
+          const feedback = loadFeedback[st.loadState];
+          el.innerHTML = `<div class="cu-wrap">${head()}<div role="status">${ctx.ui.empty(feedback)}</div></div>`;
+          const retry = el.querySelector('[data-empty-action]');
+          if (retry) retry.onclick = () => { load().then(render); render(); };
+          return;
+        }
         const n = st.runs.length;
         el.innerHTML = `<div class="cu-wrap">${head()}
           <div class="tabs cu-tabs">${[['tasks', '新任务'], ['runs', '操作记录', n], ['systems', '系统授权']].map(([v, l, c]) => `<button class="tab ${st.tab === v ? 'on' : ''}" data-tab="${v}" data-op="computer.tab.${v}">${l}${c ? `<span class="count muted">${c}</span>` : ''}</button>`).join('')}</div>
@@ -64,7 +92,7 @@
         bindHome();
       }
       function viewTasks() {
-        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮星河智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
+        return `<div class="cu-ask"><div class="row gap2"><div class="search grow">${icon('sparkles')}<input class="input" data-op="computer.ask" data-ask placeholder="告诉 AI 要去哪个系统做什么，例如：帮纸鹿二号智驾填申报表" value="${esc(st.text)}"></div><button class="btn primary" data-go data-op="computer.go">开始</button></div></div>
           <div class="sect">常用任务</div><div class="grid g2 cu-tasks">${st.tasks.map((t) => `<div class="card hoverable cu-task" data-task="${t.id}" data-op="computer.task.${t.id}"><div class="row gap3"><span class="app-ico h-amber">${icon(t.icon)}</span><div class="grow"><div class="cu-name">${esc(t.title)}</div><div class="t-3 t-xs clip">${esc((st.systems.find((s) => s.id === t.system) || {}).name || '')}</div></div>${icon('chevron-right')}</div>
             <div class="t-2 t-sm">${esc(t.desc)}</div><div class="row cu-stop">${icon('hand')}<span>${esc(t.stop)}</span></div></div>`).join('')}</div>`;
       }
@@ -83,13 +111,13 @@
         el.querySelectorAll('[data-replay]').forEach((b) => (b.onclick = () => openReplay(b.dataset.replay)));
         el.querySelectorAll('[data-sys]').forEach((b) => (b.onclick = async () => { const s = st.systems.find((x) => x.id === b.dataset.sys); try { const r = await API.setSystem(s.id, !s.allowed); s.allowed = r.item.allowed; toast(s.allowed ? `已允许 AI 使用「${s.name}」` : `已停止 AI 使用「${s.name}」`); render(); } catch (e) { toast(e.message, { type: 'err' }); } }));
         const ask = el.querySelector('[data-ask]'); if (ask) { ask.oninput = () => (st.text = ask.value); ask.onkeydown = (e) => { if (e.key === 'Enter') el.querySelector('[data-go]').click(); }; }
-        const go = el.querySelector('[data-go]'); if (go) go.onclick = async () => { const t = (st.text || '').trim(); if (!t) return toast('说说要去哪个系统做什么', { type: 'warn' }); const m = await API.match(t); if (!m.task) return toast('没听懂要做哪件事，可以直接点下面的任务', { type: 'warn' }); openSetup(m.task.id, { ent: m.entId }); };
+        const go = el.querySelector('[data-go]'); if (go) go.onclick = async () => { const t = (st.text || '').trim(); if (!t) return toast('说说要去哪个系统做什么', { type: 'warn' }); let m; try { m = await API.match(t); } catch (_) { return toast('暂时无法识别电脑操作任务，请稍后重试', { type: 'err' }); } if (!m.task) return toast('没听懂要做哪件事，可以直接点下面的任务', { type: 'warn' }); openSetup(m.task.id, { ent: m.entId }); };
       }
 
       /* ---------- 准备：选企业，看 AI 会做哪几步 ---------- */
       function abandon() { if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status)) { P.stopped = true; P.paused = false; P.manual = false; if (P.resolveWait) P.resolveWait('__stop'); } }
       let NAV = 0; // 导航序号：异步 go() 返回时若已被别的导航取代则不再覆盖
-      function openSetup(taskId, o) { NAV++; abandon(); const t = st.tasks.find((x) => x.id === taskId); st.setup = { task: t, ent: (o && o.ent) || '', month: '2026 年 10 月' }; st.view = 'setup'; render(); }
+      function openSetup(taskId, o) { const t = st.tasks.find((x) => x.id === taskId); if (!t || !alive) return false; NAV++; abandon(); st.setup = { task: t, ent: (o && o.ent) || '', month: '2026 年 10 月' }; st.view = 'setup'; render(); return true; }
       const PREVIEW = { apply: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['找到申报事项'], ['填写企业信息'], ['填写申报内容、上传材料'], ['停在“提交”前', 'hand'], ['提交并取回执']], stats: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['打开本月报表'], ['按台账填数'], ['平台数据审核'], ['停在“上报”前', 'hand']], notice: [['打开官网通知公告'], ['找到最新申报通知'], ['读通知要点'], ['下载原文'], ['存进知识库', 'hand']], status: [['登录统一身份认证', 'lock'], ['输入短信验证码', 'hand'], ['打开“我的申报”'], ['读取办理状态']] };
       function renderSetup() {
         const s = st.setup, t = s.task;
@@ -108,17 +136,58 @@
 
       /* ---------- 播放：AI 一步步操作 ---------- */
       async function start(task, params, run) {
-        let r; try { r = (await API.start(Object.assign({ task }, params || {}))).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
-        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: [], status: 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
+        const body = Object.assign({ task }, params || {});
+        if (body.ent === '') delete body.ent;
+        let r; try { r = (await API.start(body)).item; } catch (e) { toast(e.message, { type: 'err' }); if (run) run.fail(e.message); return null; }
+        P = { run: r, step: 0, page: null, vals: {}, checks: {}, ups: {}, corp: false, otpSent: false, verify: false, downloaded: false, shots: r.shots || [], status: r.status || 'running', op: null, stopped: false, paused: false, manual: false, chatRun: run || null, waitMsg: '', resolveWait: null, note: '', gen: ++GEN };
         const me = P; st.view = 'run'; render();
-        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; await API.report(r.id, { status: 'failed', log: '失败：' + (e.message || e) }); } else if (me.status !== 'stopped' && me.status !== 'draft') { me.status = 'stopped'; await API.report(r.id, { status: 'stopped', log: '已停止', who: ctx.user.name }); } }
+        try { await play(); } catch (e) { if (e !== 'STOP') { me.status = 'failed'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } else if (me.status !== 'stopped' && me.status !== 'draft' && me.status !== 'done') { me.status = 'stopped'; try { await API.report(r.id, { status: 'stopped' }); } catch (_) {} } }
         if (P === me && st.view === 'run') renderRun(); load().catch(() => {});
         return me;
       }
       const stepsOf = () => P.run.steps;
       let GEN = 0;
       async function hold() { if (P && P.gen !== GEN) throw 'STOP'; while (P.paused || P.manual) { await sleepRaw(150); if (P.stopped) throw 'STOP'; } if (P.stopped || !alive) throw 'STOP'; if (P.chatRun && P.chatRun.stopped) { P.stopped = true; throw 'STOP'; } }
+      async function playServer() {
+        const labels = { otp: '验证码核验', sign: '签章', pay: '付款', submit: '提交', import: '入库' };
+        while (P && !P.stopped) {
+          const item = (await API.run(P.run.id)).item;
+          P.run = item;
+          P.shots = item.shots || [];
+          P.step = item.step || 0;
+          P.status = item.status;
+          if (item.status === 'waiting' && item.pending) {
+            const kind = item.pending.kind;
+            const label = labels[kind] || kind;
+            const opts = ['确认并继续', '停止'];
+            P.waitKind = kind === 'otp' ? 'otp' : 'gate';
+            P.waitMsg = 'AI 已停在「' + label + '」前，请确认后再继续。';
+            P.waitOpts = opts;
+            hideCursor();
+            if (st.view === 'run') renderRun();
+            let ans;
+            if (P.chatRun) ans = await P.chatRun.ask(P.waitMsg, opts);
+            else ans = await new Promise((res) => (P.resolveWait = res));
+            P.resolveWait = null;
+            P.waitMsg = '';
+            if (P.stopped) { try { await API.confirm(item.id, { decision: 'decline' }); } catch (_) {} throw 'STOP'; }
+            const ok = ans === opts[0];
+            const res = await API.confirm(item.id, ok ? { decision: 'approve', kind } : { decision: 'decline' });
+            P.run = res.item;
+            P.status = res.item.status;
+            if (!ok) { P.status = res.item.status || 'stopped'; throw 'STOP'; }
+          } else if (['done', 'stopped', 'failed'].includes(item.status)) {
+            if (item.task === 'notice' && item.result && (item.result.docs || []).length) P.imported = true;
+            if (st.view === 'run') renderRun();
+            return;
+          } else {
+            if (st.view === 'run') renderRun();
+            await sleep(400);
+          }
+        }
+      }
       async function play() {
+        if (!(P.run.steps && P.run.steps.length)) return playServer();
         const steps = stepsOf();
         for (let i = P.step; i < steps.length; i++) {
           P.step = i; const s = steps[i];
@@ -206,6 +275,7 @@
       function renderRun() {
         const r = P.run;
         el.innerHTML = `<div class="cu-wrap cu-runw">${back()}<div class="cu-rh"><div class="cu-rh-t"><div class="h3 clip">${esc(r.title)}</div><div class="t-3 t-xs clip">${esc(r.system.name)}${r.from ? ' · 来自技能「' + esc(r.from) + '」' : ''}</div></div><div class="cu-bar"><span data-st></span><span data-ctl class="row gap2"></span></div></div>
+          ${r.task === 'notice' && window.JKHttp.mode() === 'http' ? '<div class="callout" data-op="computer.import-limit">模拟：尚未真实入库（仅进程内存），请勿去知识库核对。</div>' : ''}
           <div data-wait></div>
           <div data-theme="light" class="cu-browser" data-frame><div class="cu-chrome"><span class="cu-dots"><i></i><i></i><i></i></span><span class="cu-url">${icon('lock')}<span data-url class="clip">${esc(P.url || r.system.url)}</span></span><span class="cu-live" data-live></span></div>
             <div class="cu-vp scroll" data-vp></div><div class="cu-shield" data-shield></div><div class="cu-cur" data-cur><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 2l16 10-7 1.5L9 21z" fill="var(--t-amber-fg)" stroke="var(--surface)" stroke-width="1.5"/></svg><span>AI</span></div><div class="cu-bubble" data-bubble></div></div>
@@ -234,7 +304,7 @@
           w.querySelectorAll('[data-w]').forEach((b) => (b.onclick = () => P.resolveWait && P.resolveWait(P.waitOpts[+b.dataset.w])));
         } else if (s === 'done') {
           const r = P.run; const res = r.result;
-          w.innerHTML = `<div class="callout h-green cu-wait">${icon('check')}<div class="grow"><b>${r.task === 'apply' ? '已提交，受理编号 ' + esc(res && res.no) : r.task === 'stats' ? '月报已上报' : r.task === 'notice' ? (P.imported ? '通知已存进知识库' : '通知已下载') : '进度已读取'}</b><div class="t-sm t-2">${r.task === 'status' ? (r.apps || []).map((a) => esc(a.title.slice(0, 14) + '：' + a.status)).join('；') : '步骤截图与日志已留档，可在“操作记录”查看'}</div></div>${P.kbDoc ? `<button class="btn sm" data-kbopen data-op="computer.kbopen">在知识库打开</button>` : ''}</div>`;
+          w.innerHTML = `<div class="callout h-green cu-wait">${icon('check')}<div class="grow"><b>${r.task === 'apply' ? '已提交，受理编号 ' + esc(res && res.no) : r.task === 'stats' ? '月报已上报' : r.task === 'notice' ? (P.imported ? (window.JKHttp.mode() === 'http' ? '模拟：尚未真实入库（仅进程内存）' : '通知已存进知识库') : '通知已下载') : '进度已读取'}</b><div class="t-sm t-2">${r.task === 'status' ? (r.apps || []).map((a) => esc(a.title.slice(0, 14) + '：' + a.status)).join('；') : '步骤截图与日志已留档，可在“操作记录”查看'}</div></div>${P.kbDoc && window.JKHttp.mode() !== 'http' ? `<button class="btn sm" data-kbopen data-op="computer.kbopen">在知识库打开</button>` : ''}</div>`;
           const kb = w.querySelector('[data-kbopen]'); if (kb) kb.onclick = () => ctx.kb && ctx.kb.open(P.kbDoc);
         } else if (s === 'draft') w.innerHTML = `<div class="callout h-gray cu-wait">${icon('info')}<div class="grow"><b>已暂存，没有提交</b><div class="t-sm t-2">稍后可以在系统里继续，或让 AI 再来一次</div></div></div>`;
         else if (s === 'stopped') w.innerHTML = `<div class="callout h-gray cu-wait">${icon('stop')}<div class="grow"><b>已停止</b><div class="t-sm t-2">之前的步骤截图已留档</div></div></div>`;
@@ -280,12 +350,15 @@
 
       /* ---------- 操作员动作（对话里一句话发起） ---------- */
       const entOf = (slot, text) => { if (slot && typeof slot === 'object') return slot.id; const t = String(slot || '') + ' ' + String(text || ''); const e = st.ents.find((x) => t.includes(x.short) || t.includes(x.name)); return e ? e.id : ''; };
+      function reportLoadFailure(run) { render(); return run.fail(loadFeedback[st.loadState]?.title || '电脑操作暂时无法加载'); }
       async function viaChat(task, slots, run) {
-        slots = slots || {}; if (!st.tasks.length || !st.ents.length) await load();
         if (!canOp()) { run.fail('当前账号没有“电脑操作”权限'); return; }
+        slots = slots || {};
+        if ((st.loadState !== 'ready' || !st.ents.length) && !(await load())) return reportLoadFailure(run);
         const eid = entOf(slots.ent, slots.text);
         const t = st.tasks.find((x) => x.id === task);
-        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把星河智驾的申报表填了”'); return; }
+        if (!t) return run.fail('当前环境未提供该电脑操作任务');
+        if (t.needsEnt && !eid) { run.fail('要先说是哪家企业，例如“帮我把纸鹿二号智驾的申报表填了”'); return; }
         openSetup(task, { ent: eid }); await run.step(0);
         if (t.needsEnt) await run.select('[data-op="computer.ent"]', eid);
         await run.click('[data-op="computer.start"]');
@@ -296,21 +369,37 @@
         let last = -1; while (['running', 'paused', 'manual', 'waiting'].includes(me.status)) { const k = steps[Math.min(me.step, steps.length - 1)]; if (k !== last) { last = k; await run.step(k); } await sleepRaw(120); if (run.stopped) { me.stopped = true; break; } }
         if (run.stopped) run.check();
         const r = me.run;
-        if (me.status === 'done') run.done(task === 'apply' ? `已为${r.ent.short}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${r.ent.short}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? '存进知识库' : '下载好'}` : `${r.ent.short}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
-          task === 'apply' ? [{ label: '查办理进度', say: `查一下${r.ent.short}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
+        // 真后端的 apply 等任务可能不带企业（ent 为 null），收尾文案用占位名，不因空值中断演示。
+        const entShort = (r && r.ent && r.ent.short) || '示例企业';
+        if (me.status === 'done') run.done(task === 'apply' ? `已为${entShort}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${entShort}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? (window.JKHttp.mode() === 'http' ? '下载好；入库为模拟，尚未真实入库（仅进程内存），请勿去知识库核对' : '存进知识库') : '下载好'}` : `${entShort}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
+          task === 'apply' ? [{ label: '查办理进度', say: `查一下${entShort}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
         else if (me.status === 'draft') run.done('已暂存在系统里，没有提交。需要时说“再填一次”');
         else run.done('已停止，做过的步骤保留了截图');
       }
       const actions = {
         apply: (s, run) => viaChat('apply', s, run), stats: (s, run) => viaChat('stats', s, run), notice: (s, run) => viaChat('notice', s, run), status: (s, run) => viaChat('status', s, run),
-        async run(s, run) { const m = await API.match((s && s.text) || ''); if (!m.task) { st.view = 'home'; st.tab = 'tasks'; render(); run.done('电脑操作已打开，选一个任务，或者告诉我要去哪个系统做什么'); return; } return viaChat(m.task.id, Object.assign({}, s, { ent: (s && s.ent) || m.entId }), run); },
+        async run(s, run) { if (st.loadState !== 'ready' && !(await load())) return reportLoadFailure(run); let m; try { m = await API.match((s && s.text) || ''); } catch (_) { return run.fail('暂时无法识别电脑操作任务，请稍后重试'); } if (!m.task) { st.view = 'home'; st.tab = 'tasks'; render(); run.done('电脑操作已打开，选一个任务，或者告诉我要去哪个系统做什么'); return; } return viaChat(m.task.id, Object.assign({}, s, { ent: (s && s.ent) || m.entId }), run); },
       };
 
       /* ---------- 启动 ---------- */
-      (async () => { const nav = NAV; await load(); if (nav !== NAV) return; const p = ctx.params || {}; if (p.task && (p.route === 'run' || p.autostart || p.ent)) { openSetup(p.task, { ent: p.ent }); if (p.ent || p.task === 'notice') start(p.task, { ent: p.ent, from: p.from }); } else render(); })();
+      render();
+      (async () => { const nav = NAV; const ready = await load(); if (!alive || nav !== NAV) return; const p = ctx.params || {}; if (ready && p.task && (p.route === 'run' || p.autostart || p.ent) && openSetup(p.task, { ent: p.ent })) { if (p.ent || p.task === 'notice') start(p.task, { ent: p.ent, from: p.from }); } else render(); })();
       if (ctx.bus) ctx.bus.on('data:reset', () => { P = null; st.view = 'home'; load().then(render); });
       return {
-        async go(route, params) { params = params || {}; const nav = ++NAV; await load(); if (nav !== NAV) return; if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status) && !params.task && !['runs', 'systems', 'replay'].includes(route)) { st.view = 'run'; return renderRun(); } if ((route === 'run' || route === 'setup') && params.task) { openSetup(params.task, { ent: params.ent }); if (route === 'run' && (params.ent || params.task === 'notice')) start(params.task, { ent: params.ent, from: params.from }); return; } if (route === 'replay' && params.id) return openReplay(params.id); st.view = 'home'; st.tab = route === 'runs' ? 'runs' : route === 'systems' ? 'systems' : 'tasks'; render(); },
+        async go(route, params) {
+          params = params || {};
+          const nav = ++NAV;
+          const ready = await load();
+          if (!alive || nav !== NAV) return;
+          if (!ready) { if (st.view !== 'run' || !P) st.view = 'home'; return render(); }
+          if (P && ['running', 'paused', 'manual', 'waiting'].includes(P.status) && !params.task && !['runs', 'systems', 'replay'].includes(route)) { st.view = 'run'; return renderRun(); }
+          if ((route === 'run' || route === 'setup') && params.task && openSetup(params.task, { ent: params.ent })) {
+            if (route === 'run' && (params.ent || params.task === 'notice')) start(params.task, { ent: params.ent, from: params.from });
+            return;
+          }
+          if (route === 'replay' && params.id) return openReplay(params.id);
+          st.view = 'home'; st.tab = route === 'runs' ? 'runs' : route === 'systems' ? 'systems' : 'tasks'; render();
+        },
         actions,
         unmount() { alive = false; if (P) P.stopped = true; },
       };

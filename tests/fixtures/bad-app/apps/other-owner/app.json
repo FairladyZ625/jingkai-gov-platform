@@ -1,0 +1,10 @@
+{
+  "contract": 1,
+  "sdk": "1",
+  "id": "other-owner",
+  "name": "CODEOWNERS 负责人与清单不一致",
+  "sector": "other",
+  "kind": "module",
+  "owner": "somebody",
+  "status": "idea"
+}

@@ -31,11 +31,11 @@
         { name: 'skills.create', desc: '用一句话起草一个新技能', params: { text: 'string' } },
       ],
       intents: [
-        { id: 'skills.create', examples: ['帮我做一个技能：走访后把记录整理成台账更新建议', '做个技能，核对数据券申报材料齐不齐', '我想做一个周报技能'], keywords: ['做技能', '做个技能', '做一个技能', '造技能', '制作技能', '新建技能', '创建技能'], action: 'create', plan: ['打开技能中心', 'AI 起草技能', '用示例试运行', '选择分享范围'] },
-        { id: 'skills.run', examples: ['用实体书店政策预判看看书香里', '运行处室周报整理', '用技能核对数据券材料'], keywords: ['用技能', '运行技能', '技能'], slots: { ent: 'enterprise' }, action: 'run', plan: ['找到技能', '填好要用的信息', '运行技能', '整理结果'] },
-        { id: 'skills.share', examples: ['把处室周报整理分享给企业服务处', '把我的技能分享给王敏'], keywords: ['分享技能', '共享技能', '分享给'], action: 'share', plan: ['找到技能', '选择分享范围', '确认分享'], confirm: true },
+        { id: 'skills.create', requires: 'operate', examples: ['帮我做一个技能：走访后把记录整理成台账更新建议', '做个技能，核对数据券申报材料齐不齐', '我想做一个周报技能'], keywords: ['做技能', '做个技能', '做一个技能', '造技能', '制作技能', '新建技能', '创建技能'], action: 'create', plan: ['打开技能中心', 'AI 起草技能', '用示例试运行', '选择分享范围'] },
+        { id: 'skills.run', requires: 'operate', examples: ['用实体书店政策预判看看书香里', '运行处室周报整理', '用技能核对数据券材料'], keywords: ['用技能', '运行技能', '技能'], slots: { ent: 'enterprise' }, action: 'run', plan: ['找到技能', '填好要用的信息', '运行技能', '整理结果'] },
+        { id: 'skills.share', requires: 'operate', examples: ['把处室周报整理分享给企业服务处', '把我的技能分享给王敏'], keywords: ['分享技能', '共享技能', '分享给'], action: 'share', plan: ['找到技能', '选择分享范围', '确认分享'], confirm: true },
         { id: 'skills.browse', examples: ['打开技能中心', '有哪些技能可以用'], keywords: ['技能中心', '技能广场', '有哪些技能'], action: 'browse', plan: ['打开技能中心'] },
-        { id: 'skills.review', examples: ['审核技能上架申请'], keywords: ['技能审核', '上架审核', '审核技能'], action: 'review', plan: ['打开审核列表', '查看申请'] },
+        { id: 'skills.review', requires: 'approve', examples: ['审核技能上架申请'], keywords: ['技能审核', '上架审核', '审核技能'], action: 'review', plan: ['打开审核列表', '查看申请'] },
       ],
       starters: ['帮我做一个技能：走访后把记录整理成台账更新建议', '用实体书店政策预判看看书香里'],
       demo: [
@@ -52,7 +52,9 @@
       const canReview = () => ctx.perms.can('approve', 'skills');
       const catHue = (c) => ctx.ui.hue(c, 'skillCat');
       const st = { view: 'home', q: '', cat: '全部', list: [], apps: [], mine: [], review: [], detail: null, dtab: 'use', make: null, opts: null, ents: null, out: null };
+      const reviewing = new Set();
       let alive = true;
+      let runEpoch = 0;
 
       /* ---------- 数据 ---------- */
       async function loadLists() {
@@ -105,7 +107,7 @@
       /* ---------- 审核 ---------- */
       function viewReview() {
         if (!st.review.length) return ctx.ui.empty({ icon: 'check', title: '没有待审核的技能', desc: '同事申请“全区公开”时会出现在这里' });
-        return `<div class="col rows">${st.review.map((s) => `<div class="card sk-rv"><div class="row gap3">${skIco(s)}<div class="grow"><div class="sk-name">${esc(s.name)}</div><div class="t-3 t-xs">${esc(s.author)} · ${esc(s.dept || '')} · v${esc(s.version)} · 申请全区公开</div></div>${tag('待上架审核')}</div>
+        return `<div class="col rows">${st.review.map((s) => `<div class="card sk-rv"><div class="row gap3">${skIco(s)}<div class="grow"><div class="sk-name">${esc(s.name)}</div><div class="t-3 t-xs">${esc(s.author)} · ${esc(s.dept || '')} · v${esc(s.contentVersion ?? s.version)} · 申请全区公开</div></div>${tag('待上架审核')}</div>
             <div class="t-2 t-sm sk-sum">${esc(s.summary)}</div>
             <div class="row wrap sk-chips">${s.spec.steps.map((x) => `<span class="sk-step-pill">${icon(COPY.stepTypes[x.type][0])}${esc(x.label)}</span>`).join('')}<span class="sk-step-pill">${icon('cpu')}${esc(modelName(s.spec.model))}</span></div>
             <div class="card-f"><button class="btn sm ghost" data-open="${s.id}">查看并试运行</button><span class="sp"></span><button class="btn sm" data-reject="${s.id}" data-op="skills.reject.${s.id}">退回</button><button class="btn sm soft" data-approve="${s.id}" data-op="skills.approve.${s.id}">${icon('check')}通过上架</button></div></div>`).join('')}</div>`;
@@ -173,7 +175,18 @@
         flush(); return out.join('');
       }
       function outHtml(o) {
-        if (o.status !== 'done') return `<div class="plan sk-plan"><div class="plan-h">${icon('sparkles')}正在运行</div>${o.steps.map((x) => `<div class="pstep ${x.status === 'done' ? 'done' : x.status === 'run' ? 'run' : ''}"><span class="pi"></span>${esc(x.label)}</div>`).join('')}</div>`;
+        if (o.status !== 'done') {
+          const stepStatus = { done: '已完成', run: '执行中', pending: '未开始', failed: '失败', skipped: '已跳过', cancelled: '已取消' };
+          const steps = (o.steps || []).map(x => `<div class="pstep ${x.status === 'done' ? 'done' : x.status === 'run' && o.status === 'running' ? 'run' : ''}"><span class="pi"></span>${esc(x.label)}${o.status !== 'running' && stepStatus[x.status] ? ` · ${stepStatus[x.status]}` : ''}</div>`).join('');
+          if (o.status === 'failed') {
+            const advice = ['OUTBOUND_DENIED', 'NOT_CONFIGURED', 'MODEL_DISABLED'].includes(o.errorCode)
+              ? '请联系管理员检查与资料密级匹配、已获准的模型配置。'
+              : '请检查当前输入后重试；若再次失败，请联系管理员。';
+            return `<div class="plan sk-plan" data-op="skills.failed" role="alert"><div class="plan-h">${icon('alert')}运行失败</div><div class="meta">${esc(o.error || '任务未完成')}。 ${advice}</div>${steps}</div>`;
+          }
+          if (o.status === 'unknown') return `<div class="plan sk-plan" data-op="skills.status-unknown" role="alert"><div class="plan-h">${icon('alert')}未能确认运行结果</div><div class="meta">${esc(o.error || '任务状态暂不可读取')}。请检查网络，避免重复提交。</div>${steps}</div>`;
+          return `<div class="plan sk-plan"><div class="plan-h">${icon('sparkles')}正在运行</div>${steps}</div>`;
+        }
         const r = o.result;
         return `<div class="card sk-result" data-op="skills.result"><div class="sk-md">${mdToHtml(r.markdown)}</div>
           ${r.citations.length ? `<div class="sk-srcs">${r.citations.slice(0, 3).map((c) => `<div class="src" data-cite-open="${c.n}"><span class="cite">${c.n}</span><span class="clip grow">${esc(c.title)}</span>${icon('chevron-right')}</div>`).join('')}</div>` : ''}
@@ -181,16 +194,37 @@
           ${r.computer ? `<button class="btn sm soft" data-computer>${icon('computer')}继续电脑操作</button>` : ''}
           <button class="btn sm ghost" data-copy title="复制">${icon('copy')}</button><button class="btn sm ghost" data-dl title="下载">${icon('download')}</button>${o.trial ? '' : `<button class="btn sm ghost" data-tochat title="发到对话">${icon('chat')}</button><button class="btn sm ghost" data-rate="1" title="有用">有用</button>`}</div></div>`;
       }
-      async function execute(root, skill, inputs, trial) {
-        const box = root.querySelector('[data-out]');
+      async function execute(skill, inputs, trial) {
         const missing = skill.spec.inputs.filter((f) => f.required && !inputs[f.key]);
         if (missing.length) { toast('先填：' + missing.map((f) => f.label).join('、'), { type: 'warn' }); return null; }
-        let { job } = trial ? await API.trial({ name: skill.name, spec: skill.spec }, inputs) : await API.run(skill.id, inputs);
-        st.out = job; box.innerHTML = outHtml(job);
-        while (job.status === 'running') { await sleep(220); job = (await API.job(job.id)).job; st.out = job; if (box.isConnected) box.innerHTML = outHtml(job); }
-        if (job.status === 'failed') { toast('运行失败：' + job.error, { type: 'err' }); return null; }
-        bindOut(box, job);
-        if (job.result.computer) ctx.nav.open('computer', 'run', { task: job.result.computer.task, ent: job.result.computer.ent, from: skill.name });
+        const epoch = ++runEpoch, owner = trial ? st.make : st.detail;
+        const owns = () => alive && epoch === runEpoch && (trial ? st.make === owner && owner.step === 2 : st.detail === owner);
+        function paint(job) {
+          if (!owns()) return null;
+          st.out = job;
+          const visible = trial ? st.view === 'make' : st.view === 'detail' && st.dtab === 'use';
+          const box = visible && el.querySelector('[data-out]');
+          if (box) box.innerHTML = outHtml(job);
+          return box;
+        }
+        let job;
+        try {
+          ({ job } = trial ? await API.trial({ name: skill.name, spec: skill.spec }, inputs) : await API.run(skill.id, inputs));
+          while (job.status === 'running' && owns()) {
+            paint(job);
+            await sleep(220);
+            if (!owns()) return null;
+            job = (await API.job(job.id)).job;
+          }
+        } catch (e) {
+          paint({ status: 'unknown', steps: job?.steps, error: e.message, trial });
+          return null;
+        }
+        if (!owns()) return null;
+        const box = paint(job);
+        if (job.status !== 'done') return null;
+        if (box) bindOut(box, job);
+        if (box && job.result.computer) ctx.nav.open('computer', 'run', { task: job.result.computer.task, ent: job.result.computer.ent, from: skill.name });
         return job;
       }
       function bindOut(box, job) {
@@ -206,6 +240,12 @@
 
       /* ---------- 制作 / 编辑（4 步向导） ---------- */
       const WIZ = ['说需求', '改一改', '试一试', '发布'];
+      const modelOption = (id) => st.opts.models.find((option) => option.id === id);
+      const localModelOption = (id) => {
+        const current = modelOption(id);
+        return current?.local && !current.disabled ? current : st.opts.models.find((option) => option.local && !option.disabled);
+      };
+      const localQuestion = (question) => /本地/.test(question);
       let NAV = 0;
       function newMake(o) { st.make = Object.assign({ step: 0, text: '', skill: null, id: null, editing: false, share: { scope: 'dept', people: [], perm: 'use' }, result: null, trialVals: null, done: null, note: '' }, o || {}); st.view = 'make'; }
       function renderMake() {
@@ -222,14 +262,22 @@
           <div class="wiz-foot"><span class="sp"></span><button class="btn primary" data-draft data-op="skills.draft">${icon('sparkles')}AI 起草</button></div>`;
       }
       function mk1() {
-        const k = st.make.skill; const sp = k.spec; const o = st.opts;
+        const m = st.make; const k = m.skill; const sp = k.spec; const o = st.opts;
+        const currentModel = modelOption(sp.model);
+        const localModel = localModelOption(sp.model);
+        const localReason = o.models.find((option) => option.disabled)?.disabledReason;
+        const unavailable = !currentModel || currentModel.disabled;
+        const modelHint = unavailable ? `${currentModel?.disabledReason || '当前模型不可用，请联系管理员检查模型配置'}。${m.id ? '保存其他修改时会保留原模型。' : '请在更多设置中选择可用模型。'}` : '';
+        const optionList = currentModel ? o.models : [
+          { id: sp.model, name: modelName(sp.model), disabled: true }, ...o.models,
+        ];
         const stepRow = (x, i) => `<div class="sk-ed-step" data-si="${i}"><span class="sk-flow-n">${i + 1}</span>${icon(COPY.stepTypes[x.type][0])}<span class="sk-ed-st">${COPY.stepTypes[x.type][1]}</span>
             ${x.type === 'kb' ? `<select class="select sm-sel" data-sf="space">${o.spaces.map((s) => `<option ${x.space === s ? 'selected' : ''}>${s}</option>`).join('')}</select>` : ''}
             ${x.type === 'tool' ? `<select class="select sm-sel" data-sf="tool">${o.tools.map((t) => `<option value="${t.id}" ${x.tool === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}</select>` : ''}
             ${x.type === 'computer' ? `<select class="select sm-sel" data-sf="task">${o.computerTasks.map((t) => `<option value="${t.id}" ${x.task === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}</select>` : ''}
             ${x.type === 'model' ? `<input class="input sm" data-sf="label" value="${esc(x.label)}">` : ''}<span class="sp"></span><button class="btn icon sm ghost" data-sdel="${i}" title="删除">${icon('x')}</button></div>`;
         return `<div class="col gap4">
-          ${st.make.questions && st.make.questions.length ? `<div class="callout h-pink sk-ai">${icon('sparkles')}<div class="grow"><div>AI 已起草好，直接改就行。也可以一键：</div><div class="row wrap gap2 sk-ai-q">${st.make.questions.map((q) => `<button class="chip-btn" data-q2="${esc(q)}">${esc(q)}</button>`).join('')}</div></div></div>` : ''}
+          ${m.questions && m.questions.length ? `<div class="callout h-pink sk-ai">${icon('sparkles')}<div class="grow"><div>AI 已起草好，直接改就行。也可以一键：</div><div class="row wrap gap2 sk-ai-q">${m.questions.map((q) => `<button class="chip-btn" data-q2="${esc(q)}" ${localQuestion(q) && !localModel ? 'disabled aria-describedby="sk-local-hint"' : ''}>${esc(q)}</button>`).join('')}</div>${!localModel && m.questions.some(localQuestion) ? `<div class="t-3 t-xs" id="sk-local-hint">${esc(localReason || '没有可用的本地模型，请联系管理员检查模型配置')}。</div>` : ''}</div></div>` : ''}
           <div class="card"><div class="grid sk-basic"><div class="field"><label>名称</label><input class="input" data-k="name" data-op="skills.ed.name" value="${esc(k.name)}"></div>
             <div class="field"><label>分类</label><select class="select" data-k="cat">${COPY.cats.map((c) => `<option ${sp.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div>
             <div class="field sk-gap"><label>一句话说明</label><input class="input" data-k="summary" value="${esc(k.summary)}"></div></div>
@@ -238,8 +286,9 @@
             <div><button class="btn sm ghost" data-iadd>${icon('plus')}添加一项</button></div></div></div>
           <div class="card"><div class="sk-sec-h">怎么做</div><div class="col gap2">${sp.steps.map(stepRow).join('')}<div><button class="btn sm ghost" data-sadd>${icon('plus')}添加步骤</button></div></div></div>
           <div class="card"><div class="row gap3"><span class="sk-sec-h sk-m0">结果做成</span><div class="seg">${COPY.formats.map((f) => `<button class="${sp.output.format === f ? 'on' : ''}" data-fmt="${f}">${f}</button>`).join('')}</div><span class="sp"></span><span class="t-3 t-xs">${esc(modelName(sp.model))} · ${esc(sp.kb.join('、') || '不查知识库')}</span></div>
-            <details class="sk-adv" ${st.make.adv ? 'open' : ''} data-adv><summary class="t-3 t-sm">更多设置：模型、知识库、提示词</summary>
-            <div class="field sk-gap"><label>用哪个模型</label><select class="select" data-k="model">${o.models.map((x) => `<option value="${x.id}" ${sp.model === x.id ? 'selected' : ''}>${esc(x.name)}${x.local ? '（数据不出局）' : ''}</option>`).join('')}</select></div>
+            ${modelHint ? `<div class="t-3 t-xs sk-gap" id="sk-model-hint">${esc(modelHint)}</div>` : ''}
+            <details class="sk-adv" ${m.adv ? 'open' : ''} data-adv><summary class="t-3 t-sm">更多设置：模型、知识库、提示词</summary>
+            <div class="field sk-gap"><label for="sk-model">用哪个模型</label><select class="select" id="sk-model" data-k="model" ${modelHint || localReason ? 'aria-describedby="sk-model-hint"' : ''}>${optionList.map((x) => `<option value="${esc(x.id)}" ${sp.model === x.id ? 'selected' : ''} ${x.disabled ? 'disabled' : ''}>${esc(x.name)}${x.disabled ? '（需配置）' : x.local ? '（数据不出局）' : ''}</option>`).join('')}</select>${!modelHint && localReason ? `<div class="t-3 t-xs" id="sk-model-hint">${esc(localReason)}。</div>` : ''}</div>
             <div class="field sk-gap"><label>参考知识库</label><div class="row wrap gap2">${o.spaces.map((s) => `<label class="check sk-kbc"><input type="checkbox" data-kb="${s}" ${sp.kb.includes(s) ? 'checked' : ''}>${tag(s, 'kbSpace', { cls: 'plain' })}</label>`).join('')}</div></div>
             <div class="field sk-gap"><label>提示词模板</label><textarea class="textarea mono" rows="5" data-k="prompt">${esc(sp.prompt || '')}</textarea><div class="t-3 t-xs">用 {{${sp.inputs.map((f) => f.key).join('}}、{{')}}} 引用填写的信息</div></div></details></div>
           <div class="wiz-foot">${st.make.editing ? '' : '<button class="btn" data-prev>上一步</button>'}<span class="sp"></span><button class="btn primary" data-next data-op="skills.next">下一步：试一试</button></div></div>`;
@@ -291,8 +340,16 @@
       }
       function bindDetail(s) {
         el.querySelectorAll('[data-dtab]').forEach((b) => (b.onclick = () => { st.dtab = b.dataset.dtab; render(); }));
-        const smp = el.querySelector('[data-sample]'); if (smp) smp.onclick = () => { st.useVals = sampleInputs(s.spec); st.out = null; render(); };
-        const runB = el.querySelector('[data-run]'); if (runB) runB.onclick = async () => { st.useVals = readInputs(el, s.spec); runB.disabled = true; try { await execute(el, s, st.useVals, false); } catch (e) { toast(e.message || '运行失败', { type: 'err' }); } runB.disabled = false; };
+        const smp = el.querySelector('[data-sample]'); if (smp) smp.onclick = () => {
+          const sample = sampleInputs(s.spec), current = readInputs(el, s.spec);
+          if (Object.entries(sample).some(([key, value]) => String(value).trim() !== current[key])) {
+            st.out = null;
+            runEpoch++;
+          }
+          st.useVals = sample;
+          render();
+        };
+        const runB = el.querySelector('[data-run]'); if (runB) runB.onclick = async () => { st.useVals = readInputs(el, s.spec); runB.disabled = true; try { await execute(s, st.useVals, false); } catch (e) { toast(e.message || '运行失败', { type: 'err' }); } runB.disabled = false; };
         if (st.out && st.out.status === 'done') bindOut(el.querySelector('[data-out]'), st.out);
         const fk = el.querySelector('[data-fork]'); if (fk) fk.onclick = () => forkSkill(s.id);
         el.querySelectorAll('[data-restore]').forEach((b) => (b.onclick = async () => { if (!(await ctx.ui.confirm(`回到 v${b.dataset.restore} 的内容？会生成一个新版本，原版本保留。`))) return; const r = await API.restore(s.id, b.dataset.restore); st.detail = r.item; toast('已回到 v' + b.dataset.restore + '，当前 v' + r.item.version); render(); }));
@@ -305,7 +362,6 @@
         if (gv('[data-k="name"]') != null) { k.name = gv('[data-k="name"]').trim() || k.name; k.icon = k.name[0]; }
         if (gv('[data-k="summary"]') != null) k.summary = gv('[data-k="summary"]');
         if (gv('[data-k="cat"]')) sp.cat = gv('[data-k="cat"]');
-        if (gv('[data-k="model"]')) sp.model = gv('[data-k="model"]');
         if (gv('[data-k="prompt"]') != null) sp.prompt = gv('[data-k="prompt"]');
         w.querySelectorAll('[data-ii]').forEach((r) => { const f = sp.inputs[+r.dataset.ii]; f.label = r.querySelector('[data-if="label"]').value.trim() || f.label; f.type = r.querySelector('[data-if="type"]').value; f.required = r.querySelector('[data-if="required"]').checked; });
         w.querySelectorAll('[data-si]').forEach((r) => { const x = sp.steps[+r.dataset.si]; r.querySelectorAll('[data-sf]').forEach((c) => { x[c.dataset.sf] = c.value; if (c.dataset.sf === 'space') { x.label = '查' + c.value; } if (c.dataset.sf === 'tool') { const t = st.opts.tools.find((y) => y.id === c.value); x.label = t.label; x.args = t.needs ? { [c.value === 'enterprise.get' ? 'id' : 'entId']: '{{ent}}' } : {}; } if (c.dataset.sf === 'task') x.label = st.opts.computerTasks.find((y) => y.id === c.value).label; }); });
@@ -328,7 +384,25 @@
         }
         if (m.step === 1) {
           const sp = m.skill.spec;
-          qa('[data-q2]').forEach((b) => (b.onclick = () => { syncEditor(); const t = b.dataset.q2; if (/表格/.test(t)) sp.output.format = '表格'; if (/企业/.test(t) && !sp.inputs.find((f) => f.type === 'enterprise')) sp.inputs.unshift({ key: 'ent', label: '哪家企业', type: 'enterprise', required: true, sample: 'E002' }); if (/本地/.test(t)) sp.model = 'local-qwen-32b'; m.questions = m.questions.filter((x) => x !== t); toast('已按“' + t + '”修改'); render(); }));
+          const model = q('[data-k="model"]');
+          model.onchange = () => {
+            const option = modelOption(model.value);
+            if (option && !option.disabled) sp.model = option.id;
+            rerender();
+            el.querySelector('[data-k="model"]').focus({ preventScroll: true });
+          };
+          qa('[data-q2]').forEach((b) => (b.onclick = () => {
+            const t = b.dataset.q2;
+            const local = localQuestion(t);
+            const option = local ? localModelOption(sp.model) : null;
+            if (local && !option) return;
+            syncEditor();
+            if (/表格/.test(t)) sp.output.format = '表格';
+            if (/企业/.test(t) && !sp.inputs.find((f) => f.type === 'enterprise')) sp.inputs.unshift({ key: 'ent', label: '哪家企业', type: 'enterprise', required: true, sample: 'E002' });
+            if (option) sp.model = option.id;
+            m.questions = m.questions.filter((x) => x !== t);
+            toast('已按“' + t + '”修改'); render();
+          }));
           qa('[data-fmt]').forEach((b) => (b.onclick = () => { syncEditor(); sp.output.format = b.dataset.fmt; render(); }));
           qa('[data-tdel]').forEach((b) => (b.onclick = () => { syncEditor(); sp.triggers.splice(+b.dataset.tdel, 1); render(); }));
           const ta = q('[data-tadd]'); ta.onkeydown = (e) => { if (e.key === 'Enter' && ta.value.trim()) { syncEditor(); sp.triggers.push(ta.value.trim()); render(); el.querySelector('[data-tadd]').focus(); } };
@@ -337,13 +411,24 @@
           qa('[data-sdel]').forEach((b) => (b.onclick = () => { syncEditor(); if (sp.steps.length <= 1) return toast('至少保留一步', { type: 'warn' }); sp.steps.splice(+b.dataset.sdel, 1); render(); }));
           q('[data-sadd]').onclick = (e) => { const items = Object.entries(COPY.stepTypes).map(([v, [ic, l]]) => ({ v, label: l, icon: ic })); (JK.menu)(e.currentTarget, items, (v) => { syncEditor(); const o = st.opts; const x = v === 'kb' ? { type: 'kb', space: o.spaces[0], query: '{{' + sp.inputs[0].key + '}}', label: '查' + o.spaces[0] } : v === 'tool' ? { type: 'tool', tool: o.tools[0].id, args: { entId: '{{ent}}' }, label: o.tools[0].label } : v === 'computer' ? { type: 'computer', task: 'stats', label: '统计月报填报' } : { type: 'model', label: 'AI 生成' }; const mi = sp.steps.findIndex((y) => y.type === 'model'); if (v !== 'model' && mi >= 0) sp.steps.splice(mi, 0, x); else sp.steps.push(x); render(); }); };
           const pv = q('[data-prev]'); if (pv) pv.onclick = () => { syncEditor(); m.step = 0; render(); };
-          q('[data-next]').onclick = async () => { syncEditor(); if (!m.skill.name.trim()) return toast('起个名字吧', { type: 'warn' }); try { await persist(); } catch (e) { return toast(e.message, { type: 'err' }); } st.out = null; m.step = 2; render(); };
+          q('[data-next]').onclick = async () => {
+            syncEditor();
+            if (!m.skill.name.trim()) return toast('起个名字吧', { type: 'warn' });
+            const option = modelOption(sp.model);
+            if (!m.id && (!option || option.disabled)) {
+              adv.open = true;
+              model.focus();
+              return;
+            }
+            try { await persist(); } catch (e) { return toast(e.message, { type: 'err' }); }
+            st.out = null; m.step = 2; render();
+          };
           return;
         }
         if (m.step === 2) {
           const k = m.skill;
           q('[data-sample]').onclick = () => { m.trialVals = sampleInputs(k.spec); render(); };
-          q('[data-trial]').onclick = async (e) => { m.trialVals = readInputs(w, k.spec); e.currentTarget.disabled = true; try { const j = await execute(w, k, m.trialVals, true); if (j) m.tried = true; } catch (err) { toast(err.message, { type: 'err' }); } const b = w.querySelector('[data-trial]'); if (b) b.disabled = false; };
+          q('[data-trial]').onclick = async (e) => { m.trialVals = readInputs(w, k.spec); e.currentTarget.disabled = true; try { const j = await execute(k, m.trialVals, true); if (j) m.tried = true; } catch (err) { toast(err.message, { type: 'err' }); } const b = w.querySelector('[data-trial]'); if (b) b.disabled = false; };
           if (st.out && st.out.status === 'done' && st.out.trial) bindOut(w.querySelector('[data-out]'), st.out);
           q('[data-prev]').onclick = () => { m.trialVals = readInputs(w, k.spec); m.step = 1; render(); };
           q('[data-next]').onclick = () => { m.trialVals = readInputs(w, k.spec); if (!m.tried && !m.editing) toast('建议先试运行一次，确认结果对不对', { type: 'warn' }); m.step = 3; render(); };
@@ -385,9 +470,52 @@
         toast('已删除', { action: { label: '撤销', fn: async () => { await API.undoRemove(r.item); await loadLists(); render(); } } });
       }
       async function decide(id, decision) {
-        let reason = '';
-        if (decision === 'reject') { reason = await new Promise((res) => { ctx.ui.modal({ title: '退回原因', body: '<textarea class="textarea" rows="3" data-rs placeholder="例如：输出里缺少政策依据"></textarea>', okText: '退回', ok: (d) => res(d.querySelector('[data-rs]').value.trim() || '需要修改'), onMount: (d, close) => { d.querySelector('[data-x]').addEventListener('click', () => res(null)); } }); }); if (reason === null) return; }
-        try { await API.review(id, { decision, reason }); ctx.bus && ctx.bus.emit('inbox:changed'); toast(decision === 'approve' ? '已通过，全区可用' : '已退回'); await loadLists(); render(); } catch (e) { toast(e.message, { type: 'err' }); }
+        const pending = st.review.find(s => s.id === id);
+        if (!pending || !canReview() || reviewing.has(id)) return;
+        const target = {};
+        if (window.JKHttp.mode('skills') === 'http') {
+          const { reviewId, version } = pending;
+          if (typeof reviewId !== 'string' || !reviewId.trim() || !Number.isInteger(version) || version < 1) {
+            toast('待审版本不可用，请刷新审核列表后重试', { type: 'err' });
+            return;
+          }
+          Object.assign(target, { reviewId, version });
+        }
+        async function send(reason) {
+          if (!alive || !canReview() || reviewing.has(id)) return false;
+          reviewing.add(id);
+          try {
+            try {
+              await API.review(id, { decision, reason, ...target });
+            } catch (e) {
+              toast(e.message || '审核请求失败，请刷新后重试', { type: 'err' });
+              return false;
+            }
+            if (!alive) return true;
+            ctx.bus?.emit('inbox:changed');
+            toast(decision === 'approve' ? '已通过，全区可用' : '已退回');
+            try { await loadLists(); render(); }
+            catch { toast('审核结果已保存，但列表未刷新，请重试', { type: 'warn' }); }
+            return true;
+          } finally {
+            reviewing.delete(id);
+          }
+        }
+        if (decision === 'approve') return send('');
+        return ctx.ui.modal({
+          title: '退回原因', okText: '退回',
+          body: '<textarea class="textarea" rows="3" data-rs aria-label="退回原因" placeholder="例如：输出里缺少政策依据"></textarea>',
+          onMount: d => d.querySelector('[data-rs]').focus(),
+          ok: async d => {
+            const input = d.querySelector('[data-rs]'), reason = input.value.trim();
+            if (!reason) { toast('请填写退回原因', { type: 'warn' }); input.focus(); return false; }
+            const button = d.querySelector('[data-ok]');
+            button.disabled = true;
+            if (await send(reason)) return true;
+            button.disabled = false;
+            return false;
+          },
+        });
       }
       async function shareDialog(id) {
         await opts(); const r = await API.get(id); const s = r.item; const sh = Object.assign({ people: [] }, s.share); const link = `jkq://skills/${s.id}`;
@@ -420,8 +548,10 @@
           await run.sleep(600); await run.step(2);
           await run.click('[data-op="skills.next"]');
           await run.wait(() => el.querySelector('[data-op="skills.trial"]'));
-          await run.click('[data-op="skills.trial"]');
-          await run.wait(() => el.querySelector('[data-op="skills.result"]'), 12000);
+          st.out = null; await run.click('[data-op="skills.trial"]');
+          await run.wait(() => el.querySelector('[data-op="skills.result"]') || (st.out && st.out.status === 'failed'), 12000);
+          // 无模型的演示配置下试运行会因密级路由失败：不放宽路由，演示到保存草稿为止，跳过分享与发布。
+          if (!el.querySelector('[data-op="skills.result"]')) { run.done(`技能「${st.make.skill.name}」已起草。演示配置没有可处理该密级的模型，试运行、分享与发布这一步演示时跳过`); return; }
           await run.scroll('[data-op="skills.result"]'); await run.sleep(500);
           await run.step(3);
           const c = await run.ask('试运行结果出来了。要把这个技能发布给谁用？', ['发布到本部门', '先只给自己用', '申请全区公开（需审核）']);

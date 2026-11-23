@@ -104,7 +104,7 @@
 .app-kb .kb-tagrow{display:flex;flex-wrap:wrap;gap:6px;margin:var(--s4) 0 var(--s2)}
 .app-kb .kb-doc{font-size:15px;line-height:1.9;color:var(--text);padding:var(--s5) var(--s6);border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--border);margin-bottom:var(--s8)}
 .app-kb .kb-doc p{margin:0 0 10px;text-indent:2em}
-.app-kb .kb-hl{background:var(--t-amber-bg);box-shadow:0 0 0 2px var(--t-amber-bd);border-radius:3px;padding:1px 0}
+.app-kb .kb-hl{background:var(--t-amber-bg);box-shadow:0 0 0 1px var(--t-amber-fg);border-radius:3px;padding:1px 0}
 .app-kb .kb-ckn{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:none;background:var(--surface-2);color:var(--text-3);font-size:var(--fs-xs)}
 /* 导入 */
 .app-kb .kb-drop{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;padding:var(--s10,40px) var(--s6)}

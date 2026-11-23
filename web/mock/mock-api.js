@@ -4,19 +4,178 @@
   const SEED = window.JK_DATA;
   const KEY = window.JK_STATE_KEY || 'jkq-workstation-state-v3';
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  let S;
+  const exampleLabel = '示例（无对应原文）';
+  const defaultBookPolicy = 'RP-024';
+  const legacyDocumentPlaceholder = '京技产促〔2026〕【待补】号';
+  const legacySeedDocumentNumber = '京技产促〔2026〕51号';
+  const legacyFixedDocumentNumber = '京技产促〔2026〕58号';
+  // 只映射政策复核表中明确合并的旧条目。下线且无依据的条目没有替代 ID。
+  const legacyPolicyIds = new Map([['PI-01', 'RP-003'], ['PI-08', 'RP-006'], ['PI-10', 'RP-007'], ['PI-16', 'PI-17']]);
+  const DEMO_SEED_VERSION = 3;
+  let S, httpPrincipal, mixedOwner;
+  const httpSite = () => window.JK_CONFIG?.api?.mode === 'http';
+
+  function upgradeSeedDocumentNumbers() {
+    const seeded = new Set([...SEED.documents.map((draft) => draft.id), 'DOC-1112']);
+    for (const draft of Object.values(S.drafts || {})) {
+      const { versions } = draft;
+      const numbers = versions.map(({ content }) => content.docNo);
+      versions.forEach(({ by, content }, index) => {
+        const generated = index === 0 && (seeded.has(draft.id) || by.endsWith('（AI 初稿）'));
+        const seededFinal = index === 0 && seeded.has(draft.id) && numbers[index] === legacySeedDocumentNumber;
+        const autoFixed = by.endsWith('（一键修正）') && numbers[index - 1] === legacyDocumentPlaceholder &&
+          numbers[index] === legacyFixedDocumentNumber;
+        if ((generated && numbers[index] === legacyDocumentPlaceholder) || seededFinal || autoFixed) content.docNo = '';
+      });
+    }
+  }
+
+  function upgradeDemoConversationCards(changes) {
+    const company = changes.get('E002');
+    const demo = S.conversations.find((conv) => conv.id === 'C-298');
+    if (company && demo?.title === company.before.short + '走访前摘要') {
+      demo.title = company.after.short + '走访前摘要';
+    }
+    for (const messages of Object.values(S.messages || {})) {
+      for (const msg of messages) {
+        if (msg.role !== 'assistant') continue;
+        const card = msg.cards?.find((item) => ['enterprise-brief', 'policy-match'].includes(item.type));
+        const change = changes.get(card?.entId);
+        if (!change) continue;
+        const heading = (e) => card.type === 'enterprise-brief'
+          ? `**${e.name}** 走访前 30 秒摘要：` : `已按「${e.short}」的台账画像`;
+        const oldHeading = heading(change.before);
+        if (msg.content.startsWith(oldHeading)) {
+          msg.content = heading(change.after) + msg.content.slice(oldHeading.length);
+        }
+      }
+    }
+
+    // 旧外壳没有保存企业 ID。仅识别企业速览完整的操作卡片和固定动作。
+    const byShort = new Map([...changes.values()].map((change) => [change.before.short, change]));
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith('jk4-convs:')) continue;
+      try {
+        const conversations = JSON.parse(localStorage.getItem(key));
+        let changed = false;
+        for (const { msgs = [] } of conversations) {
+          for (let j = 1; j < msgs.length; j++) {
+            const msg = msgs[j];
+            const plan = msgs[j - 1];
+            if (msg.role !== 'ai' || msg.q || msg.cites?.length || typeof msg.text !== 'string' ||
+                plan.role !== 'plan' || plan.appId !== 'enterprise' || plan.state !== 'done' ||
+                plan.steps?.at(-1)?.t !== '生成 30 秒速览') continue;
+            const [short] = msg.text.split('：', 1);
+            const change = byShort.get(short);
+            const tail = msg.text.slice(short.length);
+            const policy = msg.next?.[0];
+            const visit = msg.next?.[1];
+            if (!change || !/^：[^\n]+，\d+ 人；最近走访 [^\n]+；在办诉求 \d+ 件$/.test(tail) ||
+                policy?.label !== '能申请哪些政策' || policy.say !== short + '能申请哪些支持？' ||
+                (visit && (visit.label !== '记一次走访' || visit.say !== '给' + short + '加一条走访记录'))) continue;
+            msg.text = change.after.short + tail;
+            policy.say = change.after.short + '能申请哪些支持？';
+            if (visit) visit.say = '给' + change.after.short + '加一条走访记录';
+            changed = true;
+          }
+        }
+        if (changed) localStorage.setItem(key, JSON.stringify(conversations));
+      } catch (e) { /* 无法解析的记录仍由外壳的读取逻辑处理。 */ }
+    }
+  }
+
+  function upgradeDemoCache() {
+    const companies = new Map(SEED.enterprises.map((e) => [e.id, e]));
+    const changes = new Map();
+    for (const old of S.enterprises) {
+      const current = companies.get(old.id);
+      if (!current?.example) continue;
+      const before = { name: old.name, short: old.short };
+      const edited = new Set((old.history || []).filter((h) => h.source === '手动修改').map((h) => h.field));
+      for (const field of ['name', 'short', 'creditCode']) {
+        if (!edited.has(field)) old[field] = current[field];
+      }
+      if (before.name !== old.name || before.short !== old.short) changes.set(old.id, { before, after: old });
+      old.example = true;
+    }
+    if (changes.size) upgradeDemoConversationCards(changes);
+    // 模板没有写接口，升级后用当前预填值。已保存的草稿和台账操作继续保留。
+    S.docTemplates = clone(SEED.docTemplates);
+    const meetingIds = new Set(SEED.meetings.map((m) => m.id));
+    for (const meeting of S.meetings) {
+      if (meetingIds.has(meeting.id) && !meeting.title.startsWith('【示例】')) {
+        meeting.title = '【示例】' + meeting.title;
+      }
+    }
+  }
+
+  function refreshExtensionNoticeSeeds() {
+    // 已存状态也包含种子副本。刷新延期通知的模板示例、往期标注和原始定稿落款。
+    const template = S.docTemplates?.find((t) => t.id === 'T06');
+    if (template) template.inputs = clone(SEED.docTemplates.find((t) => t.id === 'T06').inputs);
+    const original = S.drafts?.['DOC-1108']?.versions?.[0];
+    const seed = SEED.documents.find((d) => d.id === 'DOC-1108');
+    if (original?.content?.date === '2026年11月17日' && original.at === seed.updated + ' 10:00' && original.by === seed.author) {
+      original.content.date = cnDate(seed.updated);
+    }
+    const notice = S.files?.find((f) => f.id === 'F008');
+    if (notice) {
+      const { name, snippet } = SEED.files.find((f) => f.id === 'F008');
+      Object.assign(notice, { name, snippet });
+    }
+  }
+
   function load() {
-    try { const raw = localStorage.getItem(KEY); if (raw) { S = JSON.parse(raw); return; } } catch (e) {}
-    S = clone(SEED); S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
+    try {
+      const raw = !httpSite() && localStorage.getItem(KEY);
+      if (raw) {
+        S = JSON.parse(raw);
+        // 政策库没有写入接口，持久化的是演示交互状态，政策始终从当前种子读取。
+        S.policies = clone(SEED.policies);
+        S.policyDocs = clone(SEED.policyDocs);
+        S.realNotices = clone(SEED.realNotices);
+        // 刷新后使用当前模型配置，同时保留管理员在原型内设置的启停状态。
+        const enabled = new Map((S.models || []).map((m) => [m.id, m.enabled]));
+        S.models = SEED.models.map((m) => ({ ...m, enabled: enabled.get(m.id) ?? m.enabled }));
+        S.capabilities = clone(SEED.capabilities);
+        if (!S.legacyAudit) {
+          // 旧版运行记录缺少可信路由信息，原样封存。当前视图仅迁移仍在缓存中的已知种子。
+          S.legacyAudit = S.audit;
+          const seedKey = (row) => JSON.stringify(row.slice(0, 4));
+          const seeds = new Map(SEED.audit.map(row => [seedKey(row), row]));
+          S.audit = S.legacyAudit.map(row => seeds.get(seedKey(row))).filter(Boolean).map(clone);
+        }
+        S.usage.byModel = clone(SEED.usage.byModel);
+        refreshExtensionNoticeSeeds();
+        const version = S.demoSeedVersion || 0;
+        if (version < DEMO_SEED_VERSION) {
+          if (version < 2) {
+            upgradeDemoCache();
+            upgradeSeedDocumentNumbers();
+          }
+          S.demoSeedVersion = DEMO_SEED_VERSION;
+          save();
+        }
+        return;
+      }
+    } catch (e) {}
+    S = clone(SEED); S.legacyAudit = []; S.messages = {}; S.jobs = {}; S.drafts = {}; S.myTodos = []; S.builder = {}; S.seq = 100; S.modelId = 'auto';
+    S.demoSeedVersion = DEMO_SEED_VERSION;
     seedDrafts();
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+  function save() { if (!httpSite()) try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
   const nid = (p) => p + '-' + (++S.seq);
   const now = () => { const d = new Date(); return d.toISOString().slice(0, 10) + ' ' + d.toTimeString().slice(0, 5); };
-  const me = () => S.users.find((u) => u.id === S.me);
+  const me = () => httpPrincipal?.user || S.users.find((u) => u.id === S.me);
   /* 权限判定（复用 haiknow rbac.py：角色 × 应用 × 动作 view/operate/approve/admin；授权表在 data/accounts.js） */
   function can(app, action, user) {
     const u = user || me(); if (!u) return false;
+    if (httpPrincipal && u.id === httpPrincipal.user.id) {
+      // /me 已按应用计算有效授权；不从角色名或通配项补回服务器没有返回的动作。
+      const allowed = httpPrincipal.grants[app];
+      if (!Array.isArray(allowed) || !allowed.includes(action)) return false;
+    }
     const g = (S.grants || {})[u.role]; if (!g) return u.role === 'admin';
     const ap = (S.apps || []).find((a) => a.id === app); if (ap && ap.status === 'disabled' && !(g['*'] || []).includes('admin')) return false;
     const acts = [...(g['*'] || []), ...(g[app] || [])];
@@ -26,11 +185,20 @@
   function audit(app, action, model) { S.audit.unshift([now(), me().name, app, action, model || '—']); S.audit = S.audit.slice(0, 80); }
   const ent = (id) => S.enterprises.find((e) => e.id === id);
   const pol = (id) => S.policies.find((p) => p.id === id);
-  const pdoc = (id) => S.policyDocs.find((d) => d.id === id);
+  const pdoc = (id) => S.policyDocs.find((d) => d.id === id) || {};
+  const visiblePolicies = () => S.policies.filter((p) => !roleOf().mask || !p.status || p.status === '已发布');
+  function policyItem(p) {
+    const d = pdoc(p.doc);
+    if (p.example) return { ...p, docNo: exampleLabel, docTitle: exampleLabel, docState: exampleLabel, clause: exampleLabel, url: '', source: { url: '', docNo: '', deptResp: '' } };
+    return { ...p, docNo: p.source?.docNo || d.no || '', docTitle: d.title || p.title, docState: d.state || '' };
+  }
+  const policyRef = (p) => p.example ? exampleLabel : [p.docNo, p.clause].filter(Boolean).join(' ');
+  const policyCitation = (p) => ({ fileId: 'POL:' + p.id, name: policyRef(p) || p.docTitle, snippet: p.original, url: p.source?.url || '' });
+  const documentBasis = (p) => [`《${p.docTitle}》`, p.docNo && p.docNo !== '（无文号）' ? `（${p.docNo}）` : '', p.clause].filter(Boolean).join('');
   const fmtMoney = (n) => n >= 10000 ? (n / 10000).toFixed(n % 10000 ? 1 : 0).replace(/\.0$/, '') + ' 万元' : n + ' 元';
   const cnDate = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${+m[1]}年${+m[2]}月${+m[3]}日` : iso; };
 
-  /* ================= 政策匹配引擎 ================= */
+  /* ================= 政策匹配引擎（基础；完整口径由 mock/policy.js 覆盖） ================= */
   function profileOf(e) {
     return { subjectType: e.subjectType, tags: e.tags, license: e.license, yearsInZone: e.yearsInZone, regInZone: e.regInZone, employees: e.employees, ...(e.amounts || {}), _known: Object.keys(e.amounts || {}) };
   }
@@ -64,7 +232,6 @@
       const objOk = p.object === pf.subjectType || (p.object === '其他组织' && pf.tags.includes('服务机构'));
       const checks = p.conditions.map((c) => ({ label: c.label, state: evalCond(c, pf) }));
       if (!objOk || checks[0].state !== 'ok') return;
-      // trigger=该事项的“触发行为”（如建设数据集、改造门店）。台账里没有这类行为记录时不推荐，避免把不相干的事项列为待确认
       if (p.conditions.some((c, i) => c.trigger && checks[i].state === 'unknown')) return;
       let level = 'ok';
       if (checks.some((c) => c.state === 'no')) level = 'no';
@@ -76,9 +243,18 @@
     out.sort((a, b) => rank[a.level] - rank[b.level] || (a.ended - b.ended));
     return out;
   }
+
   function findEntInText(t) {
     if (!t) return null;
-    return S.enterprises.find((e) => t.includes(e.short) || t.includes(e.name) || t.includes(e.short.slice(0, 3))) || null;
+    let exact = null, length = 0;
+    for (const e of S.enterprises) {
+      for (const name of [e.name, e.short]) {
+        if (name && name.length > length && t.includes(name)) { exact = e; length = name.length; }
+      }
+    }
+    if (exact) return exact;
+    const prefixMatches = S.enterprises.filter((e) => e.short?.length >= 3 && t.includes(e.short.slice(0, 3)));
+    return prefixMatches.length === 1 ? prefixMatches[0] : null;
   }
 
   /* ================= 走访记录 → 台账更新建议 ================= */
@@ -108,7 +284,7 @@
   }
 
   /* ================= 会议长任务 ================= */
-  const JOB_STEPS = ['上传与校验', '语音转写（本地 SenseVoice）', '区分发言人', '热词纠错', '生成纪要与待办'];
+  const JOB_STEPS = ['上传与校验', `语音转写（${window.JK_CONFIG?.modelRouting?.transcriptionModel || 'SenseVoice（本地）'}）`, '区分发言人', '热词纠错', '生成纪要与待办'];
   function jobState(j) {
     const speed = S.demoFast ? 0.45 : 1;
     const elapsed = (Date.now() - j.started) / 1000, total = 6 * speed;
@@ -137,33 +313,49 @@
   }
 
   /* ================= 公文生成 / 核查 / 润色 / 比对 ================= */
+  const policyDocumentId = (templateId, policyId) => policyId || (['T03', 'T10'].includes(templateId) ? defaultBookPolicy : undefined);
+  const noticePolicySupport = (p) => `二、支持标准。${p.rule.text}。`;
+  const replyPolicyBasis = (p) => p.example
+    ? `一、${exampleLabel}。以下为演示说明。${p.original}`
+    : `一、政策依据。根据${documentBasis(p)}，${p.original}`;
+  const policyParagraphs = { T03: [0, 2], T10: [1] };
+  const normalizePolicyText = (text) => (text || '').replace(/\s+/g, '').replace(/。+$/, '');
+  // 旧版「更正式」可能在政策段尾加过多次固定结语。
+  const stripPolishClosing = (text) => (text || '').trimEnd().replace(/(?:，特此告知)+。$/, '。');
+
   function genDoc(t, inp) {
     const v = (k) => (inp[k] !== undefined && String(inp[k]).trim() !== '' ? String(inp[k]) : `【待补：${(t.inputs.find((x) => x[0] === k) || [k, k])[1]}】`);
     const P = [];
-    let title = '', to = '各有关单位：', sign = '北京经济技术开发区管理委员会产业促进局';
+    let title = '', to = '各有关单位：', sign = '【待补：发文机关】';
+    const basis = () => {
+      const id = policyDocumentId(t.id, inp.policy);
+      const item = pol(legacyPolicyIds.get(id) || id);
+      if (!item) err(404, 'NOT_FOUND', '政策事项不存在');
+      return policyItem(item);
+    };
     switch (t.id) {
-      case 'T03': { const p = pol(inp.policy) || pol('PI-03'); title = `关于开展${p.title}申报工作的通知`; to = '各有关企业：';
-        P.push(`为贯彻落实《${pdoc(p.doc).title}》（${pdoc(p.doc).no}），支持相关主体高质量发展，现就${p.title}申报工作有关事项通知如下。`);
+      case 'T03': { const p = basis(); title = `关于开展${p.title}申报工作的通知`; to = '各有关企业：';
+        P.push(p.example ? `${exampleLabel}。以下为“${p.title}”的演示说明。` : `根据${documentBasis(p)}，现就${p.title}有关事项说明如下。`);
         P.push(`一、申报对象。${p.conditions.map((c) => c.label).join('；')}。`);
-        P.push(`二、支持标准。${p.rule.text}。`);
+        P.push(noticePolicySupport(p));
         P.push(`三、申报时间。${cnDate(v('start'))}至${cnDate(v('end'))}，逾期不予受理。`);
-        P.push(`四、申报材料。${p.materials.map((m, i) => `（${'一二三四五六七'[i]}）${m}`).join('；')}。`);
+        P.push(`四、申报材料。${p.materials.length ? p.materials.join('、') : '以正式申报通知为准'}。`);
         P.push(`五、其他事项。同一事项不得重复申报，申报主体应对材料真实性负责。咨询电话：${v('contact')}。`); break; }
       case 'T06': title = `关于${v('orig').replace(/^关于/, '').replace(/的通知$/, '')}延期的通知`; to = '各有关企业：';
         P.push(`我局于近日发布《${v('orig')}》。因${v('reason')}，经研究，现将申报截止时间由${cnDate(v('oldEnd'))}延长至${cnDate(v('newEnd'))}。`);
         P.push('除申报截止时间外，原通知中申报对象、支持标准、申报材料、申报方式等其他事项均不变。');
         P.push('请各有关企业合理安排时间，在新的截止时间前完成申报。'); break;
-      case 'T10': { const e = ent(inp.ent) || ent('E001'); const p = pol(inp.policy) || pol('PI-03'); title = `关于对${e.name}诉求的答复意见`; to = `${e.name}：`;
+      case 'T10': { const e = ent(inp.ent) || ent('E001'); const p = basis(); title = `关于对${e.name}诉求的答复意见`; to = `${e.name}：`;
         P.push(`你单位反映的“${v('issue')}”已收悉。我局高度重视，经认真研究，现答复如下。`);
-        P.push(`一、政策依据。根据《${pdoc(p.doc).title}》（${pdoc(p.doc).no}）${p.clause}，${p.original}`);
+        P.push(replyPolicyBasis(p));
         P.push(`二、适用情况。经初步核对，你单位${e.yearsInZone >= 1 ? '在经开区注册经营已满一年' : '经营尚未满一年'}，${e.license.length ? '已登记' + e.license.join('、') : '暂未登记相关资质'}。具体申报资格以正式申报时提交材料的审核结果为准。`);
         { const tw = p.times.window || ''; const pend = tw.includes('未核实') || tw.includes('待') || /见当年|以.*通知为准|另行通知/.test(tw); P.push(`三、申报时间。${p.times.deadlineText ? p.times.deadlineText.replace(/。?$/, '。') : pend ? '当前批次申报通知尚未发布，我局将在通知发布后第一时间告知你单位。' : '申报时间为' + tw + '。'}`); }
-        P.push('四、后续安排。请提前准备租赁合同、付款凭证等材料。如有疑问，可联系企业服务处。');
+        P.push('四、后续安排。请按正式申报通知准备材料。咨询电话（请填写）：');
         P.push('感谢你单位对经开区工作的支持。'); break; }
       case 'T08': title = `关于${v('title')}拟推荐名单的公示`; to = '';
         P.push(`根据有关工作安排，经组织评议，拟推荐以下单位为${v('title')}：${v('list')}。`);
         P.push(`现予以公示，公示期为${v('days')}个工作日。公示期间，如有异议，请以书面形式向我局反映，并提供必要的证明材料。`);
-        P.push('联系电话：010-6788XXXX。'); break;
+        P.push('联系电话（请填写）：'); break;
       case 'T04': title = `关于征集${v('title')}的通知`; to = '各有关企业、科研机构：';
         P.push(`为加快推进人工智能场景应用落地，现面向社会公开征集${v('title')}。`);
         P.push('一、征集方向。面向政务服务、城市治理、智能制造等领域的人工智能应用场景。');
@@ -174,23 +366,78 @@
         t.inputs.slice(1).forEach((x, i) => P.push(`${'一二三四五六'[i]}、${x[1]}：${v(x[0])}。`));
         P.push('请各单位认真贯彻执行。');
     }
-    return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '京技产促〔2026〕【待补】号' };
+    return { title, to, paragraphs: P, sign, date: cnDate('2026-11-17'), docNo: '' };
+  }
+  const DOC_DATE_PREFIX = /^\s*(\d{4}(?:\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|-\d{2}-\d{2}(?![\d-])))/;
+  const EXTENSION_DATES = /申报截止时间\s*由\s*(?:原定[的于]?)?([^。；]*?)延长至([^。；]+)/;
+  function docDateValue(text) {
+    // 规则按日历日比较，日期后的时分和时区注记不参与比较。
+    const match = DOC_DATE_PREFIX.exec(text || '');
+    if (!match) return NaN;
+    const [year, month, day] = match[1].match(/\d+/g);
+    const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    const time = Date.parse(iso);
+    return Number.isFinite(time) && new Date(time).toISOString().startsWith(iso) ? time : NaN;
   }
   function checkDoc(d) {
     const issues = []; const all = [d.title, d.to, ...d.paragraphs].join('\n');
-    if (/【待补/.test(d.docNo)) issues.push({ id: 'c1', level: 'warn', kind: '文号', text: '发文字号未填写', fix: '京技产促〔2026〕58号', target: 'docNo' });
+    if (!d.docNo?.trim() || /【待补/.test(d.docNo)) issues.push({ id: 'c1', level: 'warn', kind: '文号', text: '请填写发文字号', target: 'docNo' });
     d.paragraphs.forEach((p, i) => {
       if (/【待补：/.test(p)) issues.push({ id: 'c-m' + i, level: 'error', kind: '缺要素', text: `第 ${i + 1} 段有未填写的要素：${p.match(/【待补：(.+?)】/)[1]}`, para: i });
       if (/\d{4}-\d{2}-\d{2}/.test(p)) issues.push({ id: 'c-d' + i, level: 'warn', kind: '日期格式', text: `第 ${i + 1} 段日期写法不规范（应为“2026年12月1日”）`, para: i, fix: 'date' });
+      if (d.templateId === 'T06') {
+        const dates = EXTENSION_DATES.exec(p);
+        if (dates) {
+          const [, oldEnd, newEnd] = dates;
+          const end = docDateValue(newEnd);
+          const reasons = [];
+          if (end <= docDateValue(oldEnd)) reasons.push('原截止日');
+          if (end <= docDateValue(d.date)) reasons.push('发文日期');
+          if (reasons.length) issues.push({ id: 'c-order' + i, level: 'warn', kind: '日期先后', text: `新截止日须晚于${reasons.join('和')}`, para: i });
+        }
+      }
       if (/的的|申报申报|载止|截至日期/.test(p)) issues.push({ id: 'c-t' + i, level: 'warn', kind: '错别字', text: `第 ${i + 1} 段疑似错别字：${p.match(/的的|申报申报|载止|截至日期/)[0]}`, para: i, fix: 'typo' });
       if (/咱们|赶紧|搞|弄好|大家/.test(p)) issues.push({ id: 'c-s' + i, level: 'info', kind: '语体', text: `第 ${i + 1} 段有口语化表达：“${p.match(/咱们|赶紧|搞|弄好|大家/)[0]}”`, para: i, fix: 'polish' });
     });
-    const nums = all.match(/最高\s*(?:不超过)?\s*(\d+)\s*万元/g) || [];
-    if (d.policyId) { const p = pol(d.policyId); const cap = p && p.rule.cap ? p.rule.cap / 10000 : null; nums.forEach((n) => { const x = +n.match(/(\d+)/)[1]; if (cap && x !== cap && x * 10000 !== p.rule.fixed) issues.push({ id: 'c-n' + x, level: 'error', kind: '数字一致', text: `“${n}”与政策原文（最高 ${cap} 万元）不一致` }); }); }
+    const policyId = policyDocumentId(d.templateId, d.policyId);
+    if (policyId) {
+      const replacement = legacyPolicyIds.get(policyId);
+      const p = pol(replacement || policyId);
+      if (!p) {
+        issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `旧事项 ${policyId} 已下线，请在新建文稿时重新选择有效的政策事项，并核对原文。` });
+      } else {
+        const current = policyItem(p);
+        const same = (i, expected) => {
+          const text = d.paragraphs[i];
+          const target = normalizePolicyText(expected);
+          return normalizePolicyText(text) === target || normalizePolicyText(stripPolishClosing(text)) === target;
+        };
+        const valid = d.templateId === 'T10' ? same(1, replyPolicyBasis(current))
+          : d.templateId !== 'T03' || (
+            normalizePolicyText(d.paragraphs[0]).includes(normalizePolicyText(p.example ? exampleLabel : documentBasis(current))) &&
+            same(2, noticePolicySupport(current))
+          );
+        if (!valid) {
+          const label = replacement ? `旧事项 ${policyId} 已并入 ${p.id}` : `事项 ${p.id} 的口径与当前事项库不一致`;
+          issues.push({ id: 'c-policy', level: 'error', kind: '政策依据', text: `${label}，请在事项库核对并更新文稿中的政策依据和支持标准。` });
+        }
+        const cap = p.rule.cap ? p.rule.cap / 10000 : null;
+        for (const [mention, amount] of all.matchAll(/最高\s*(?:不超过)?\s*(\d+(?:\.\d+)?)\s*万元/g)) {
+          const x = Number(amount);
+          if (cap && x !== cap && x * 10000 !== p.rule.fixed) issues.push({ id: 'c-n' + x, level: 'error', kind: '数字一致', text: `“${mention}”与政策原文（最高 ${cap} 万元）不一致` });
+        }
+      }
+    }
     if (d.templateId === 'T08' && !/拟/.test(d.title)) issues.push({ id: 'c-ni', level: 'error', kind: '公示规范', text: '公示标题须保留“拟”字' });
     if (d.templateId === 'T06' && !/不变/.test(all)) issues.push({ id: 'c-bb', level: 'warn', kind: '口径', text: '期限调整通知应写明“其他事项不变”' });
     if (!issues.length) issues.push({ id: 'c-ok', level: 'ok', kind: '通过', text: '未发现问题：文号、日期、数字、语体均已核对' });
     return issues;
+  }
+  function requireCheckedDraft(draft, message) {
+    const { content } = draft.versions.at(-1);
+    const issues = checkDoc({ ...content, templateId: draft.templateId, policyId: draft.policyId });
+    const errors = issues.filter((issue) => issue.level === 'error');
+    if (errors.length) err(422, 'CHECK_FAILED', message + (errors.find((issue) => issue.kind === '政策依据') || errors[0]).text);
   }
   const POLISH = { formal: [['咱们', '我局'], ['赶紧', '及时'], ['搞', '开展'], ['弄好', '完成'], ['大家', '各单位'], ['马上', '尽快'], ['看看', '研究'], ['问一下', '咨询'], ['很多', '较多'], ['没有', '未'], ['不行', '不符合条件'], ['可以', '可'], ['帮忙', '协助']], concise: [['经认真研究，', ''], ['高度重视，', ''], ['认真', ''], ['相关的', '相关'], ['进行', ''], ['的话', '']] };
   function polishText(t, style) { let out = t; (POLISH[style] || POLISH.formal).forEach(([a, b]) => { out = out.split(a).join(b); }); if (style === 'formal' && out === t) out = t.replace(/。$/, '，特此告知。').replace(/特此告知。，特此告知。/, '特此告知。'); return out; }
@@ -205,13 +452,29 @@
     return out;
   }
   function docText(d) { return [d.title, d.docNo, d.to, ...d.paragraphs, d.sign, d.date].filter(Boolean).join('\n'); }
+  const escapeHtml = (text) => String(text || '').replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
   function seedDrafts() {
     const t = S.docTemplates.find((x) => x.id === 'T10');
-    const c = genDoc(t, { ent: 'E001', issue: '咨询实体书店房租补贴申报时间', policy: 'PI-03' });
+    const c = genDoc(t, { ent: 'E001', issue: '咨询实体书店发展奖励申报时间', policy: defaultBookPolicy });
     const v1 = clone(c); v1.paragraphs[3] = '三、申报时间。今年的通知还没出来，出来以后咱们马上告诉你们。';
-    S.drafts['DOC-1112'] = { id: 'DOC-1112', title: c.title, templateId: 'T10', policyId: 'PI-03', status: '审签中', author: '王敏', versions: [{ v: 1, at: '2026-11-12 16:20', by: '王敏', content: v1 }, { v: 2, at: '2026-11-13 10:05', by: '王敏', content: c }],
+    S.drafts['DOC-1112'] = { id: 'DOC-1112', title: c.title, templateId: 'T10', policyId: defaultBookPolicy, status: '审签中', author: '王敏', versions: [{ v: 1, at: '2026-11-12 16:20', by: '王敏', content: v1 }, { v: 2, at: '2026-11-13 10:05', by: '王敏', content: c }],
       comments: [{ id: 'cm1', para: 1, by: '孙婷', at: '2026-11-13 11:02', text: '政策原文引用建议只保留关键句，太长了。', replies: [{ by: '王敏', text: '好的，审签后统一精简。' }], resolved: false }, { id: 'cm2', para: 3, by: '李阳', at: '2026-11-13 14:30', text: '申报时间表述可以，注意不要承诺具体日期。', replies: [], resolved: true }] };
-    S.documents.forEach((d) => { if (!S.drafts[d.id]) { const tt = S.docTemplates.find((x) => x.id === d.templateId); const inp = {}; tt.inputs.forEach((x) => (inp[x[0]] = x[2])); const c2 = genDoc(tt, inp); c2.title = d.title; if (d.status === '已定稿') c2.docNo = '京技产促〔2026〕51号'; S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author, versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content: c2 }], comments: [] }; } });
+    S.documents.forEach((d) => {
+      if (S.drafts[d.id]) return;
+      const tt = S.docTemplates.find((x) => x.id === d.templateId);
+      // 往期定稿沿用原批次的要素，新建通知使用当前模板示例。
+      const inp = d.id === 'DOC-1108' ? {
+        orig: '关于开展 2026 年数据券申报工作的通知',
+        oldEnd: '2026-11-02',
+        newEnd: '2026-11-06',
+        reason: '部分企业交易凭证开具延迟',
+      } : Object.fromEntries(tt.inputs.map(([key, , value]) => [key, value]));
+      const content = genDoc(tt, inp);
+      if (d.id === 'DOC-1108') content.date = cnDate(d.updated);
+      content.title = d.title;
+      S.drafts[d.id] = { id: d.id, title: d.title, templateId: d.templateId, status: d.status, author: d.author,
+        versions: [{ v: 1, at: d.updated + ' 10:00', by: d.author, content }], comments: [] };
+    });
   }
   function docSummary(dr) { return { id: dr.id, title: dr.title, templateId: dr.templateId, status: dr.status, author: dr.author, updated: dr.versions[dr.versions.length - 1].at, versions: dr.versions.length, comments: dr.comments.filter((c) => !c.resolved).length }; }
 
@@ -226,15 +489,21 @@
       const score = kw.reduce((s, w) => s + (hay.includes(w) ? 2 : 0) + [...w].filter((ch) => hay.includes(ch)).length / Math.max(4, w.length * 2), 0);
       if (score > 0.8) hits.push({ fileId: f.id, name: f.name, lib: f.lib, snippet: f.snippet || '（文件已入库，可打开查看全文）', page: 1 + (f.id.charCodeAt(3) % 6), score: +score.toFixed(2), status: f.status });
     });
-    S.policies.forEach((p) => { const hay = p.title + p.keywords.join('') + p.original; const sc = kw.reduce((s, w) => s + (hay.includes(w) ? 3 : 0), 0); if (sc) hits.push({ fileId: 'POL:' + p.id, name: `${pdoc(p.doc).no} · ${p.clause}`, lib: 'policy', snippet: p.original, page: 2, score: sc, status: '已入库' }); });
+    visiblePolicies().map(policyItem).forEach((p) => { const hay = p.title + p.keywords.join('') + p.original; const sc = kw.reduce((s, w) => s + (hay.includes(w) ? 3 : 0), 0); if (sc) hits.push({ fileId: 'POL:' + p.id, name: policyRef(p) || p.docTitle, lib: 'policy', snippet: p.original, page: 2, score: sc, status: '已入库' }); });
     return hits.sort((a, b) => b.score - a.score).slice(0, 8);
   }
 
   /* ================= 对话编排（意图识别 → 调用小应用工具 → 卡片） ================= */
   function pickModel(requested, sensitive) {
     const m = S.models.find((x) => x.id === requested) || S.models[0];
-    if (sensitive && (m.kind === 'cloud' || m.id === 'auto')) return { used: S.models.find((x) => x.id === 'local-qwen-32b'), note: m.id === 'auto' ? '涉及企业台账，已自动路由到本地模型' : `涉及企业台账（内部数据），已从 ${m.name} 切换到本地模型，数据不出局` };
-    if (m.id === 'auto') return { used: S.models.find((x) => x.id === 'deepseek-v4.1-flash'), note: '自动选择：高频问答 → DeepSeek-V4.1-Flash' };
+    const routing = window.JK_CONFIG.modelRouting;
+    if (m.id === 'auto' || (sensitive && m.kind !== 'local')) {
+      const channel = sensitive ? 'local' : routing.defaultChannel;
+      const used = S.models.find((x) => x.id === routing.channels[channel] && x.kind === channel && x.enabled);
+      if (!used) err(503, 'MODEL_UNAVAILABLE', '配置的模型通道不可用');
+      return { used, note: sensitive ? '涉及企业台账，已自动路由到本地模型' : `自动选择：高频问答 → ${used.name}` };
+    }
+    if (!m.enabled) err(503, 'MODEL_UNAVAILABLE', '所选模型已停用');
     return { used: m, note: '' };
   }
   function detectIntent(text, forced) {
@@ -255,20 +524,23 @@
     const r = { id: nid('M'), role: 'assistant', model: used.name, routeNote: note, intent, content: '', cards: [], citations: [], toolCalls: [], at: now() };
     if (intent === 'policy') {
       if (e) {
-        const res = matchAll(profileOf(e));
-        const ok = res.filter((x) => x.level === 'ok'), ck = res.filter((x) => x.level === 'check');
+        const { results, total, summary, defaultItemIds } = callSync('POST', '/api/apps/policy/match', { entId: e.id });
+        const { ok, check, no, ended } = summary;
+        const selected = defaultItemIds.length;
         r.toolCalls.push({ tool: 'policy.match', args: { entId: e.id } });
-        r.content = `已按「${e.short}」的台账画像（${e.subjectType} · ${e.industry} · 入区 ${e.yearsInZone} 年）核对了 18 项事项：\n**${ok.length} 项可进一步核对**，**${ck.length} 项缺信息待确认**，其余不满足或不适用。下面是结果，点“打开政策兑现”可以补信息、试算并生成告知单。`;
-        r.cards.push({ type: 'policy-match', entId: e.id, results: res.slice(0, 5) });
-        const top = ok[0] || ck[0]; if (top) { const p = pol(top.id); r.citations.push({ fileId: 'POL:' + p.id, name: `${pdoc(p.doc).no} ${p.clause}`, snippet: p.original }); }
+        r.content = `已按「${e.short}」的台账画像核对了 ${total} 项事项。**${ok} 项可进一步核对**，**${check} 项待确认**，**${no} 项不满足**。默认选中 ${selected} 项，本批已结束 ${ended} 项。打开政策兑现可补信息、试算并生成告知单。`;
+        r.cards.push({ type: 'policy-match', entId: e.id, results: results.slice(0, 5) });
+        const top = results.find((x) => x.level !== 'no');
+        if (top) r.citations.push(policyCitation(policyItem(pol(top.id))));
       } else {
         const q = text.replace(/[？?。]/g, '');
-        const items = S.policies.filter((p) => p.keywords.some((k) => q.includes(k)) || q.includes(p.title.slice(0, 4)));
-        const list = (items.length ? items : S.policies.filter((p) => p.times.open !== false).slice(0, 4)).slice(0, 4);
+        const available = visiblePolicies().map(policyItem);
+        const items = available.filter((p) => p.keywords.some((k) => q.includes(k)) || q.includes(p.title.slice(0, 4)));
+        const list = (items.length ? items : available.filter((p) => p.times.open !== false)).slice(0, 4);
         r.toolCalls.push({ tool: 'policy.search', args: { q } });
         if (items.length) { const p = items[0];
-          r.content = `「${p.title}」的要点：\n· **对象**：${p.object} → ${p.sub}\n· **条件**：${p.conditions.map((c) => c.label).join('；')}\n· **支持规则**：${p.rule.text}\n· **申报窗口**：${p.times.window}\n· **还需确认**：${p.pending.join('、') || '无'}\n\n如果告诉我是哪家企业，我可以直接按台账核对是否满足。`;
-          r.citations.push({ fileId: 'POL:' + p.id, name: `${pdoc(p.doc).no} ${p.clause}`, snippet: p.original });
+          r.content = `「${p.title}」${p.example ? exampleLabel : ''}的要点：\n· **对象**：${p.object} → ${p.sub}\n· **条件**：${p.conditions.map((c) => c.label).join('；')}\n· **支持规则**：${p.rule.text}\n· **申报窗口**：${p.times.window}\n· **还需确认**：${p.pending.join('、') || '无'}\n\n如果告诉我是哪家企业，我可以直接按台账核对是否满足。`;
+          r.citations.push(policyCitation(p));
         } else r.content = '没有找到完全对应的事项。下面是当前可关注的几项，你也可以说出企业名称，我按台账帮你逐项核对。';
         r.cards.push({ type: 'policy-items', ids: list.map((p) => p.id) });
       }
@@ -278,7 +550,7 @@
       else if (e) { r.toolCalls.push({ tool: 'enterprise.get', args: { id: e.id } }); const iss = S.issues.filter((i) => i.entId === e.id && i.status !== '已办结');
         r.content = `**${e.name}** 走访前 30 秒摘要：\n· 做什么：${e.products}（${e.industry}，${e.scale}，${e.employees} 人）\n· 资质：${e.license.join('、') || '暂无登记'}\n· 最近走访：${e.lastVisit}（${e.servicer}）\n· 在办诉求：${iss.length ? iss.map((i) => i.title + '（' + i.status + '）').join('；') : '无'}`;
         r.cards.push({ type: 'enterprise-brief', entId: e.id }); }
-      else { r.content = '你想查哪家企业？可以说简称，比如“查一下星河智驾”。也可以问“资质快到期的企业”“超过 90 天没走访的企业”。'; r.cards.push({ type: 'enterprise-list', ids: S.enterprises.filter((x) => x.tags.includes('重点服务')).map((x) => x.id) }); }
+      else { r.content = `你想查哪家企业？可以说简称，比如“查一下${ent('E002').short}”。也可以问“资质快到期的企业”“超过 90 天没走访的企业”。`; r.cards.push({ type: 'enterprise-list', ids: S.enterprises.filter((x) => x.tags.includes('重点服务')).map((x) => x.id) }); }
     } else if (intent === 'meeting') {
       r.toolCalls.push({ tool: 'meeting.list', args: {} });
       const pend = S.meetings.filter((m) => m.status === 'done').flatMap((m) => m.todos.filter((t) => t.status === '待认领').map((t) => ({ ...t, meeting: m.title })));
@@ -296,8 +568,8 @@
       r.cards.push({ type: 'kb-hits', hits });
     } else {
       const canned = [
-        [/(你好|您好|hi|hello)/i, '你好！我是经开区共享智能体工作站的助手。你可以直接说要办的事，比如“书香里文化能申请哪些支持？”“整理昨天座谈会的纪要”“起草一份申报延期通知”。'],
-        [/(能做什么|会什么|怎么用|帮助)/, '我能做四类事：\n1. **政策兑现咨询**：按企业情况匹配 18 项事项、试算、生成告知单\n2. **企业管理维护**：查企业、记走访、更新台账、跟进诉求\n3. **会议记录**：录音转写、纪要、待办\n4. **公文协作**：拟稿、核查、润色、比对、批注、审签\n直接说事就行，不用选功能；也可以输入“/”指定应用。'],
+        [/(你好|您好|hi|hello)/i, `你好！我是经开区共享智能体工作站的助手。你可以直接说要办的事，比如“${ent('E001').short}能申请哪些支持？”“整理昨天座谈会的纪要”“起草一份申报延期通知”。`],
+        [/(能做什么|会什么|怎么用|帮助)/, `我能做四类事：\n1. **政策兑现咨询**：按企业情况匹配 ${visiblePolicies().length} 项事项、试算、生成告知单\n2. **企业管理维护**：查企业、记走访、更新台账、跟进诉求\n3. **会议记录**：录音转写、纪要、待办\n4. **公文协作**：拟稿、核查、润色、比对、批注、审签\n直接说事就行，不用选功能；也可以输入“/”指定应用。`],
         [/三个时间/, '政策兑现里的“三个时间”要分开看：\n· **政策有效期**：这套规则什么时候有效\n· **事项发生期**：哪段时间发生的支出可以申报\n· **申报窗口**：什么时候可以递交申请\n政策有效不代表现在能报；旧政策到期也可能还有历史年度的兑现批次。'],
         [/(总结|概括|摘要)/, '可以，把要总结的文字粘贴进来，或者在资料库里选中文件后让我总结。'],
       ];
@@ -351,28 +623,66 @@
   });
   // 政策兑现咨询
   on('GET', '/api/apps/policy/items', (b, p, q) => {
-    let items = S.policies;
-    if (q.q) items = items.filter((x) => (x.title + x.keywords.join('') + x.sub + x.original).includes(q.q));
+    let items = visiblePolicies().map(policyItem);
+    if (q.q) items = items.filter((x) => (x.title + x.keywords.join('') + x.sub + x.original + x.docNo).includes(q.q));
     if (q.object) items = items.filter((x) => x.object === q.object);
     if (q.window === 'open') items = items.filter((x) => x.times.open === true);
     if (q.window === 'ended') items = items.filter((x) => x.times.open === false);
     if (q.window === 'unknown') items = items.filter((x) => x.times.open === null);
-    return { items: items.map((x) => ({ ...x, docNo: pdoc(x.doc).no, docTitle: pdoc(x.doc).title, docState: pdoc(x.doc).state })), total: items.length, docs: S.policyDocs };
+    return { items, total: items.length, docs: S.policyDocs };
   });
-  on('GET', '/api/apps/policy/items/:id', (b, p) => { const x = pol(p.id); if (!x) err(404, 'NOT_FOUND', '事项不存在'); return { item: { ...x, docNo: pdoc(x.doc).no, docTitle: pdoc(x.doc).title, docState: pdoc(x.doc).state } }; });
+  on('GET', '/api/apps/policy/items/:id', (b, p) => {
+    const item = visiblePolicies().find((x) => x.id === p.id);
+    if (!item) err(404, 'NOT_FOUND', '事项不存在');
+    return { item: policyItem(item) };
+  });
+  // 基础匹配；加载 mock/policy.js 后会用 first 覆盖为完整口径。
   on('POST', '/api/apps/policy/match', (b) => {
-    let pf; if (b.entId) { const e = ent(b.entId); pf = profileOf(e); Object.assign(pf, b.overrides || {}); if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])]; }
-    else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
-    const results = matchAll(pf); audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, 'DeepSeek-V4.1-Flash');
-    return { profile: pf, results, summary: { ok: results.filter((r) => r.level === 'ok').length, check: results.filter((r) => r.level === 'check').length, no: results.filter((r) => r.level === 'no').length } };
+    let pf;
+    if (b.entId) {
+      const e = ent(b.entId); if (!e) err(404, 'NOT_FOUND', '企业不存在');
+      pf = profileOf(e); Object.assign(pf, b.overrides || {});
+      if (b.overrides && b.overrides.license) pf.license = [...new Set([...(e.license || []), ...b.overrides.license])];
+    } else pf = Object.assign({ subjectType: '企业', tags: [], license: [], regInZone: true }, b.profile);
+    const results = matchAll(pf);
+    const summary = {
+      ok: results.filter((r) => r.level === 'ok').length,
+      check: results.filter((r) => r.level === 'check').length,
+      no: results.filter((r) => r.level === 'no').length,
+      ended: results.filter((r) => r.ended && r.level !== 'no').length,
+    };
+    const eligible = results.filter((r) => r.level !== 'no' && !r.ended);
+    const ok = eligible.filter((r) => r.level === 'ok');
+    const defaultItemIds = (ok.length ? ok : eligible.slice(0, 2)).map((r) => r.id);
+    audit('政策兑现咨询', `匹配 · ${b.entId ? ent(b.entId).short : '手动画像'}`, pickModel(S.modelId, !!b.entId).used.name);
+    return { profile: pf, results, total: visiblePolicies().length, summary, defaultItemIds };
   });
-  on('POST', '/api/apps/policy/calc', (b) => { const p = pol(b.itemId); const pf = {}; if (p.rule.base) pf[p.rule.base] = +b.amount; return { item: p.id, rule: p.rule.text, result: calcOf(p, pf), note: '试算按政策原文规则确定性计算，实际金额以评审结果为准' }; });
   on('POST', '/api/apps/policy/notice', (b) => {
-    const e = ent(b.entId); const items = b.itemIds.map(pol);
-    const lines = [`${e.name}：`, `根据你单位情况，经初步核对，可关注以下政策事项（仅供参考，以正式申报审核为准）：`];
-    items.forEach((p, i) => { lines.push(`${i + 1}. ${p.title}（${pdoc(p.doc).no} ${p.clause}）`); lines.push(`   支持标准：${p.rule.text}`); lines.push(`   申报时间：${p.times.window}`); lines.push(`   需准备材料：${p.materials.join('、') || '以申报通知为准'}`); if (p.pending.length) lines.push(`   尚需确认：${p.pending.join('、')}`); });
-    lines.push('如有疑问请联系企业服务处，电话 010-6788XXXX。', `北京经济技术开发区产业促进局　${cnDate('2026-11-17')}`);
-    audit('政策兑现咨询', `生成一次性告知单 · ${e.short}`, 'Qwen4-Max');
+    const e = b.entId ? ent(b.entId) : null;
+    if (b.entId && !e) err(404, 'NOT_FOUND', '企业不存在');
+    const items = [...new Set(b.itemIds)].map((id) => callSync('GET', '/api/apps/policy/items/' + encodeURIComponent(id)).item);
+    const departments = new Set();
+    let missingDepartment = false;
+    const lines = [`${e ? e.name : '申请人'}：`, '根据你单位情况，经初步核对，可关注以下政策事项：'];
+    items.forEach((p, i) => {
+      const ref = policyRef(p);
+      lines.push(`${i + 1}. ${p.title}${ref ? `（${ref}）` : ''}`, `   支持标准：${p.rule.text}`);
+      if (b.amounts && Object.hasOwn(b.amounts, p.id) && b.amounts[p.id] != null && p.rule.base) {
+        const { result } = callSync('POST', '/api/apps/policy/calc', { itemId: p.id, amount: b.amounts[p.id] });
+        if (result) lines.push(`   试算参考：${result.text}`);
+      }
+      lines.push(`   申报时间：${p.times.open === false ? '本批已结束。' : ''}${p.times.deadlineText || p.times.window || '以正式通知为准'}`,
+        `   需准备材料：${p.materials.join('、') || '以正式申报通知为准'}`);
+      if (p.pending.length) lines.push(`   尚需确认：${p.pending.join('、')}`);
+      if (p.source?.url) lines.push(`   原文：${p.source.url}`);
+      const names = (p.source?.deptResp || '').split(/[、，,；;\n]/).map((name) => name.trim()).filter(Boolean);
+      if (!names.length) missingDepartment = true;
+      names.forEach((name) => departments.add(name));
+    });
+    if (missingDepartment || !departments.size) departments.add('请填写（责任部门）');
+    lines.push('以上内容仅供参考，以正式申报通知和审核结果为准。', '咨询电话（请填写）：',
+      `落款：${[...departments].join('、')}　${cnDate((S.today || now()).slice(0, 10))}`);
+    audit('政策兑现咨询', `生成一次性告知单 · ${e ? e.short : '手动画像'}`, pickModel(S.modelId, true).used.name);
     return { text: lines.join('\n') };
   });
   // 企业管理维护
@@ -392,11 +702,12 @@
   on('PATCH', '/api/apps/enterprise/companies/:id', (b, p) => { const e = ent(p.id); if (!can('enterprise', 'operate') || roleOf().mask) err(403, 'FORBIDDEN', '当前角色只能查看台账，不能修改'); Object.entries(b).forEach(([k, v]) => { const old = e[k]; e[k] = v; e.history = e.history || []; e.history.unshift({ at: now(), by: me().name, field: k, old: String(old), new: String(v), source: '手动修改' }); }); audit('企业管理维护', `修改台账 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies', (b) => { const id = 'E' + String(S.enterprises.length + 1).padStart(3, '0'); const e = { id, name: b.name, short: b.short || b.name.replace(/^北京|有限公司$/g, '').slice(0, 6), creditCode: b.creditCode || '待补', industry: b.industry || '待分类', scale: b.scale || '小型', tags: b.tags || [], license: [], subjectType: '企业', established: '待补', yearsInZone: +b.yearsInZone || 0, regInZone: true, employees: +b.employees || 0, revenue: { value: 0, unit: '万元', period: '—', source: '—', verify: '待核' }, amounts: {}, regAddr: b.addr || '待补', opAddr: b.addr || '待补', formerNames: [], contacts: b.contact ? [{ name: b.contact, title: '联系人', phone: b.phone || '待补', main: true }] : [], servicer: me().name, lastVisit: '—', lastVisitDays: 0, qualifications: [], products: b.industry || '待补', fieldStatus: {} }; S.enterprises.unshift(e); audit('企业管理维护', `新建企业档案 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies/:id/visits', (b, p) => {
+    const model = pickModel(S.modelId, true).used;
     const e = ent(p.id); const v = { id: nid('V'), entId: e.id, date: '2026-11-17', staff: me().name, type: b.type || '上门走访', notes: b.notes, followups: [] };
     S.visits.unshift(v); e.lastVisit = '2026-11-17'; e.lastVisitDays = 0;
     const { proposals, issues } = extractVisit(e, b.notes);
     S.proposals.push(...proposals);
-    audit('企业管理维护', `记录走访 · ${e.short}`, 'Qwen3-32B（本地）');
+    audit('企业管理维护', `记录走访 · ${e.short}`, model.name);
     return { visit: v, proposals, issues };
   });
   on('POST', '/api/apps/enterprise/proposals/:id/decision', (b, p) => { const x = S.proposals.find((y) => y.id === p.id); if (!x) err(404, 'NOT_FOUND', '建议不存在'); if (b.value) x.new = b.value; x.status = b.decision === 'accept' ? 'accepted' : 'rejected'; if (x.status === 'accepted') applyProposal(x); audit('企业管理维护', `${x.status === 'accepted' ? '确认写入' : '忽略'} · ${x.label}`); const left = S.proposals.filter((y) => y.entId === x.entId && y.status === 'pending').length; if (!left) S.inbox.forEach((i) => { if (i.type === 'proposal' && i.ref === x.entId) i.status = 'done'; }); return { item: x, pending: left }; });
@@ -409,7 +720,7 @@
   // 会议记录
   on('GET', '/api/apps/meeting/meetings', () => ({ items: S.meetings.map((m) => ({ id: m.id, title: m.title, type: m.type, date: m.date, duration: m.duration, status: m.status, file: m.file, size: m.size, source: m.source, scope: m.scope, participants: m.participants, todoCount: (m.todos || []).length })), templates: S.meetingTemplates, hotwords: S.hotwords }));
   on('POST', '/api/apps/meeting/meetings', (b) => { const m = { id: nid('MT'), title: b.title || '未命名会议', type: b.type || '企业座谈会', date: b.date || now(), duration: b.duration || '18:32', place: b.place || '—', host: me().name, participants: b.participants && b.participants.length ? b.participants : [me().name], file: b.file || '现场录音.m4a', size: b.size || '12.4 MB', status: 'new', source: b.source || '网页上传' }; S.meetings.unshift(m); return { item: m }; });
-  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, 'SenseVoice（本地）'); return { job: jobState(j) }; });
+  on('POST', '/api/apps/meeting/meetings/:id/transcribe', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (b.type) m.type = b.type; if (b.title) m.title = b.title; m.status = 'running'; const j = { id: nid('JOB'), kind: 'transcribe', ref: m.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; m.jobId = j.id; audit('会议记录', `转写 · ${m.title.slice(0, 12)}`, window.JK_CONFIG.modelRouting.transcriptionModel); return { job: jobState(j) }; });
   on('GET', '/api/v1/jobs/:id', (b, p) => { const j = S.jobs[p.id]; if (!j) err(404, 'NOT_FOUND', '任务不存在'); return { job: jobState(j) }; });
   on('GET', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id); if (!m) err(404, 'NOT_FOUND', '会议不存在'); return { item: m, minutes: m.status === 'done' ? (m.minutesEdited || minutesOf(m)) : null }; });
   on('PATCH', '/api/apps/meeting/meetings/:id', (b, p) => { const m = S.meetings.find((x) => x.id === p.id);
@@ -426,23 +737,60 @@
   // 公文协作
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
-  on('POST', '/api/apps/document/drafts', (b) => { const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: (b.inputs || {}).policy, status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, 'Qwen4-Max'); return { item: S.drafts[id] }; });
+  on('POST', '/api/apps/document/drafts', (b) => { const model = pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used; const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: policyDocumentId(t.id, b.inputs?.policy), status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, model.name); return { item: S.drafts[id] }; });
   on('GET', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404, 'NOT_FOUND', '文稿不存在'); return { item: d }; });
   on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
   on('POST', '/api/apps/document/drafts/:id/check', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; return { issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
   on('POST', '/api/apps/document/drafts/:id/fix', (b, p) => { const d = S.drafts[p.id]; const c = clone(d.versions[d.versions.length - 1].content);
-    (b.ids || []).forEach((id) => { if (id === 'c1') c.docNo = '京技产促〔2026〕58号'; const m = /^c-([dts])(\d+)$/.exec(id); if (m) { const i = +m[2]; if (m[1] === 'd') c.paragraphs[i] = c.paragraphs[i].replace(/(\d{4})-(\d{2})-(\d{2})/g, (s, y, mo, da) => `${+y}年${+mo}月${+da}日`); if (m[1] === 't') c.paragraphs[i] = c.paragraphs[i].replace('的的', '的').replace('申报申报', '申报').replace('载止', '截止').replace('截至日期', '截止日期'); if (m[1] === 's') c.paragraphs[i] = polishText(c.paragraphs[i], 'formal'); } if (id === 'c-ni') c.title = c.title.replace('关于', '关于拟'); if (id === 'c-bb') c.paragraphs.push('除上述调整外，原通知其他事项不变。'); });
+    (b.ids || []).forEach((id) => { const m = /^c-([dts])(\d+)$/.exec(id); if (m) { const i = +m[2]; if (m[1] === 'd') c.paragraphs[i] = c.paragraphs[i].replace(/(\d{4})-(\d{2})-(\d{2})/g, (s, y, mo, da) => `${+y}年${+mo}月${+da}日`); if (m[1] === 't') c.paragraphs[i] = c.paragraphs[i].replace('的的', '的').replace('申报申报', '申报').replace('载止', '截止').replace('截至日期', '截止日期'); if (m[1] === 's') c.paragraphs[i] = polishText(c.paragraphs[i], 'formal'); } if (id === 'c-ni') c.title = c.title.replace('关于', '关于拟'); if (id === 'c-bb') c.paragraphs.push('除上述调整外，原通知其他事项不变。'); });
     d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + '（一键修正）', content: c }); return { item: d, issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
-  on('POST', '/api/apps/document/drafts/:id/polish', (b, p) => { const d = S.drafts[p.id]; const c = clone(d.versions[d.versions.length - 1].content); const before = c.paragraphs.join('\n'); const idx = b.para == null ? c.paragraphs.map((_, i) => i) : [b.para]; idx.forEach((i) => { c.paragraphs[i] = polishText(c.paragraphs[i], b.style || 'formal'); }); const after = c.paragraphs.join('\n'); return { preview: c, parts: diff(before, after), changed: before !== after }; });
+  on('POST', '/api/apps/document/drafts/:id/polish', (b, p) => {
+    const d = S.drafts[p.id];
+    const c = clone(d.versions.at(-1).content);
+    const before = c.paragraphs.join('\n');
+    const protectedParagraphs = policyParagraphs[d.templateId] || [];
+    c.paragraphs = c.paragraphs.map((text, i) =>
+      protectedParagraphs.includes(i) || (b.para != null && Number(b.para) !== i)
+        ? text : polishText(text, b.style || 'formal'));
+    const after = c.paragraphs.join('\n');
+    return { preview: c, parts: diff(before, after), changed: before !== after };
+  });
   on('POST', '/api/apps/document/compare', (b) => { const get = (x) => { if (typeof x === 'string') return x; const d = S.drafts[x.id]; const v = d.versions.find((y) => y.v === x.v) || d.versions[d.versions.length - 1]; return docText(v.content); }; const a = get(b.a), c = get(b.b); const parts = diff(a, c); return { parts, stats: { add: parts.filter((x) => x.op === 'add').reduce((s, x) => s + x.t.length, 0), del: parts.filter((x) => x.op === 'del').reduce((s, x) => s + x.t.length, 0) } }; });
   on('POST', '/api/apps/document/drafts/:id/comments', (b, p) => { const d = S.drafts[p.id]; const c = { id: nid('cm'), para: b.para, by: me().name, at: now(), text: b.text, replies: [], resolved: false }; d.comments.push(c); return { item: c }; });
   on('PATCH', '/api/apps/document/drafts/:id/comments/:cid', (b, p) => { const d = S.drafts[p.id]; const c = d.comments.find((x) => x.id === p.cid); if (b.reply) c.replies.push({ by: me().name, text: b.reply }); if (b.resolved !== undefined) c.resolved = b.resolved; return { item: c }; });
-  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => { const d = S.drafts[p.id]; const errs = checkDoc({ ...d.versions[d.versions.length - 1].content, templateId: d.templateId, policyId: d.policyId }).filter((x) => x.level === 'error'); if (errs.length) err(422, 'CHECK_FAILED', `还有 ${errs.length} 处必须修改的问题，先在“核查”里处理`); d.status = '审签中'; const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: b.assignee || '李阳' }; S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r }; });
-  on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${c.title}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${c.docNo}</p><h1>${c.title}</h1><p>${c.to}</p>${c.paragraphs.map((x) => `<p>　　${x}</p>`).join('')}<p class="sign">${c.sign}</p><p class="sign">${c.date}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
+  on('POST', '/api/apps/document/drafts/:id/submit', (b, p) => {
+    if (!can('document', 'operate')) err(403, 'FORBIDDEN', '没有公文操作权限');
+    const d = S.drafts[p.id];
+    if (!d) err(404, 'NOT_FOUND', '文稿不存在');
+    requireCheckedDraft(d, '请先在“核查”中处理。');
+    if (!['草稿', '已退回'].includes(d.status)) err(409, 'INVALID_STATE', '只有草稿或已退回的文稿可以送审');
+    const name = b.assignee || '李阳', reviewer = S.users.find(u => u.name === name);
+    if (!reviewer) err(404, 'NOT_FOUND', '审签人不存在');
+    if (reviewer.id === me().id || reviewer.name === d.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+    if (!can('document', 'approve', reviewer)) err(403, 'FORBIDDEN', '指定用户没有审签权限');
+    d.status = '审签中';
+    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: name, submitter: me().id };
+    S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r };
+  });
+  on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${escapeHtml(c.title)}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${escapeHtml(c.docNo) || '发文字号（请填写）'}</p><h1>${escapeHtml(c.title)}</h1><p>${escapeHtml(c.to)}</p>${c.paragraphs.map((x) => `<p>　　${escapeHtml(x)}</p>`).join('')}<p class="sign">${escapeHtml(c.sign)}</p><p class="sign">${escapeHtml(c.date)}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
   // 审签 / 等我确认（复用卫华 reviews）
   on('GET', '/api/v1/reviews', () => ({ items: S.inbox }));
-  on('POST', '/api/v1/reviews/:id/decisions', (b, p) => { const r = S.inbox.find((x) => x.id === p.id); if (r.approver && !can(r.app, 'approve')) err(403, 'FORBIDDEN', '需要审签权限：请用审签领导账号（如 李阳）处理'); r.status = b.decision === 'approve' ? 'done' : 'rejected'; r.reason = b.reason;
-    if (r.type === 'review') { const d = S.drafts[r.ref]; d.status = b.decision === 'approve' ? '已定稿' : '已退回'; if (b.decision === 'approve') d.versions[d.versions.length - 1].content.docNo = d.versions[d.versions.length - 1].content.docNo.replace('【待补】', '58'); }
+  on('POST', '/api/v1/reviews/:id/decisions', (b, p) => {
+    const r = S.inbox.find((x) => x.id === p.id);
+    if (r.approver && !can(r.app, 'approve')) err(403, 'FORBIDDEN', '需要审签权限：请用审签领导账号（如 李阳）处理');
+    const approve = b.decision === 'approve';
+    if (r.type === 'review') {
+      const d = S.drafts[r.ref];
+      if (me().id === r.submitter || me().name === d?.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
+      if (r.assignee && r.assignee !== me().name && r.assignee !== me().id) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
+      const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
+      if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
+      if (approve) requireCheckedDraft(d, '请退回修订后重新送审。');
+      d.status = approve ? '已定稿' : '已退回';
+      if (!approve) d.returnReason = b.reason ?? b.comment ?? '';
+    }
+    r.status = approve ? 'done' : 'rejected';
+    r.reason = b.reason;
     if (r.type === 'skill') { const s = S.skills.find((x) => x.id === r.ref); s.status = b.decision === 'approve' ? 'published' : 'draft'; s.visibility = b.decision === 'approve' ? 'recommended' : 'team'; }
     audit(r.app === 'document' ? '公文协作' : '技能中心', `${b.decision === 'approve' ? '通过' : '退回'} · ${r.title.slice(0, 16)}`); return { item: r }; });
   on('GET', '/api/v1/todos', () => ({ items: S.myTodos }));
@@ -450,9 +798,9 @@
   // 资料库（NAS 归集 + 检索）
   on('GET', '/api/v1/kb/libraries', () => ({ items: S.libraries.map((l) => ({ ...l, files: S.files.filter((f) => f.lib === l.id).length })) }));
   on('GET', '/api/v1/kb/files', (b, p, q) => { let items = S.files; if (q.lib) items = items.filter((f) => f.lib === q.lib); if (q.q) items = items.filter((f) => (f.name + f.tags.join('')).includes(q.q)); if (q.sort === 'cited') items = items.slice().sort((a, c) => c.cited - a.cited); return { items, total: items.length }; });
-  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, 'MinerU（本地）'); return { item: f, job: jobState(j) }; });
+  on('POST', '/api/v1/kb/files', (b) => { const f = { id: nid('F'), lib: b.lib || 'policy', name: b.name, size: b.size || '—', updated: '2026-11-17', cited: 0, tags: b.tags || ['新上传'], status: '解析中', version: 'v1', snippet: b.snippet || '' }; S.files.unshift(f); const j = { id: nid('JOB'), kind: 'parse', ref: f.id, started: Date.now(), status: 'running' }; S.jobs[j.id] = j; audit('资料库', `上传 · ${b.name.slice(0, 16)}`, SEED.capabilities.find((c) => c.id === 'parse').route); return { item: f, job: jobState(j) }; });
   on('POST', '/api/v1/kb/search', (b) => ({ hits: kbSearch(b.q) }));
-  on('GET', '/api/v1/kb/files/:id', (b, p) => { if (p.id.startsWith('POL:')) { const x = pol(p.id.slice(4)); return { item: { id: p.id, name: pdoc(x.doc).title, no: pdoc(x.doc).no, clause: x.clause, text: x.original, state: pdoc(x.doc).state, verifiedAt: x.verifiedAt, versionNote: x.versionNote } }; } const f = S.files.find((x) => x.id === p.id); return { item: { ...f, text: f.snippet || '（演示：文件全文在 NAS 中，正式环境可在线预览并定位页码）' } }; });
+  on('GET', '/api/v1/kb/files/:id', (b, p) => { if (p.id.startsWith('POL:')) { const x = callSync('GET', '/api/apps/policy/items/' + encodeURIComponent(p.id.slice(4))).item; return { item: { id: p.id, name: x.docTitle, no: x.docNo, clause: x.clause, text: x.original, state: x.docState, url: x.source?.url || '', verifiedAt: x.verifiedAt, versionNote: x.versionNote } }; } const f = S.files.find((x) => x.id === p.id); return { item: { ...f, text: f.snippet || '（演示：文件全文在 NAS 中，正式环境可在线预览并定位页码）' } }; });
   // 技能中心 / 造应用（复用卫华 builder：对话 → 需求包 → 试跑 → 发布）
   on('GET', '/api/v1/skills', () => ({ items: S.skills, apps: S.apps }));
   on('POST', '/api/v1/builder/sessions', (b) => {
@@ -470,11 +818,11 @@
   on('POST', '/api/v1/skills/:id/rate', (b, p) => { const s = S.skills.find((x) => x.id === p.id); s.myRating = b.useful; return { item: s }; });
   // 管理
   on('GET', '/api/v1/admin/usage', () => ({ usage: S.usage, audit: S.audit.slice(0, 30), seats: S.org }));
-  on('GET', '/api/v1/audit', () => ({ items: S.audit }));
+  on('GET', '/api/v1/audit', (_, _path, q) => { const offset = Number(q.offset) || 0; const limit = Number(q.limit) || 50; return { items: S.audit.slice(offset, offset + limit), total: S.audit.length }; });
   on('GET', '/api/v1/feed', () => ({ items: S.feed }));
 
   // 小应用工具调用（对话编排 / 自建技能通过它调用官方应用能力；与界面同一套权限和留痕）
-  function callSync(method, path, body) { const [pp, q] = parseQuery(path); const r = routes.find((x) => x.method === method && x.re.test(pp)); return r.fn(body || {}, pp.match(r.re).groups || {}, q); }
+  function callSync(method, path, body) { const [pp, q] = parseQuery(path); const r = routes.find((x) => x.method === method && x.re.test(pp)); if (!r) err(404, 'NO_ROUTE', `未实现的接口 ${method} ${pp}`); return r.fn(body || {}, pp.match(r.re).groups || {}, q); }
   const TOOLS = {
     'policy.search': (a) => callSync('GET', '/api/apps/policy/items?q=' + encodeURIComponent(a.q || '')),
     'policy.match': (a) => callSync('POST', '/api/apps/policy/match', a),
@@ -506,8 +854,25 @@
     request(method, path, body) {
       const [p, q] = parseQuery(path);
       return new Promise((resolve, reject) => {
-        setTimeout(() => {
+        const authorization = httpSite() ? window.JKHttp?.mockAuthorization(path) : null;
+        setTimeout(async () => {
           try {
+            if (httpSite()) {
+              if (!window.JKAPI.guard || !authorization) err(401, 'UNAUTHENTICATED', '需要有效的服务端会话');
+              const profile = await authorization.profile();
+              authorization.check();
+              const u = profile?.user;
+              const local = u && SEED.users.find(x => x.id === u.id && x.username === u.username && x.role === u.role && x.status === 'active');
+              if (!local || u.status !== 'active' || profile.role?.id !== u.role ||
+                  profile.role.mask !== (SEED.roles || []).find(r => r.id === u.role)?.mask)
+                err(403, 'FORBIDDEN', '当前身份不能使用此演示模块');
+              const owner = JSON.stringify([authorization.epoch, u.id, u.role, u.deptId, profile.grants]);
+              if (owner !== mixedOwner) {
+                load(); loadHooks.forEach(f => f(S)); mixedOwner = owner;
+              }
+              // 仅在下列同步 guard/handler 内生效。不保存线上会话，也不复制真实口令。
+              httpPrincipal = profile;
+            }
             if (window.JKAPI.guard) window.JKAPI.guard(method, p, body || {});
             const r = routes.find((x) => x.method === method && x.re.test(p));
             if (!r) err(404, 'NO_ROUTE', `未实现的接口 ${method} ${p}`);
@@ -515,7 +880,7 @@
             const out = r.fn(body || {}, params, q);
             if (method !== 'GET') { save(); listeners.forEach((f) => f(method, p)); }
             resolve(clone(out));
-          } catch (e) { reject(e); }
+          } catch (e) { reject(e); } finally { httpPrincipal = null; }
         }, method === 'GET' ? Math.min(120, this.latency) : this.latency);
       });
     },
@@ -523,7 +888,7 @@
     onChange: (f) => listeners.push(f),
     reset() { localStorage.removeItem(KEY); load(); loadHooks.forEach((f) => f(S)); save(); listeners.forEach((f) => f('RESET', '')); },
     /* 扩展点：账号权限模块（assets/auth.js）通过它注册路由、读写状态，不改本文件 */
-    ext: { on, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, save, clone, nid, now },
+    ext: { on, visiblePolicies, policyItem, policyRef, first: (m, pt, fn) => { on(m, pt, fn); routes.unshift(routes.pop()); }, err, state: () => S, me, can, roleOf, audit, pickModel, save, clone, nid, now, hasHttpPrincipal: () => !!httpPrincipal },
     onLoad(f) { loadHooks.push(f); f(S); save(); },
     guard: null,
     setFast(v) { S.demoFast = v; window.JKAPI.latency = v ? 90 : 260; },

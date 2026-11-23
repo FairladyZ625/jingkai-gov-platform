@@ -1,0 +1,46 @@
+name: jkq-demo
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: jkq-demo-app:${DEMO_TAG:-local}
+    restart: unless-stopped
+    init: true
+    shm_size: 1gb
+    env_file: .env
+    environment:
+      HAIKNOW_ROOT: /srv/app
+      HAIKNOW_APPS_DIR: /srv/app/apps
+      HAIKNOW_DATA_DIR: /state/live
+      HAIKNOW_CONFIG_DIR: /srv/app/config
+      APP_PORT: ${APP_PORT:-8000}
+      JKQ_DEPLOY_RUNTIME: "1"
+      JKQ_FRONTEND_API_MODE: ${JKQ_FRONTEND_API_MODE:-http}
+    command: ["python", "deploy/entrypoint.py"]
+    volumes:
+      - ${DEMO_STATE_DIR:-/var/lib/jkq-demo}/data:/state/live
+    healthcheck:
+      test: ["CMD", "python", "deploy/healthcheck.py"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DEMO_DOMAIN: ${DEMO_DOMAIN:?请配置演示域名}
+      APP_PORT: ${APP_PORT:-8000}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  certificates:
+  caddy_config:

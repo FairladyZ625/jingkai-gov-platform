@@ -8,7 +8,7 @@ window.JK_APPCFG.policy = {
   steps: ['选对象', '核对条件', '试算额度', '告知单'],
   tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']],
   /* 第 1 步“常用示例”：点一下直接选中（企业 id 来自台账） */
-  samples: [['E001', '书香里文化'], ['E007', '墨香书咖'], ['E005', '灵犀大模型'], ['E017', '启明一人工作室']],
+  samples: ['E001', 'E007', 'E005', 'E017'],
   /* 手动描述：对象类型、身份标签、资质 */
   objects: ['企业', '个人', '其他组织'],
   manualTags: ['实体书店', '人工智能', '大模型', '数据', '机器人', '智能网联汽车', '商业', '首店', '服务机构', 'AI原生创业', 'AI人才', '在读学生'],
@@ -18,19 +18,18 @@ window.JK_APPCFG.policy = {
     rent: ['年房租 / 物业费', '万元', 1e4], dataPurchase: ['数据产品采购额', '万元', 1e4], computePurchase: ['算力采购额', '万元', 1e4],
     datasetInvest: ['数据集建设投入', '万元', 1e4], digitalInvest: ['数字化投入', '万元', 1e4], renovation: ['新建 / 改造投入', '万元', 1e4],
     sceneInvest: ['场景项目投入', '万元', 1e4], firstSale: ['首台套合同额', '万元', 1e4], area: ['经营面积', '㎡', 1],
+    insurancePremium: ['出口信用保险保费', '万元', 1e4], financingContractAmount: ['当年相关业务合同金额', '万元', 1e4],
+    exportAmount: ['出口额', '万元', 1e4],
     employees: ['参保人数', '人', 1], age: ['年龄', '岁', 1], yearsInZone: ['入区经营年限', '年', 1],
   },
   /* 待确认项“填入示例”时用的值（接口单位） */
   sampleFill: { dataPurchase: 300000, computePurchase: 2000000, datasetInvest: 800000, renovation: 600000, digitalInvest: 500000, sceneInvest: 1500000, firstSale: 3000000, area: 500, employees: 30 },
   levels: { ok: ['可进一步核对', 'green'], check: ['待确认', 'amber'], no: ['不满足', 'gray'] },
   windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' },
-  noticeTail: '以上内容仅供参考，以正式申报通知和审核结果为准。',
-  contact: '如有疑问请联系企业服务处，电话 010-6788XXXX。',
-  signer: '北京经济技术开发区产业促进局',
   text: {
     pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况',
     resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签和资质是否完整，或换成手动描述',
     viewOnly: '你的角色只能查看事项库，不能做匹配和告知',
-    demoBadge: '示例事项',
+    demoBadge: '示例（无对应原文）',
   },
 };

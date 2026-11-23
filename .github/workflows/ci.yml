@@ -39,6 +39,18 @@ jobs:
       - run: python3 -m pip install pytest
       - run: python3 -m pytest -q --ignore=tests/demo
 
+  document-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q apps/document/tests/test_review_export.py
+
   demo:
     # Playwright 1.58 不支持 ubuntu-latest（26.04）上的 chromium，固定 24.04。
     runs-on: ubuntu-24.04
@@ -53,10 +65,48 @@ jobs:
           npm --prefix web run test:smoke
           npm --prefix web run test:e2e
           node --test tests/data/real-supplement.test.cjs
-      - name: 离线演示回归
-        if: ${{ hashFiles('tests/demo/package-lock.json') != '' }}
+      - name: 前端冒烟
         run: |
-          cd tests/demo
+          if test -d tests/demo; then
+            cd tests/demo
+            npm ci
+            npx --no-install playwright install --with-deps chromium
+            npm test
+          else
+            echo "::notice::tests/demo 尚未交付，本次跳过"
+          fi
+
+  prototype-p0:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/p0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm test
+
+  demo-data:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 检查离线脚本与种子一致
+        run: |
+          python3 web/mock/build_mock.py
+          git diff --exit-code -- web/config/mock-data.js
+          python3 scripts/check_names.py
+      - name: 演示数据契约与离线浏览器
+        working-directory: tests/demo-data
+        run: |
           npm ci
-          npx --no-install playwright install --with-deps chromium
           npm test
+          npx --no-install playwright install --with-deps chromium
+          npm run test:browser

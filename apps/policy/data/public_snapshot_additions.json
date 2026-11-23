@@ -1,0 +1,405 @@
+{
+  "policyDocs": [
+    {
+      "id": "rd-3639277",
+      "no": "京技管〔2021〕161号",
+      "title": "北京经济技术开发区实体书店扶持暂行管理办法",
+      "year": 2021,
+      "state": "历史办法 · 现行书店办法为京技管发〔2025〕21号",
+      "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202404/t20240426_3639277.html",
+      "real": true
+    },
+    {
+      "id": "rd-3623656",
+      "no": "京技管〔2020〕43号",
+      "title": "北京经济技术开发区打造大中小企业融通型特色载体推动中小企业创新创业升级专项资金实施细则",
+      "year": 2020,
+      "state": "已失效",
+      "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202404/t20240419_3623656.html",
+      "real": true
+    }
+  ],
+  "policies": [
+    {
+      "id": "PI-03",
+      "doc": "rd-3639277",
+      "title": "实体书店成本奖励（历史）",
+      "object": "企业",
+      "sub": "独立法人实体书店",
+      "action": "支付房租或物业费",
+      "clause": "第二条、第六条、第十一条第二项",
+      "category": "文化",
+      "conditions": [
+        {
+          "f": "tags",
+          "op": "has",
+          "v": "实体书店",
+          "label": "主营出版物零售和综合阅读服务"
+        },
+        {
+          "f": "license",
+          "op": "has",
+          "v": "出版物经营许可证",
+          "label": "取得出版物经营许可证"
+        },
+        {
+          "f": "regInZone",
+          "op": "==",
+          "v": true,
+          "label": "在经开区注册"
+        },
+        {
+          "f": "yearsInZone",
+          "op": ">=",
+          "v": 1,
+          "label": "在经开区经营满一年"
+        },
+        {
+          "f": "rent",
+          "op": ">",
+          "v": 0,
+          "label": "实际支付房租或物业费"
+        }
+      ],
+      "pending": [
+        "核实独立法人资格、经开区纳税及第六条的其余申报条件",
+        "历史办法仅供回顾，按现行办法核对当前申报"
+      ],
+      "rule": {
+        "base": "rent",
+        "ratio": 0.5,
+        "cap": 200000,
+        "text": "实际发生的房租或物业费最高按50%奖励，每店每年成本奖励总额不超过20万元"
+      },
+      "times": {
+        "valid": "历史办法",
+        "occur": "以当年申报通知为准",
+        "window": "已结束（历史）",
+        "open": false
+      },
+      "keywords": [
+        "书店",
+        "房租",
+        "物业费",
+        "租金"
+      ],
+      "materials": [
+        "企业法人营业执照",
+        "出版物经营许可证",
+        "租赁合同及付款凭证"
+      ],
+      "original": "（二）成本奖励。根据申请单位实际支付的房租或物业费，给予最高不超过 50% 的成本奖励，采取一年申报一次的方式，每家实体书店每年成本奖励总额不超过20万元。",
+      "source": {
+        "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202404/t20240426_3639277.html",
+        "docNo": "京技管〔2021〕161号"
+      },
+      "real": true,
+      "historical": true,
+      "status": "已发布",
+      "verifiedAt": "2026-11-18"
+    },
+    {
+      "id": "rd-3623656-art11-1",
+      "doc": "rd-3623656",
+      "title": "融通型特色载体内中小企业认定奖励（历史）",
+      "object": "企业",
+      "clause": "第十一条第一项",
+      "sub": "载体内中小企业",
+      "action": "新获资质认定",
+      "category": "综合",
+      "conditions": [
+        {
+          "f": "scale",
+          "op": "hasAny",
+          "v": [
+            "中型",
+            "小型",
+            "微型",
+            "小微"
+          ],
+          "label": "企业规模属于中小企业"
+        },
+        {
+          "f": "license",
+          "op": "hasAny",
+          "v": [
+            "专精特新",
+            "专精特新小巨人",
+            "制造业单项冠军"
+          ],
+          "label": "获认定为专精特新企业或制造业单项冠军"
+        },
+        {
+          "f": "inIntegrationCarrier",
+          "op": "==",
+          "v": true,
+          "label": "位于认定的融通型特色载体内"
+        }
+      ],
+      "pending": [
+        "核实资质是否属新认定，按等级及既往奖励核算晋级补差"
+      ],
+      "rule": {
+        "manual": true,
+        "text": "按认定类别与等级核定额度，晋级补差。"
+      },
+      "times": {
+        "valid": "已失效",
+        "occur": "以历史申报通知为准",
+        "window": "已结束（历史）",
+        "open": false
+      },
+      "keywords": [
+        "中小企业",
+        "专精特新",
+        "制造业单项冠军"
+      ],
+      "materials": [],
+      "original": "对载体内新认定的国家级、市级专精特新企业和制造业单项冠军企业，每家给予不超过30万元、10万元的奖励，晋级补差。",
+      "source": {
+        "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202404/t20240419_3623656.html",
+        "docNo": "京技管〔2020〕43号"
+      },
+      "real": true,
+      "historical": true,
+      "status": "已发布",
+      "verifiedAt": "2026-11-18"
+    }
+  ],
+  "additionalConditions": {
+    "RP-015": [
+      {
+        "f": "majorResearchTask",
+        "op": "==",
+        "v": true,
+        "label": "承担国家或北京市重大科技攻关任务"
+      }
+    ],
+    "RP-016": [
+      {
+        "f": "nationalInnovationPlatform",
+        "op": "==",
+        "v": true,
+        "label": "属于智能网联汽车领域国家级科技创新平台"
+      },
+      {
+        "f": "majorResearchTask",
+        "op": "==",
+        "v": true,
+        "label": "承担国家或北京市重大科技专项"
+      }
+    ],
+    "RP-028": [
+      {
+        "f": "supplyChainFinanceProvider",
+        "op": "==",
+        "v": true,
+        "label": "属于商业保理或融资租赁公司，并提供相应融资服务"
+      },
+      {
+        "f": "financingContractAmount",
+        "op": ">=",
+        "v": 100000000,
+        "label": "当年相关业务合同金额不少于 1 亿元"
+      }
+    ],
+    "RP-029": [
+      {
+        "f": "privateFundManager",
+        "op": "==",
+        "v": true,
+        "label": "属于私募基金管理人"
+      },
+      {
+        "f": "fundPaidInCapital",
+        "op": ">=",
+        "v": 10000000,
+        "label": "基金管理人实缴资本不低于 1000 万元"
+      },
+      {
+        "f": "fundAUM",
+        "op": ">=",
+        "v": 100000000,
+        "label": "所管理基金实缴规模合计不低于 1 亿元"
+      }
+    ],
+    "RP-038": [
+      {
+        "f": "exportCreditInsuredEnterprise",
+        "op": "==",
+        "v": true,
+        "label": "属于投保出口信用险或海外投资险的外贸企业"
+      },
+      {
+        "f": "exportAmount",
+        "op": ">",
+        "v": 50000000,
+        "label": "出口额超过 5000 万元"
+      }
+    ],
+    "RP-050": [
+      {
+        "f": "recognizedIncubator",
+        "op": "==",
+        "v": true,
+        "label": "属于经认定的科技企业孵化器"
+      }
+    ],
+    "RP-062": [
+      {
+        "f": "assemblyProject",
+        "op": "==",
+        "v": true,
+        "label": "申报方为亦庄新城范围内相应新建装配式公共或工业建筑项目的建设单位"
+      }
+    ],
+    "RP-070": [
+      {
+        "f": "hrParkLevel",
+        "op": "hasAny",
+        "v": [
+          "国家级",
+          "市级"
+        ],
+        "label": "经认定的国家级或市级人力资源服务产业园运营主体"
+      }
+    ]
+  },
+  "verifiedCorrections": {
+    "RP-078": {
+      "object": "个人",
+      "sub": "亦城人才",
+      "conditions": [
+        {
+          "f": "license",
+          "op": "hasAny",
+          "v": [
+            "亦城顶尖人才",
+            "亦城杰出人才",
+            "亦城领军人才",
+            "亦城优秀人才"
+          ],
+          "label": "获相应层次亦城人才认定"
+        }
+      ],
+      "rule": {
+        "manual": true,
+        "text": "按亦城人才认定层次与适用规定确定奖励额度及发放期限。"
+      },
+      "pending": [
+        "核实人才层次、对应发放年度和既往待遇"
+      ]
+    },
+    "RP-021": {
+      "object": "个人",
+      "sub": "产业精英创业者",
+      "conditions": [
+        {
+          "f": "tags",
+          "op": "has",
+          "v": "AI原生创业",
+          "label": "人工智能原生创业者"
+        }
+      ],
+      "rule": {
+        "manual": true,
+        "text": "创业首年启动资金最高200万元，后续发展奖励最高300万元，按创业情况核定。"
+      },
+      "pending": [
+        "核实是否符合产业精英条件及创业阶段"
+      ]
+    },
+    "RP-023": {
+      "object": "其他组织",
+      "sub": "人工智能社群组织",
+      "conditions": [
+        {
+          "f": "tags",
+          "op": "hasAny",
+          "v": [
+            "产业协会",
+            "科技自媒体",
+            "开发者社区"
+          ],
+          "label": "举办产业交流活动的产业协会、科技自媒体或开发者社区"
+        }
+      ]
+    },
+    "RP-071": {
+      "rule": {
+        "base": "insurancePremium",
+        "ratio": 0.5,
+        "cap": 3000000,
+        "text": "对参保企业按实际保费的50%给予补助，单个企业每年最高补贴300万元。"
+      }
+    },
+    "RP-079": {
+      "rule": {
+        "base": "exhibitionCost",
+        "ratio": 0.4,
+        "cap": 500000,
+        "text": "对参与境外展会活动企业，按照实际发生费用的40%给予补贴，合计每家企业每年补贴金额不超过50万元。"
+      }
+    },
+    "RP-070": {
+      "rule": {
+        "manual": true,
+        "tiers": [
+          {
+            "level": "国家级",
+            "fixed": 5000000
+          },
+          {
+            "level": "市级",
+            "fixed": 3000000
+          }
+        ],
+        "text": "园区经批准认定为国家级、市级人力资源服务产业园的，分别给予园区运营主体500万元、300万元一次性奖励。"
+      }
+    },
+    "RP-075": {
+      "times": {
+        "valid": "至 2028.12.31",
+        "occur": "以年度申报通知为准",
+        "window": "见当年申报通知",
+        "open": null,
+        "relatedNotice": {
+          "title": "北京经济技术开发区生物技术和大健康产业局关于开展2025年度脑机接口产业创新平台、创新载体建设项目认定及支持申报的通知",
+          "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202605/t20260520_4659308.html",
+          "date": "2026-05-21",
+          "window": {
+            "start": "2026-05-22",
+            "end": "2026-06-04"
+          },
+          "status": "已截止",
+          "scope": "同一政策文件的申报通知，未确认覆盖本条款（通知面向创新平台、创新载体建设，本条为赛事和展会支持）"
+        },
+        "noticePending": true,
+        "deadline": null,
+        "deadlineText": "当前批次申报通知尚未发布，申报时间以届时通知为准"
+      }
+    },
+    "RP-074": {
+      "times": {
+        "valid": "至 2027.12.31",
+        "occur": "以年度申报通知为准",
+        "window": "见当年申报通知",
+        "open": null,
+        "relatedNotice": {
+          "title": "北京经济技术开发区商务金融局关于开展2026年跨国公司全球研发中心认定奖励（第一年度）申报的通知",
+          "url": "https://kfqgw.beijing.gov.cn/zwgkkfq/2024zcwj/202610/t20261027_4920588.html",
+          "date": "2026-10-27",
+          "window": {
+            "start": "2026-10-28",
+            "end": "2026-11-16"
+          },
+          "status": "已截止",
+          "scope": "仅覆盖跨国公司全球研发中心认定奖励第一年度，未覆盖本条全部档次与适用主体"
+        },
+        "noticePending": true,
+        "deadline": null,
+        "deadlineText": "当前批次申报通知尚未发布，申报时间以届时通知为准"
+      }
+    }
+  }
+}

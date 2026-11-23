@@ -1,0 +1,86 @@
+[
+  {
+    "name": "未登录",
+    "method": "GET",
+    "path": "/api/v1/me",
+    "status": 401,
+    "expect": {
+      "error": {
+        "code": "UNAUTHENTICATED",
+        "message": "请先登录",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "name": "创建草稿",
+    "user": "sampleoperator",
+    "method": "POST",
+    "path": "/api/v1/apps/sample-app/records",
+    "json": {
+      "project": "sample-project",
+      "type": "inspection",
+      "data": {
+        "result": "演示"
+      }
+    },
+    "status": 201,
+    "keys": [
+      "id",
+      "appId",
+      "company",
+      "project",
+      "product",
+      "type",
+      "data",
+      "files",
+      "refs",
+      "version",
+      "submitter",
+      "createdAt",
+      "status",
+      "confirmedBy",
+      "confirmedAt"
+    ],
+    "expect": {
+      "version": 1,
+      "status": "draft",
+      "company": "sample-company",
+      "submitter": "sampleoperator"
+    }
+  },
+  {
+    "name": "范围外项目",
+    "user": "sampleoperator",
+    "method": "POST",
+    "path": "/api/v1/apps/sample-app/records",
+    "json": {
+      "project": "limited-project",
+      "type": "inspection",
+      "data": {}
+    },
+    "status": 404,
+    "expect": {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "项目或资源不存在",
+        "retryable": false
+      }
+    }
+  },
+  {
+    "name": "缺少字段",
+    "user": "sampleoperator",
+    "method": "POST",
+    "path": "/api/v1/apps/sample-app/records",
+    "json": {},
+    "status": 422,
+    "expect": {
+      "error": {
+        "code": "INVALID_REQUEST",
+        "message": "请求字段缺失或类型不正确",
+        "retryable": false
+      }
+    }
+  }
+]
