@@ -9,7 +9,7 @@ import csv
 import io
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -71,8 +71,21 @@ def list_records(project: str | None = None, ctx: AppContext = Depends(app_conte
     return ctx.records.list(project=project)
 
 
-@router.post("/records", status_code=201)
-def create_record(body: RecordIn, ctx: AppContext = Depends(require("operate"))):
+def _reviewable_post(path: str, **options):
+    """让实际写入与只读预检共用处理函数、依赖和路由选项。"""
+    def register(endpoint):
+        router.api_route(path, methods=["POST", "CHECK-POST"], include_in_schema=False, **options)(endpoint)
+        return router.post(path, **options)(endpoint)
+
+    return register
+
+
+@_reviewable_post("/records", status_code=201)
+def create_record(body: RecordIn, ctx: AppContext = Depends(require("operate")), request: Request = None):
+    if request is not None and request.method == "CHECK-POST":
+        # SDK 的项目过滤与保存记录使用同一个项目授权。
+        ctx.records.list(project=body.project)
+        return Response(status_code=204)
     record = ctx.records.save(
         project=body.project,
         type=RECORD_TYPE,

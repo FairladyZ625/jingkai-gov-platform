@@ -74,7 +74,8 @@ async function check() {
     if (step.file) assert.ok(ctx.JK_SAMPLE_FILES.some(f => f.id === step.file));
     if (step.appDemo) assert.ok(ctx.JK_APP_LIST.some(a => a.id === step.appDemo));
   }
-  assert.ok(ctx.JK_DEMO_SCRIPT.some(s => s.steps.some(step => step.say === '查一下' + rows[1].short)));
+  const e020 = rows.find(e => e.id === 'E020');
+  assert.ok(e020 && ctx.JK_DEMO_SCRIPT.some(s => s.steps.some(step => step.say === '查一下' + e020.short)));
   assert.ok(ctx.JK_SAMPLE_FILES.find(f => f.id === 'ent-xinghe').text.includes(rows[1].name));
   assert.ok(ctx.JK_SAMPLE_FILES.find(f => f.id === 'rec-1117').name.includes('示例'));
   assert.ok(demo.meetings.every(m => m.title.includes('示例')));

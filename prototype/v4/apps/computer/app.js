@@ -247,6 +247,7 @@
       function renderRun() {
         const r = P.run;
         el.innerHTML = `<div class="cu-wrap cu-runw">${back()}<div class="cu-rh"><div class="cu-rh-t"><div class="h3 clip">${esc(r.title)}</div><div class="t-3 t-xs clip">${esc(r.system.name)}${r.from ? ' · 来自技能「' + esc(r.from) + '」' : ''}</div></div><div class="cu-bar"><span data-st></span><span data-ctl class="row gap2"></span></div></div>
+          ${r.task === 'notice' && window.JKHttp.mode() === 'http' ? '<div class="callout" data-op="computer.import-limit">模拟：尚未真实入库（仅进程内存），请勿去知识库核对。</div>' : ''}
           <div data-wait></div>
           <div data-theme="light" class="cu-browser" data-frame><div class="cu-chrome"><span class="cu-dots"><i></i><i></i><i></i></span><span class="cu-url">${icon('lock')}<span data-url class="clip">${esc(P.url || r.system.url)}</span></span><span class="cu-live" data-live></span></div>
             <div class="cu-vp scroll" data-vp></div><div class="cu-shield" data-shield></div><div class="cu-cur" data-cur><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 2l16 10-7 1.5L9 21z" fill="var(--t-amber-fg)" stroke="var(--surface)" stroke-width="1.5"/></svg><span>AI</span></div><div class="cu-bubble" data-bubble></div></div>
@@ -275,7 +276,7 @@
           w.querySelectorAll('[data-w]').forEach((b) => (b.onclick = () => P.resolveWait && P.resolveWait(P.waitOpts[+b.dataset.w])));
         } else if (s === 'done') {
           const r = P.run; const res = r.result;
-          w.innerHTML = `<div class="callout h-green cu-wait">${icon('check')}<div class="grow"><b>${r.task === 'apply' ? '已提交，受理编号 ' + esc(res && res.no) : r.task === 'stats' ? '月报已上报' : r.task === 'notice' ? (P.imported ? '通知已存进知识库' : '通知已下载') : '进度已读取'}</b><div class="t-sm t-2">${r.task === 'status' ? (r.apps || []).map((a) => esc(a.title.slice(0, 14) + '：' + a.status)).join('；') : '步骤截图与日志已留档，可在“操作记录”查看'}</div></div>${P.kbDoc ? `<button class="btn sm" data-kbopen data-op="computer.kbopen">在知识库打开</button>` : ''}</div>`;
+          w.innerHTML = `<div class="callout h-green cu-wait">${icon('check')}<div class="grow"><b>${r.task === 'apply' ? '已提交，受理编号 ' + esc(res && res.no) : r.task === 'stats' ? '月报已上报' : r.task === 'notice' ? (P.imported ? (window.JKHttp.mode() === 'http' ? '模拟：尚未真实入库（仅进程内存）' : '通知已存进知识库') : '通知已下载') : '进度已读取'}</b><div class="t-sm t-2">${r.task === 'status' ? (r.apps || []).map((a) => esc(a.title.slice(0, 14) + '：' + a.status)).join('；') : '步骤截图与日志已留档，可在“操作记录”查看'}</div></div>${P.kbDoc && window.JKHttp.mode() !== 'http' ? `<button class="btn sm" data-kbopen data-op="computer.kbopen">在知识库打开</button>` : ''}</div>`;
           const kb = w.querySelector('[data-kbopen]'); if (kb) kb.onclick = () => ctx.kb && ctx.kb.open(P.kbDoc);
         } else if (s === 'draft') w.innerHTML = `<div class="callout h-gray cu-wait">${icon('info')}<div class="grow"><b>已暂存，没有提交</b><div class="t-sm t-2">稍后可以在系统里继续，或让 AI 再来一次</div></div></div>`;
         else if (s === 'stopped') w.innerHTML = `<div class="callout h-gray cu-wait">${icon('stop')}<div class="grow"><b>已停止</b><div class="t-sm t-2">之前的步骤截图已留档</div></div></div>`;
@@ -337,8 +338,10 @@
         let last = -1; while (['running', 'paused', 'manual', 'waiting'].includes(me.status)) { const k = steps[Math.min(me.step, steps.length - 1)]; if (k !== last) { last = k; await run.step(k); } await sleepRaw(120); if (run.stopped) { me.stopped = true; break; } }
         if (run.stopped) run.check();
         const r = me.run;
-        if (me.status === 'done') run.done(task === 'apply' ? `已为${r.ent.short}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${r.ent.short}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? '存进知识库' : '下载好'}` : `${r.ent.short}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
-          task === 'apply' ? [{ label: '查办理进度', say: `查一下${r.ent.short}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
+        // 真后端的 apply 等任务可能不带企业（ent 为 null），收尾文案用占位名，不因空值中断演示。
+        const entShort = (r && r.ent && r.ent.short) || '示例企业';
+        if (me.status === 'done') run.done(task === 'apply' ? `已为${entShort}提交申报，受理编号 ${r.result && r.result.no}。截图和日志已留档` : task === 'stats' ? `${entShort}的月报已上报` : task === 'notice' ? `已把《${(r.notice || {}).title.slice(0, 30)}…》${me.imported ? (window.JKHttp.mode() === 'http' ? '下载好；入库为模拟，尚未真实入库（仅进程内存），请勿去知识库核对' : '存进知识库') : '下载好'}` : `${entShort}共有 ${(r.apps || []).length} 条申报：${(r.apps || []).map((a) => a.title.slice(0, 10) + '·' + a.status).join('；')}`,
+          task === 'apply' ? [{ label: '查办理进度', say: `查一下${entShort}的申报进度` }] : task === 'notice' ? [{ label: '问问这份通知', say: '最新这份申报通知的申报时间和条件是什么？' }] : []);
         else if (me.status === 'draft') run.done('已暂存在系统里，没有提交。需要时说“再填一次”');
         else run.done('已停止，做过的步骤保留了截图');
       }

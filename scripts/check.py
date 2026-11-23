@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "core" / "server"), str(ROOT / "core" / "sdk")]
 
 from haiknow_core import manifest as mf  # noqa: E402
+from haiknow_core.manifest_ext import validate_extensions  # noqa: E402
 
 # 本机开着代理时，测试内起的 HTTP/WS 服务只监听回环，不该走代理。
 LOOPBACK_NO_PROXY = ("127.0.0.1", "localhost", "::1")
@@ -238,7 +239,11 @@ def _manifest_line(raw: str, msg: str) -> int | None:
 
 
 def check_manifest(r: Report, only: str | None) -> None:
-    for d in app_dirs(only):
+    directories = app_dirs(only)
+    template = ROOT / "apps" / "_template"
+    if only == "_template" or (only is None and template.is_dir()):
+        directories.append(template)
+    for d in directories:
         f = d / "app.json"
         where = rel(f)
         if not f.is_file():
@@ -253,9 +258,13 @@ def check_manifest(r: Report, only: str | None) -> None:
         if not isinstance(m, dict):
             r.rule("CHK-APP-02", where, "顶层必须是 JSON 对象，不能是数组或其他类型")
             continue
-        for e in mf.validate(m, d.name):
+        base = {**m, "id": "sample-template"} if d == template and m.get("id") == "__APP_ID__" else m
+        for e in mf.validate(base, d.name):
             code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
             r.rule(code, where, e, line=_manifest_line(raw, e))
+        for e in validate_extensions(m, required=d == template):
+            code = "CHK-APP-03" if e.startswith("缺少字段") or "类型应为" in e else "CHK-APP-04"
+            r.rule(code, where, f"应用 {m.get('id', d.name)} {e}", line=_manifest_line(raw, e))
         # 新应用必须声明 SDK 主版本；平台运行时仍把旧应用的缺省值按 "1" 处理。
         if "sdk" not in m:
             r.rule("CHK-APP-03", where, '缺少字段 sdk（新应用写 "sdk": "2"；旧应用由平台按 1 兼容运行）')
@@ -265,6 +274,8 @@ def check_manifest(r: Report, only: str | None) -> None:
         owner_line = _key_line(raw, "owner")
         if isinstance(owner, str) and not owner.strip():
             r.rule("CHK-APP-03", where, "字段 owner 不能为空（填 GitLab 用户名）", line=owner_line)
+        if d == template:
+            continue  # 模板不单独登记 CODEOWNERS；生成实际应用时登记。
         registered = _registered_owners(d.name)
         if registered is None:
             r.rule("CHK-APP-06", where, f"CODEOWNERS 未登记 /apps/{d.name}/，改动找不到评审人", line=owner_line)

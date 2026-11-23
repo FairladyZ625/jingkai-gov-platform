@@ -64,21 +64,65 @@
           ${err ? `<div class="callout h-red">${icon('alert')}<span>${esc(err)}</span></div>` : ''}
           <button class="btn primary lg" data-op="login.go" style="width:100%;margin-top:4px">登录</button>
         </div>
-        ${accts.length ? `<div class="sect" style="margin-top:28px">演示账号 · 点一下直接进入</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}" data-p="${esc(a.password)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)} / ${esc(a.password)}</div></span></button>`).join('')}</div>` : ''}
+        ${accts.length ? `<div class="sect" style="margin-top:28px">演示账号 · 点一下直接进入</div><div class="qlogin">${accts.map((a) => `<button type="button" class="ql" data-u="${esc(a.username)}" data-p="${window.JKHttp.mode() === 'http' ? '' : esc(a.password)}"><span class="avatar h-${JK.hue(a.role, 'role')}">${esc(a.name[0])}</span><span class="grow"><div class="nm">${esc(a.name)} ${tag(a.role, 'role')}</div><div class="rl clip">${esc(a.username)}${window.JKHttp.mode() === 'http' ? ' · 请输入口令' : ' / ' + esc(a.password)}</div></span></button>`).join('')}</div>` : ''}
       </form></div></div>`;
     const go = async (u, p) => { try { await API.auth.login({ username: u, password: p }); await afterLogin(); } catch (e) { renderLogin(e.message || '登录失败', u); const pw = $('#lf [name=p]'); if (pw) pw.focus(); } };
     $('#lf').onsubmit = (e) => { e.preventDefault(); go(e.target.u.value.trim(), e.target.p.value); };
-    $$('.ql').forEach((b) => (b.onclick = () => go(b.dataset.u, b.dataset.p)));
+    $$('.ql').forEach((b) => (b.onclick = () => {
+      if (window.JKHttp.mode() === 'http') { $('#lf [name=u]').value = b.dataset.u; $('#lf [name=p]').focus(); }
+      else go(b.dataset.u, b.dataset.p);
+    }));
+  }
+  // HTTP 切号不从静态配置取部署口令，不先退出原会话。输入只存在于密码框，提交后立即清空。
+  function passwordLogin(account) {
+    return new Promise((resolve) => {
+      let accepted = false, busy = false;
+      const holdClose = (event) => {
+        if (busy && (event.key === 'Escape' || event.target.closest?.('[data-cancel],[data-x],.mask-bg'))) {
+          event.preventDefault(); event.stopImmediatePropagation();
+        }
+      };
+      document.addEventListener('click', holdClose, true); document.addEventListener('keydown', holdClose, true);
+      const modal = JK.modal({ title: `登录 ${account.name}`, okText: '登录并切换',
+        body: `<form autocomplete="off"><label>请输入 ${esc(account.username)} 的口令<input class="input" type="password" autocomplete="off" data-op="switch.password"></label><div role="alert" data-op="switch.error"></div></form>`,
+        ok: async (dialog) => {
+          if (busy) return false;
+          busy = true;
+          const input = dialog.querySelector('[data-op="switch.password"]');
+          const request = { username: account.username, password: input.value }; input.value = '';
+          try {
+            await API.auth.login(request); accepted = true;
+          } catch (error) {
+            dialog.querySelector('[data-op="switch.error"]').textContent = '口令不正确或登录失败，当前会话已保留';
+            input.focus(); return false;
+          } finally { request.password = ''; busy = false; }
+        },
+        onMount: (dialog) => {
+          dialog.querySelector('form').onsubmit = (event) => { event.preventDefault(); dialog.querySelector('[data-ok]').click(); };
+          dialog.querySelector('input').focus();
+        },
+      });
+      const observer = new MutationObserver(() => {
+        if (!modal.el.isConnected) {
+          modal.el.querySelector('input').value = ''; observer.disconnect(); document.removeEventListener('click', holdClose, true); document.removeEventListener('keydown', holdClose, true); resolve(accepted);
+        }
+      });
+      observer.observe(document.body, { childList: true });
+    });
   }
   async function switchUser(username, run) {
     const a = (CFG.demoAccounts || []).find((x) => x.username === username); if (!a) return;
     if (switchingAccount) return;
     switchingAccount = true;
     try {
+      if (window.JKHttp.mode() === 'http') {
+        if (!(await passwordLogin(a))) { if (run) run.fail('已取消切号，当前会话已保留'); return; }
+      } else {
+        await API.auth.logout().catch(() => {});
+        await API.auth.login({ username: a.username, password: a.password });
+      }
       if (!run) { conversationEpoch++; Op.running?.stop(true); Op.running?.markStopped(); }
       rememberActivePanel();
-      await API.auth.logout().catch(() => {});
-      await API.auth.login({ username: a.username, password: a.password });
       // 登录和权限刷新都成功才完成原任务。
       await afterLogin(() => { if (run) run.done(); });
       toast(`已切换为 ${a.name}（${a.role}）`);
@@ -206,20 +250,6 @@
         if (e.target.dataset.ed != null) slot.edits[e.target.dataset.ed] = e.target.value.trim();
       });
     }
-    if (id === 'policy') {
-      el.addEventListener('click', (e) => {
-        const choice = e.target.closest('[data-ent], [data-act="clear"]');
-        if (choice) slot.entId = choice.dataset.ent;
-        if (e.target.closest('[data-act="showAll"]')) slot.expandedPicks = true;
-      });
-      el.addEventListener('change', (e) => {
-        const itemId = e.target.dataset.pick;
-        if (!itemId || !slot.pickedIds) return;
-        if (e.target.checked) slot.pickedIds.add(itemId);
-        else slot.pickedIds.delete(itemId);
-        slot.selectionChanged = true;
-      });
-    }
     try { slot.ctl = JK.registry[id].mount(el, ctx) || {}; } catch (e) { console.error(e); el.innerHTML = JK.empty({ icon: 'alert', title: '应用加载出错', desc: String(e.message || e) }); slot.ctl = {}; }
     return slot;
   }
@@ -248,7 +278,6 @@
       if (id === 'computer' && route === 'run') slot.panel = { app: id, route: 'home', params: {} };
       else if (route || hasParams || fresh) slot.panel = { app: id, route: route || 'home', params: args };
       if (id === 'document' && args.templateId) slot.templateId = args.templateId;
-      if (id === 'policy' && args.entId) slot.entId = args.entId;
       rememberPanel(slot.panel);
     }
     activate(id); if (S.layout !== 'max') setLayout('split');
@@ -312,9 +341,10 @@
   }
   function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
 
-  // 通过应用现有控件恢复私有状态，复用其校验和保存逻辑。
+  // 政策应用恢复自己的办理快照，其他应用沿用现有控件。
   async function restoreApp(slot, route, params) {
     const { app } = slot.panel;
+    if (app === 'policy') return slot.ctl.restore?.(route, params);
     const query = (selector) => slot.el.querySelector(selector);
     const current = () => S.mounted[app] === slot;
     const find = async (selector) => {
@@ -333,25 +363,7 @@
       field.dispatchEvent(new Event(event, { bubbles: true }));
     };
     const click = (selector) => { if (current()) query(selector)?.click(); };
-    const matchedRoute = app === 'policy' && (route === 'estimate' || (['match', 'notice'].includes(route) && (params.pickedIds || params.calcAmounts || params.filter || params.expanded)));
-    await slot.ctl.go(matchedRoute ? 'match' : route, params);
-
-    if (matchedRoute && await find('.pol-kpis')) {
-      if (Array.isArray(params.pickedIds)) {
-        const selected = new Set(params.pickedIds);
-        const changed = [...new Set([...slot.pickedIds, ...selected])].filter((id) => slot.pickedIds.has(id) !== selected.has(id));
-        const pick = (id) => `[data-pick="${CSS.escape(id)}"]`;
-        if (params.expanded || changed.some((id) => !query(pick(id)))) click('[data-op="policy.show-all"]');
-        changed.forEach((id) => change(pick(id), selected.has(id)));
-      } else if (params.expanded) click('[data-op="policy.show-all"]');
-      if (params.calcAmounts) await slot.ctl.restoreCalcAmounts(params.calcAmounts);
-      if (route === 'match' && params.filter) click(`[data-filter="${CSS.escape(params.filter)}"]`);
-      if (route === 'estimate' || route === 'notice') click('[data-op="policy.next"]');
-      if (route === 'notice') click('[data-op="policy.to-notice"]');
-    }
-    if (app === 'policy' && route === 'notice' && typeof params.notice === 'string' && await find('#pn')) {
-      change('#pn', params.notice, 'input');
-    }
+    await slot.ctl.go(route, params);
 
     if (app === 'document' && params.edits && await find('[data-pe="title"]')) {
       for (const [field, value] of Object.entries(params.edits)) {
@@ -405,21 +417,6 @@
         return result;
       };
     }
-    // 应用可在操作员词典就绪之前自行解析企业，使用实际查询的 ID 恢复。
-    if (id === 'policy') api.policy = { ...API.policy, match: async (params) => {
-      const result = await API.policy.match(params);
-      const slot = mounted();
-      if (slot) {
-        slot.entId = params.entId;
-        // 核对页只渲染部分事项，完整初选来自本次匹配的实际结果。
-        const results = result.results || [];
-        const defaults = results.filter((item) => item.level === 'ok' && !item.ended);
-        slot.pickedIds = new Set((defaults.length ? defaults : results.filter((item) => item.level !== 'no').slice(0, 2)).map((item) => item.id));
-        slot.selectionChanged = false;
-        slot.expandedPicks = false;
-      }
-      return result;
-    } };
     if (id === 'enterprise') api.enterprise = {
       ...API.enterprise,
       get: async (entId) => {
@@ -467,8 +464,9 @@
   }
   function snapshotPanel(slot) {
     if (!slot) return;
-    if (slot.restoring) return slot.panel;
     const { app, route, params } = slot.panel;
+    // 政策应用在画像与手填金额就位后即可保存，后台试算可以继续。
+    if (slot.restoring && app !== 'policy') return slot.panel;
     const query = (selector) => slot.el.querySelector(selector);
     const tab = query('.ap-tabs .tab.on')?.dataset.tab;
     const step = query('.wiz-step.on')?.dataset.op;
@@ -502,28 +500,8 @@
       }
     }
     if (app === 'policy') {
-      if (tab === 'items' && route !== 'detail') {
-        const q = query('[data-op="policy.items-q"]')?.value;
-        const object = query('[data-obj].on')?.dataset.obj;
-        return show('items', { ...(q && { q }), ...(object && { object }) });
-      }
-      if (tab === 'docs') return show('docs');
-      if (step === 'policy.step-0') return show('home', slot.entId && query('.pol-prof') ? { entId: slot.entId } : {});
-      if (slot.entId && slot.pickedIds) {
-        const policyRoute = { 'policy.step-1': 'match', 'policy.step-2': 'estimate', 'policy.step-3': 'notice' }[step];
-        if (policyRoute) {
-          const next = { entId: slot.entId };
-          const notice = query('#pn');
-          if (slot.selectionChanged || policyRoute !== 'match') next.pickedIds = [...slot.pickedIds];
-          const amounts = slot.ctl.getCalcAmounts();
-          if (Object.keys(amounts).length) next.calcAmounts = amounts;
-          if (notice) next.notice = notice.value;
-          const filter = query('[data-filter].on')?.dataset.filter;
-          if (filter) next.filter = filter;
-          if (slot.expandedPicks) next.expanded = true;
-          return show(policyRoute, next);
-        }
-      }
+      const saved = slot.ctl.snapshot?.(route, params);
+      return saved ? show(saved.route, saved.params) : slot.panel;
     }
     if (app === 'enterprise' && tab === 'list') {
       const q = query('#lq')?.value;
@@ -748,7 +726,7 @@
     const saved = snapshotPanel(slot);
     const { action } = intent;
     const save = (route, params = {}) => { slot.panel = { app, route, params }; rememberPanel(slot.panel); };
-    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { itemId: slots.policy.id });
+    if (app === 'policy' && action === 'detail' && slots.policy?.id) return save('detail', { ...saved.params, itemId: slots.policy.id });
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }

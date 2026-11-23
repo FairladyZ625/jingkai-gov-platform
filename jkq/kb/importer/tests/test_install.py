@@ -12,6 +12,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 from haiknow_core.aihub import adapters
 from jkq.app import create_app
+from jkq.kb.importer.public_url import PublicURLError, PublicURLReader
 
 PREFIX = "/api/v1/kb"
 FIXTURES = Path(__file__).resolve().parents[4] / "tests/fixtures/kb_import"
@@ -37,6 +38,55 @@ def boot(tmp_path, monkeypatch, cheap_password_hash):
 def login(client, partner=False):
     user, password = ("hejun", "test-partner") if partner else ("wangmin", "test-member")
     assert client.post("/api/v1/auth/login", json={"username": user, "password": password}).status_code == 200
+
+
+@pytest.mark.parametrize("origin,space,size,status", [
+    ("公文协作", "template", 24576, 200),
+    ("政策匹配", "policy", 24576, 200),
+    ("公文协作", "template", "24 KB", 422),
+    ("未知来源", "policy", 24576, 422),
+])
+def test_one_step_import_from_apps(boot, monkeypatch, origin, space, size, status):
+    read = AsyncMock()
+    monkeypatch.setattr(PublicURLReader, "read", read)
+    client, _ = boot()
+    login(client)
+    response = client.post(PREFIX + "/import", json={
+        "items": [{"name": "协作样本.txt", "text": "第一条 样本正文。", "size": size}],
+        "from": origin, "space": space, "text": None, "title": None, "url": None,
+    })
+    assert response.status_code == status, response.text
+    if status == 200:
+        doc, = response.json()["docs"]
+        assert (doc["from"], doc["space"]) == (origin, space)
+    else:
+        assert response.json()["error"]["code"] == "CHECK_FAILED"
+    read.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure,status,code", [
+    (RuntimeError("reader-internal-diagnostic"), 502, "URL_FETCH_FAILED"),
+    (PublicURLError(400, "URL_NOT_ALLOWED", "不允许读取此网址"), 400, "URL_NOT_ALLOWED"),
+    (PublicURLError(504, "URL_FETCH_TIMEOUT", "读取网页超时"), 504, "URL_FETCH_TIMEOUT"),
+])
+def test_import_url_reader_errors(boot, monkeypatch, failure, status, code):
+    read = AsyncMock(side_effect=failure)
+    monkeypatch.setattr(PublicURLReader, "read", read)
+    client, _ = boot()
+    login(client)
+    url = "https://example.invalid/sample"
+    for route in ("/import", "/import/url"):
+        response = client.post(PREFIX + route, json={"url": url})
+        assert response.status_code == status, response.text
+        error = response.json()["error"]
+        assert error["code"] == code and error["details"] == {}
+        if isinstance(failure, PublicURLError):
+            assert error["message"] == str(failure)
+        else:
+            assert str(failure) not in response.text
+            assert any("\u4e00" <= char <= "\u9fff" for char in error["message"])
+        read.assert_awaited_once_with(url)
+        read.reset_mock()
 
 
 def test_import_uses_same_documents_database_with_version_links_and_audit(boot):
