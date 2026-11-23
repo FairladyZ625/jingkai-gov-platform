@@ -177,6 +177,22 @@ def test_anonymous_session_and_private_endpoints(instance):
     assert not store.audit_list()
 
 
+def test_v1_session_trailing_slash_never_redirects(instance):
+    build, _ = instance
+    client, _ = build()  # 回环 HTTP 模拟 HTTPS 反代之后的应用连接。
+    assert client.base_url.scheme == 'http'
+    for signed_in in (False, True):
+        if signed_in:
+            response(login(client), 200)
+        canonical = response(client.get(SESSION, follow_redirects=False), 200)
+        aliased = client.get(SESSION + '/', follow_redirects=False)
+        assert response(aliased, 200) == canonical
+        assert 'location' not in aliased.headers
+        assert (canonical['user'] is not None) == signed_in
+    assert SESSION in client.get('/openapi.json').json()['paths']
+    assert SESSION + '/' not in client.get('/openapi.json').json()['paths']
+
+
 def test_change_password_revokes_other_sessions_and_old_password(instance):
     build, _ = instance
     client, _ = build()

@@ -219,6 +219,8 @@ def install(app, *, demo=None, clock=time.time):
         return {'ok': True}
 
     @router.get('/api/auth/session', include_in_schema=False)
+    # 反代连接到应用可能使用 HTTP，尾斜杠不交给框架生成绝对跳转地址。
+    @router.get('/api/v1/auth/session/', include_in_schema=False)
     @router.get('/api/v1/auth/session')
     def session(request: Request):
         with store._lock:
