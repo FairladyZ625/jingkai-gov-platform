@@ -4,7 +4,7 @@
 const jkUseMock = typeof URLSearchParams !== 'undefined' &&
   new URLSearchParams(window.location?.search).get('api') === 'mock';
 const jkHttpModules = !jkUseMock && /^https?:$/.test(window.location?.protocol)
-  ? { platform: 'http', kb: 'http' }
+  ? { platform: 'http', kb: 'http', policy: 'http', enterprise: 'http', meeting: 'http', document: 'http' }
   : {};
 
 window.JK_CONFIG = {

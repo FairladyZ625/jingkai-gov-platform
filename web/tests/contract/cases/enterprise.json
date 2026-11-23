@@ -19,7 +19,7 @@
       "query": {"entId": "{{company.item.id}}"} },
     { "method": "POST", "path": "/api/apps/enterprise/issues",
       "response": {"item": "@enterpriseIssue"},
-      "body": {"entId": "{{company.item.id}}", "title": "契约测试诉求", "from": "走访"},
+      "body": {"entId": "{{company.item.id}}", "title": "契约测试诉求", "from": "政策咨询", "due": "2026-12-01"},
       "save": "issue" },
     { "method": "PATCH", "path": "/api/apps/enterprise/issues/{id}",
       "response": {"item": "@enterpriseIssue"},

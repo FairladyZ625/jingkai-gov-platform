@@ -110,7 +110,9 @@ async function send(page, message) {
 test('HTTP 正式配置提交凭证，错误密码显示原位提示', async ({ page }) => {
   await page.goto(origin);
   await expect(page.getByText('一键选账号', { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => JK_CONFIG.api.modules)).toEqual({ platform: 'http', kb: 'http' });
+  expect(await page.evaluate(() => JK_CONFIG.api.modules)).toEqual({
+    platform: 'http', kb: 'http', policy: 'http', enterprise: 'http', meeting: 'http', document: 'http',
+  });
   await signIn(page, username, 'incorrect');
   await expect(page.getByRole('alert')).toHaveText('用户名或密码错误');
   await expect(page.getByLabel('账号', { exact: true })).toHaveValue(username);

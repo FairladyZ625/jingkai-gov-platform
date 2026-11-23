@@ -47,7 +47,7 @@
     mount(el, ctx) {
       const { ui, api, perms } = ctx; const D = api.document; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canView = perms.can('view') && !perms.isPartner, canOp = canView && perms.can('operate'), canApprove = canView && perms.can('approve');
-      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
+      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, notice: '', refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, checkError: '', polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
       // 起草要素按草稿隔离，仅在当前公文会话保存；不从正文猜字段，也不写入共享记录。
       const draftForms = new Map();
       let TPLS = [], GROUPS = [], DOCS = [], POLS = null, ENTS = null, loaded = false, loadErr = null;
@@ -91,8 +91,8 @@
       }
       async function openDoc(id, step) {
         if (!await allowLeavingDraft()) return false;
-        S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
-        S.inputs = {}; S.from = null; S.refs = new Set(); S.hits = [];
+        S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.checkError = ''; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
+        S.inputs = {}; S.from = null; S.notice = ''; S.refs = new Set(); S.hits = [];
         S.tab = 'flow'; S.step = step == null ? 2 : step; render();
         try {
           const { item } = await D.get(id);
@@ -146,9 +146,13 @@
         foot('', canOp ? '' : '<span class="meta">只读：没有起草权限</span>');
       }
       const docRow = (d) => `<div class="card tight li" data-open="${d.id}" data-op="document.doc-${d.id}"><span class="ini h-${ui.hue((tplOf(d.templateId) || {}).groupName || '', 'docGroup')}">${icon('doc')}</span><div class="grow"><div class="t clip">${esc(d.title)}</div><div class="s">${esc((tplOf(d.templateId) || {}).name || '')} · ${esc(d.author)} · ${esc(updatedLabel(d.updated))} · 第 ${d.versions} 版</div></div>${tag(d.status, 'docStatus')}</div>`;
-      function pickTpl(id, inputs, from) {
-        S.tpl = tplOf(id); S.inputs = {}; S.tpl.inputs.forEach(([k]) => (S.inputs[k] = inputs && inputs[k] != null ? String(inputs[k]) : ''));
-        S.from = from || null; S.refs = new Set(); S.hits = null; S.doc = null; S.id = null; S.step = 1; body(); loadRefs();
+      function pickTpl(id, inputs, from, notice, autogen) {
+        const tpl = tplOf(id);
+        if (!canOp || !tpl) return;
+        S.tpl = tpl; S.inputs = {};
+        S.tpl.inputs.forEach(([k, , sample]) => (S.inputs[k] = inputs && inputs[k] != null ? String(inputs[k]) : autogen ? String(sample || '') : ''));
+        S.from = from || null; S.notice = typeof notice === 'string' && notice.trim() ? notice : ''; S.checkError = '';
+        S.refs = new Set(); S.hits = null; S.doc = null; S.id = null; S.step = 1; body(); loadRefs();
       }
 
       /* ---------- 第 2 步：填要素 ---------- */
@@ -186,14 +190,14 @@
         if (S.tpl !== t || S.inputs !== inputs) return; S.hits = hits; if (hits[0]) S.refs.add(hits[0].id); const b = $('#drefs'); if (b) b.innerHTML = refsHtml();
       }
       async function generate() {
-        if (S.busy) return; S.busy = true; if (S.step === 1) step1();
+        if (!canOp || S.busy || !S.tpl) return; S.busy = true; if (S.step === 1) step1();
         try {
           const form = { inputs: { ...S.inputs }, from: S.from, hits: (S.hits || []).slice(), refs: [...S.refs] };
           const refs = form.hits.filter((h) => form.refs.includes(h.id)).map((h) => ({ id: h.id, title: h.title }));
-          const r = await D.draft({ templateId: S.tpl.id, inputs: form.inputs, refs });
+          const r = await D.draft({ templateId: S.tpl.id, inputs: form.inputs, refs, ...(S.notice ? { extra: [S.notice] } : {}) });
           draftForms.set(r.item.id, form);
           if (draftForms.size > 50) draftForms.delete(draftForms.keys().next().value);
-          S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${S.tpl.name} · ${r.item.title}`);
+          S.doc = r.item; S.id = r.item.id; S.view = null; S.edit = null; S.issues = null; S.checkError = ''; S.panel = 'check'; S.step = 2; ctx.audit('生成公文初稿', `${S.tpl.name} · ${r.item.title}`);
           await refreshList(); S.busy = false; render(); await runCheck(true);
         } catch (e) { S.busy = false; ui.toast(e.message, { type: 'err' }); if (S.step === 1) step1(); }
       }
@@ -201,7 +205,7 @@
       /* ---------- 稿纸 ---------- */
       function paraHtml(p) { return esc(p).replace(/【待补：(.+?)】/g, '<mark class="dc-miss">待补：$1</mark>'); }
       function paper(c, mode) {
-        const editable = mode === 'edit' && canOp && !locked() && !S.view;
+        const editable = mode === 'edit' && canOp && !locked() && S.view == null;
         const field = (key, cls) => {
           const label = fieldLabels[key];
           if (editable && S.editing === key) return `<textarea class="textarea dc-ed dc-ed-t" data-ed="${key}" aria-label="${label}">${esc(c[key] || '')}</textarea>`;
@@ -215,7 +219,7 @@
           ${field('docNo', 'dc-no')}<div class="dc-rule"></div>
           ${S.editing === 'title' && editable ? `<textarea class="textarea dc-ed dc-ed-t" data-ed="title">${esc(c.title)}</textarea>` : `<h1 class="dc-title" ${editable ? 'data-pe="title"' : ''}>${esc(c.title)}</h1>`}
           ${field('to', 'dc-to')}
-          ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}">${paraHtml(p)}</p></div>`).join('')}
+          ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}" style="white-space:pre-wrap">${paraHtml(p)}</p></div>`).join('')}
           ${field('sign', 'dc-sign')}${field('date', 'dc-sign')}</div>`;
       }
       function startEdit(k) { if (saving || !canOp || locked() || S.view != null) return; if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = Object.hasOwn(fieldLabels, k) ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
@@ -258,7 +262,7 @@
         saving = true;
         try {
           const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' });
-          S.doc = r.item; S.edit = null; S.issues = null;
+          S.doc = r.item; S.edit = null; S.issues = null; S.checkError = '';
           updateSavedSummary();
           ctx.audit('保存公文', `${S.doc.title} · 第 ${latest().v} 版`);
           ui.toast(`已保存为第 ${latest().v} 版`, { type: 'ok' });
@@ -287,14 +291,14 @@
       }
       const fixable = (i) => i.fix || /^c-(ni|bb)$/.test(i.id);
       function issueAction(i) {
-        if (!canOp || locked() || S.view) return '';
+        if (!canOp || locked() || S.view != null) return '';
         if (fixable(i)) return `<button class="btn sm" data-fix="${esc(i.id)}">修正</button>`;
         const field = i.field || i.target;
         if (Object.hasOwn(fieldLabels, field)) return `<button class="btn sm ghost" data-pe="${field}">填写${fieldLabels[field]}</button>`;
         return i.para != null ? `<button class="btn sm ghost" data-goto="${i.para}">去改</button>` : '';
       }
       function checkPanel() {
-        if (!S.issues) return `<div class="dc-empty">${icon('shield', 20)}<div class="meta">核对文号、日期、数字一致、错别字、语体</div><button class="btn sm" data-act="check" data-op="document.check" ${canOp ? '' : 'disabled'}>开始核查</button></div>`;
+        if (!S.issues) return `<div class="dc-empty">${icon('shield', 20)}<div class="meta">${esc(S.checkError || '核对文号、日期、数字一致、错别字、语体')}</div><button class="btn sm" data-act="check" data-op="document.check" ${canOp ? '' : 'disabled'}>开始核查</button></div>`;
         const ok = S.issues.length === 1 && S.issues[0].level === 'ok';
         if (ok) return `<div class="dc-empty">${tag('通过', 'checkLevel')}<div>${esc(S.issues[0].text)}</div><button class="btn sm ghost" data-act="check">再核查一次</button></div>`;
         const cnt = (l) => S.issues.filter((i) => i.level === l).length; const nf = S.issues.filter(fixable).length;
@@ -311,22 +315,29 @@
             : p.changed ? `${diffHtml(shortEq(p.parts))}<div class="row" style="margin-top:var(--s3)"><button class="btn sm" data-act="polishNo">放弃</button><span class="sp"></span><button class="btn sm" data-act="polishYes" data-op="document.polish-yes">采用（存为新版）</button></div>` : '<div class="dc-empty"><div class="meta">已经很规范，没有需要润色的地方</div></div>'}`;
       }
       function versionsPanel() {
-        const vs = S.doc.versions; const a = S.cmpA || (vs.length > 1 ? vs[vs.length - 2].v : 1), b = S.cmpB || vs[vs.length - 1].v;
+        const vs = S.doc.versions; const a = S.cmpA ?? (vs.at(-2) || latest()).v, b = S.cmpB ?? latest().v;
         const opt = (sel) => vs.map((v) => `<option value="${v.v}" ${v.v === sel ? 'selected' : ''}>第 ${v.v} 版</option>`).join('');
-        return `<div class="tl dc-vs">${vs.slice().reverse().map((v) => `<div class="tl-i ${(S.view || vs.length) === v.v ? 'on' : ''}" data-ver="${v.v}" data-op="document.ver-${v.v}"><div class="t">第 ${v.v} 版 ${(S.view || vs.length) === v.v ? '<span class="tag" data-hue="blue">正在看</span>' : ''}</div><div class="m">${esc(v.by)} · ${esc(v.at)}</div></div>`).join('')}</div>
+        return `<div class="tl dc-vs">${vs.slice().reverse().map((v) => `<div class="tl-i ${(S.view ?? latest().v) === v.v ? 'on' : ''}" data-ver="${v.v}" data-op="document.ver-${v.v}"><div class="t">第 ${v.v} 版 ${(S.view ?? latest().v) === v.v ? '<span class="tag" data-hue="blue">正在看</span>' : ''}</div><div class="m">${esc(v.by)} · ${esc(v.at)}</div></div>`).join('')}</div>
           ${vs.length > 1 ? `<div class="sec">对比</div><div class="row gap2"><select class="select sm" data-cmp="a" data-op="document.cmp-a">${opt(a)}</select><span class="t-3">→</span><select class="select sm" data-cmp="b" data-op="document.cmp-b">${opt(b)}</select><button class="btn sm" data-act="compare" data-op="document.compare">对比</button></div>
             ${S.cmp ? `<div class="row gap2" style="margin:var(--s3) 0 var(--s2)"><span class="tag" data-hue="green">+${S.cmp.stats.add} 字</span><span class="tag" data-hue="red">−${S.cmp.stats.del} 字</span><span class="meta">第 ${S.cmp.a} 版 → 第 ${S.cmp.b} 版</span></div>${diffHtml(shortEq(S.cmp.parts))}` : ''}` : '<div class="meta">只有一个版本。修改、润色、一键修正都会生成新版本。</div>'}`;
       }
       async function runCheck(silent) {
-        if (S.edit) await saveEdit();
-        try { S.issues = (await D.check(S.id)).issues; } catch (e) { ui.toast(e.message, { type: 'err' }); return; }
+        if (!canOp || !await saveEdit()) return;
+        try { S.issues = (await D.check(S.id)).issues; S.checkError = ''; }
+        catch (e) {
+          S.issues = null;
+          S.checkError = e.status === 404 || e.status === 503 ? '暂时无法核查当前文稿' : e.message;
+          if (!silent) ui.toast(S.checkError, { type: 'err' });
+          if (S.step === 2) step2();
+          return;
+        }
         S.panel = 'check'; if (S.step === 2) step2();
         if (!silent) { const e = S.issues.filter((i) => i.level === 'error').length; ui.toast(e ? `核查完成：${e} 处必须改` : '核查完成', { type: e ? 'warn' : 'ok' }); }
         return S.issues;
       }
       async function fix(ids) {
-        if (S.edit) await saveEdit();
-        try { const r = await D.fix(S.id, { ids }); S.doc = r.item; S.issues = r.issues; S.view = null; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${S.doc.versions.length} 版`, { type: 'ok' }); step2(); return r; }
+        if (!await saveEdit()) return;
+        try { const r = await D.fix(S.id, { ids }); S.doc = r.item; S.issues = r.issues; S.view = null; S.checkError = ''; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${latest().v} 版`, { type: 'ok' }); step2(); return r; }
         catch (e) { ui.toast(e.message, { type: 'err' }); }
       }
       async function polishPreview() { if (S.edit) await saveEdit(); try { S.polish = await D.polish(S.id, { style: S.pstyle }); S.panel = 'polish'; step2(); return S.polish; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
@@ -393,7 +404,7 @@
       }
       async function decide(decision, comment) {
         try { const rs = (await api.reviews.list()).items; const r = rs.find((x) => x.ref === S.id && x.status === 'pending'); if (!r) { ui.toast('没有找到待审签记录', { type: 'err' }); return; }
-          await api.reviews.decide(r.id, { decision, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
+          await api.reviews.decide(r.id, { decision, version: r.version, comment, reason: comment }); S.doc = (await D.get(S.id)).item; ctx.audit(decision === 'approve' ? '审签通过' : '审签退回', S.doc.title); ctx.bus.emit('inbox:changed', { app: 'document' }); await refreshList();
           ui.toast(decision === 'approve' ? `已定稿 · ${latest().content.docNo || numberLabel}` : '已退回起草人', { type: 'ok' }); step3(); return S.doc; }
         catch (e) { ui.toast(e.message, { type: 'err' }); return { error: e }; }
       }
@@ -427,7 +438,7 @@
       el.addEventListener('click', async (ev) => {
         const x = ev.target.closest('[data-tab],[data-step],[data-tpl],[data-open],[data-act],[data-pe],[data-panel],[data-fix],[data-goto],[data-iss],[data-pstyle],[data-ver],[data-cpara],[data-resolve],[data-kb],[data-empty-action]'); if (!x || x.disabled) return; const d = x.dataset;
         if (d.tab) return switchTab(d.tab);
-        if (d.step != null && !x.classList.contains('on')) { const k = +d.step; if (k >= 2 && !S.doc) return; if (k === 1 && !S.tpl) return; if (k !== 2 && !await saveEdit()) return; S.step = k; body(); return; }
+        if (d.step != null && !x.classList.contains('on')) { const k = +d.step; if (k >= 2 && !S.doc) return; if (k === 1 && !S.tpl) return; if (k !== 2 && !await saveEdit()) return; if (k === 0) { S.notice = ''; S.checkError = ''; } S.step = k; body(); return; }
         if (d.tpl) { if (await allowLeavingDraft()) return pickTpl(d.tpl); return; }
         if (d.open) return openDoc(d.open);
         if (d.kb) { ev.preventDefault(); return ctx.kb.open(d.kb); }
@@ -443,7 +454,7 @@
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); return load(); } if (S.lq) { S.lq = ''; return renderList($('#db')); } S.tab = 'flow'; S.step = 0; render(); return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.doc ? `「${S.doc.title}」还有哪些地方要改？` : '公文里日期、文号有哪些规范？');
-        if (a === 'new') { if (!await allowLeavingDraft()) return; S.tab = 'flow'; S.step = 0; S.tpl = null; S.doc = null; render(); return; }
+        if (a === 'new') { if (!await allowLeavingDraft()) return; S.tab = 'flow'; S.step = 0; S.tpl = null; S.doc = null; S.notice = ''; S.checkError = ''; render(); return; }
         if (a === 'sample') { S.tpl.inputs.forEach(([k, , v]) => { if (!String(S.inputs[k] || '').trim()) S.inputs[k] = v; }); return step1(); }
         if (a === 'gen') return generate();
         if (a === 'check') return runCheck();
@@ -498,22 +509,24 @@
           await run.step(2); if (inputs) { for (const [k, v] of Object.entries(inputs)) if (el.querySelector(`[data-op="document.in-${k}"]`)) { S.inputs[k] = String(v); } step1(); await run.sleep(300); }
           if (window.JKDemo && JKDemo.state && JKDemo.state.on && C.demoInputs) Object.entries(C.demoInputs).forEach(([k, v]) => { if (!String(S.inputs[k] || '').trim()) S.inputs[k] = v; });
           await run.click('[data-op="document.sample"]');
-          await run.step(3); await run.click('[data-op="document.gen"]'); await run.wait(() => S.doc && S.issues && el.querySelector('[data-op="document.paper"]'), 10000);
+          await run.step(3); await run.click('[data-op="document.gen"]'); await run.wait(() => S.doc && (S.issues || S.checkError) && el.querySelector('[data-op="document.paper"]'), 10000);
+          if (S.checkError) { run.done(`已起草「${S.doc.title}」。${S.checkError}。`); return S.doc; }
           await run.step(4); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length;
           run.done(`已起草「${S.doc.title}」，${sumIssues()}`, [...(nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []), { label: '润色', say: '润色一下，更正式些' }, { label: '送审签', say: '送审签' }]);
           return S.doc;
         },
         async check({ text } = {}, run) {
           await ready(); if (!(await needDoc(text, run, 2))) return;
-          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); if (el.querySelector('[data-op="document.check"]')) await run.click('[data-op="document.check"]'); else await runCheck(true); await run.wait(() => S.issues); await run.step(2); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length; run.done(sumIssues(), nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []); }
+          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); if (!await runCheck(true)) return run.fail(S.checkError || '无法核查当前文稿'); await run.step(2); await run.highlight('.dc-side'); const nf = S.issues.filter(fixable).length; run.done(sumIssues(), nf ? [{ label: `一键修正 ${nf} 处`, say: '一键修正核查出的问题' }] : []); }
           else await runCheck(true);
           return S.issues;
         },
         async fix({ text } = {}, run) {
           await ready(); if (!canOp) return noPerm(run); if (!(await needDoc(text, run, 2))) return; if (locked()) { run && run.fail('已定稿，不能修改'); return; }
-          if (!S.issues) await runCheck(true); const ids = S.issues.filter(fixable).map((i) => i.id);
+          if (!S.issues && !await runCheck(true)) return run && run.fail(S.checkError || '无法核查当前文稿');
+          const ids = S.issues.filter(fixable).map((i) => i.id);
           if (!ids.length) { run && run.done(`没有可自动修正的问题。${sumIssues()}`); return; }
-          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); await run.click('[data-op="document.fix-all"]'); const n0 = S.doc.versions.length; await run.wait(() => S.doc.versions.length > n0); await run.step(2); const left = S.issues.filter((i) => i.level === 'error').length; run.done(`已修正 ${ids.length} 处，生成第 ${S.doc.versions.length} 版。${left ? `还有 ${left} 处必须人工改` : sumIssues()}`, [{ label: '看改了什么', say: '这版改了哪些地方' }]); }
+          if (run) { await run.step(1); await run.click('[data-op="document.panel-check"]'); const before = latest().v; await run.click('[data-op="document.fix-all"]'); await run.wait(() => latest().v > before); await run.step(2); const left = S.issues.filter((i) => i.level === 'error').length; run.done(`已修正 ${ids.length} 处，生成第 ${latest().v} 版。${left ? `还有 ${left} 处必须人工改` : sumIssues()}`, [{ label: '看改了什么', say: '这版改了哪些地方' }]); }
           else await fix(ids);
         },
         async polish({ style, text } = {}, run) {
@@ -523,11 +536,11 @@
           await run.step(1); await run.click('[data-op="document.panel-polish"]'); await run.click(`[data-op="document.pstyle-${st}"]`); await run.click('[data-op="document.polish"]'); await run.wait(() => S.polish);
           await run.step(2); if (!S.polish.changed) { run.done('已经很规范，没有需要润色的地方'); return; }
           const c = await run.ask('润色修改已标出（绿色新增、红色删除），采用吗？', ['采用', '放弃']);
-          if (c === '采用') { await run.click('[data-op="document.polish-yes"]'); await run.wait(() => !S.polish && !S.edit); run.done(`已采用，存为第 ${S.doc.versions.length} 版`); } else { S.polish = null; step2(); run.done('已放弃，原稿未改'); }
+          if (c === '采用') { await run.click('[data-op="document.polish-yes"]'); await run.wait(() => !S.polish && !S.edit); run.done(`已采用，存为第 ${latest().v} 版`); } else { S.polish = null; step2(); run.done('已放弃，原稿未改'); }
         },
         async compare({ text, a, b } = {}, run) {
           await ready(); if (!(await needDoc(text, run, 2))) return; const vs = S.doc.versions; if (vs.length < 2) { run && run.done('这份文稿只有一个版本'); return; }
-          const nums = String(text || '').match(/第\s*(\d+)\s*版/g); let va = a, vb = b; if (nums && nums.length >= 2) { va = +nums[0].match(/\d+/)[0]; vb = +nums[1].match(/\d+/)[0]; } va = va || vs[vs.length - 2].v; vb = vb || vs[vs.length - 1].v;
+          const nums = String(text || '').match(/第\s*(\d+)\s*版/g); let va = a, vb = b; if (nums && nums.length >= 2) { va = +nums[0].match(/\d+/)[0]; vb = +nums[1].match(/\d+/)[0]; } va = va ?? vs[vs.length - 2].v; vb = vb ?? latest().v;
           if (!run) return compare(va, vb);
           await run.step(1); await run.click('[data-op="document.panel-versions"]'); await run.select('[data-op="document.cmp-a"]', String(va)); await run.select('[data-op="document.cmp-b"]', String(vb)); await run.step(2); await run.click('[data-op="document.compare"]'); await run.wait(() => S.cmp && S.cmp.a === va && S.cmp.b === vb);
           await run.highlight('.dc-diff'); run.done(`第 ${va} 版 → 第 ${vb} 版：新增 ${S.cmp.stats.add} 字、删除 ${S.cmp.stats.del} 字（绿色新增、红色删除）`, canOp && !locked() ? [{ label: `恢复第 ${va} 版`, say: `恢复第 ${va} 版` }] : []);
@@ -576,7 +589,7 @@
           if (run) { await run.step(1); if (S.tab !== 'list') await run.click('[data-op="document.tab-list"]'); await run.click(`[data-op="document.row-${id}"]`); await run.wait(() => S.doc && S.doc.id === id && el.querySelector('[data-op="document.paper"]'));
             const d = S.doc; const open = (d.comments || []).filter((c) => !c.resolved).length;
             if (/对比|改了/.test(text || '')) return actions.compare({ text }, run);
-            run.done(`「${d.title}」${d.status}，第 ${d.versions.length} 版${open ? `，${open} 条批注未解决` : ''}`, [...(d.versions.length > 1 ? [{ label: '版本对比', say: '这版改了哪些地方' }] : []), { label: '导出 Word', say: '导出 Word' }]); }
+            run.done(`「${d.title}」${d.status}，第 ${latest().v} 版${open ? `，${open} 条批注未解决` : ''}`, [...(d.versions.length > 1 ? [{ label: '版本对比', say: '这版改了哪些地方' }] : []), { label: '导出 Word', say: '导出 Word' }]); }
           else await openDoc(id);
         },
         async intake({ file } = {}, run) {
@@ -587,13 +600,34 @@
         },
       };
       return {
-        go(route, params = {}) {
-          ready().then(() => {
-            if (route === 'list') { S.tab = 'list'; render(); return; }
-            if (route === 'new') { S.tab = 'flow'; render(); if (params.templateId && tplOf(params.templateId)) { const fromMap = { policy: '政策匹配', meeting: '会议纪要', enterprise: '企业管理' }; const f = params.from; pickTpl(params.templateId, params.inputs, f ? { label: typeof f === 'string' ? fromMap[f] || f : `${fromMap[f.app] || f.app}${f.title ? `「${f.title}」` : ''}` } : null); } else { S.step = 0; S.tpl = null; S.doc = null; body(); } return; }
-            if ((route === 'detail' || route === 'compare') && params.id) { openDoc(params.id, route === 'compare' ? 2 : null).then(() => { if (route === 'compare' && S.doc && S.doc.versions.length > 1) compare(S.doc.versions[S.doc.versions.length - 2].v, latest().v); }); return; }
-            S.tab = 'flow'; render();
-          });
+        async go(route, params = {}) {
+          await ready();
+          if (!canView) return;
+          if (route === 'list') { S.tab = 'list'; render(); return; }
+          const id = params.draftId || ((route === 'detail' || route === 'compare') && params.id);
+          if (id) {
+            await openDoc(id, route === 'compare' ? 2 : null);
+            if (route === 'compare' && S.doc?.id === id && S.doc.versions.length > 1) {
+              await compare(S.doc.versions.at(-2).v, latest().v);
+            }
+            return;
+          }
+          S.tab = 'flow';
+          if (route === 'new' || params.templateId) {
+            if (!await allowLeavingDraft()) return;
+            S.step = 0; S.tpl = null; S.doc = null; S.notice = ''; S.checkError = '';
+            render();
+            if (params.templateId && tplOf(params.templateId)) {
+              const fromMap = { policy: '政策匹配', meeting: '会议纪要', enterprise: '企业管理' };
+              const from = params.from || (params.fromMeeting ? 'meeting' : null);
+              const app = typeof from === 'string' ? from : from?.app;
+              const label = fromMap[app] || app;
+              pickTpl(params.templateId, params.inputs, label ? { label: label + (from?.title ? `「${from.title}」` : '') } : null,
+                params.notice, params.autogen === true);
+            }
+            return;
+          }
+          render();
         },
         actions,
         unmount() {},

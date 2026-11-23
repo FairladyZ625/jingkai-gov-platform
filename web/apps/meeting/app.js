@@ -61,12 +61,25 @@
       }
       async function refresh() { const r = await M.list(); LIST = r.items; ALLTODOS = null; }
       async function openMeeting(id, step) {
-        S.id = id; S.cur = null; S.minutes = null; S.sel = new Set(); S.pos = 0; stopPlay();
-        const m = mOf(id);
-        if (m.status === 'running') { S.step = 1; body(); return; }
-        if (m.status !== 'done') { S.step = 0; S.setup = { id, type: m.type, hot: new Set(HOT) }; body(); return; }
+        S.id = id; S.cur = null; S.minutes = null; S.setup = null; S.sel = new Set(); S.pos = 0; stopPlay();
         S.step = step == null ? 3 : step; body();
-        try { const r = await M.get(id); S.cur = r.item; S.minutes = r.minutes; S.sel = new Set((r.item.todos || []).filter((t) => t.status !== '已派发' && t.owner !== '待确认').map((t) => t.id)); } catch (e) { ui.toast(e.message, { type: 'err' }); S.step = 0; }
+        try {
+          const { item, minutes } = await M.get(id);
+          if (S.id !== id) return;
+          if (!mOf(id).id) LIST.push({ ...item, todoCount: (item.todos || []).length });
+          if (item.status === 'running' && item.jobId) {
+            S.step = 1; S.job = null; body(); poll(id, item.jobId); return;
+          }
+          if (item.status !== 'done' || !minutes) {
+            S.step = 0; S.setup = { id, type: item.type || (TEMPLATES[0] || {}).name, hot: new Set(HOT) };
+          } else {
+            S.cur = item; S.minutes = minutes;
+            S.sel = new Set((item.todos || []).filter((t) => t.status !== '已派发' && t.owner !== '待确认').map((t) => t.id));
+          }
+        } catch (e) {
+          if (S.id !== id) return;
+          ui.toast(e.message, { type: 'err' }); S.step = 0;
+        }
         body();
       }
 
@@ -101,7 +114,8 @@
       function step0() {
         const ms = $('#ms');
         if (S.setup) return setupView(ms);
-        const srcBody = S.src === 'upload' ? `<div class="mt-drop" data-act="pickFile" data-op="meeting.drop">${icon('upload', 22)}<div><b>拖入录音文件，或点这里选择</b><div class="meta">${esc(C.audioExt.join(' / '))} · 单个最大 2GB</div></div><input type="file" id="mfile" accept="${C.audioExt.map((x) => '.' + x).join(',')}" hidden></div>
+        const formats = httpMeeting() ? [...new Set([...C.audioExt, 'webm', 'ogg'])] : C.audioExt;
+        const srcBody = S.src === 'upload' ? `<div class="mt-drop" data-act="pickFile" data-op="meeting.drop">${icon('upload', 22)}<div><b>拖入录音文件，或点这里选择</b><div class="meta">${esc(formats.join(' / '))} · 单个最大 ${httpMeeting() ? '64 MiB' : '2GB'}</div></div><input type="file" id="mfile" accept="${formats.map((x) => '.' + x).join(',')}" hidden></div>
             <div class="row" style="margin-top:var(--s2)"><button class="btn sm ghost" data-act="sampleUpload" data-op="meeting.sample">${icon('file')}用示例录音</button></div>`
           : S.src === 'live' ? liveView()
           : (LIST.length ? `<div class="stack rows">${LIST.map(meetRow).join('')}</div>` : ui.empty({ icon: 'meeting', title: '会议档案里还没有录音', desc: '上传一段录音试试' }));
@@ -127,7 +141,7 @@
       async function startJob(id, type) {
         const st = S.setup; S.setup = null;
         try { const r = await M.transcribe(id, { type: type || (st && st.type), hotwords: st ? [...st.hot] : HOT }); S.id = id; S.job = r.job; mOf(id).status = 'running'; ctx.audit('转写会议录音', mOf(id).title); S.step = 1; body(); poll(id, r.job.id); }
-        catch (e) { ui.toast(e.message, { type: 'err' }); }
+        catch (e) { S.setup = st; body(); ui.toast(e.message, { type: 'err' }); }
       }
       function poll(id, jid) {
         clearTimeout(timer);
@@ -140,6 +154,12 @@
               ctx.bus.emit('inbox:changed', { app: 'meeting', ref: id });
               if (S.tab === 'flow' && S.step === 1 && S.id === id) { ui.toast('整理好了：转写、发言人、纪要和待办都已生成', { type: 'ok' }); openMeeting(id, 2); }
               else ui.toast(`「${m.title}」整理好了`, { type: 'ok', action: { label: '查看', fn: () => { S.tab = 'flow'; render(); openMeeting(id, 3); } } });
+              return;
+            }
+            if (job.status === 'failed') {
+              await refresh();
+              if (S.tab === 'flow' && S.step === 1 && S.id === id) { S.step = 0; body(); }
+              ui.toast(job.error?.message || '整理失败，请查看会议状态', { type: 'err' });
               return;
             }
             timer = setTimeout(tick, 400);
@@ -240,14 +260,32 @@
         ui.download(`${mi.title}.doc`, html, 'application/msword'); ctx.audit('导出纪要', mi.title); ui.toast('已导出 Word', { type: 'ok' });
       }
       async function linkIssue() {
-        let ents = []; try { ents = (await api.enterprise.list({})).items; } catch (e) { /* 企业管理不可用 */ }
-        const txt = (S.cur.participants || []).join(' ') + (S.cur.transcript || []).map((l) => l[1] + l[2]).join(' ');
+        const meeting = S.cur, minutes = S.minutes;
+        let ents;
+        try { ents = (await api.enterprise.list({})).items; }
+        catch (e) { ui.toast(e.message, { type: 'err' }); return; }
+        if (S.cur !== meeting) return;
+        if (!ents.length) { ui.toast('企业台账暂无可关联企业', { type: 'err' }); return; }
+        const txt = (meeting.participants || []).join(' ') + (meeting.transcript || []).map((l) => l[1] + l[2]).join(' ');
         const hit = ents.filter((e) => txt.includes(e.short));
-        const topics = S.minutes.body.map((b) => b.h.replace(/^[一二三四五六七八九]、/, ''));
+        const topics = [...new Set(minutes.body.map((b) => b.h.replace(/^[一二三四五六七八九]、/, '')))];
         const d = ui.modal({ title: '关联企业诉求', okText: '登记到企业台账', body: `<div class="meta" style="margin-bottom:var(--s3)">会上企业提出的诉求，登记后在“企业管理 → 诉求看板”跟进</div>
-          <div class="field"><label>企业</label><select class="select" id="le">${(hit.length ? hit : ents).map((e) => `<option value="${e.id}">${esc(e.short)}</option>`).join('')}</select></div>
-          <div class="field"><label>诉求</label><select class="select" id="lt">${topics.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>`,
-          ok: async (box) => { const entId = box.querySelector('#le').value, t = box.querySelector('#lt').value; const r = await M.link(S.id, { entId, title: `${t}（${S.cur.title}）` }); ctx.audit('关联企业诉求', r.issue.title); ui.toast('已登记到企业台账', { type: 'ok', action: { label: '去看看', fn: () => ctx.nav.open('enterprise', 'issues', { entId }) } }); } });
+          <div class="field"><label for="le">企业</label><select class="select" id="le">${[...hit, ...ents.filter((e) => !hit.includes(e))].map((e) => `<option value="${esc(e.id)}">${esc(e.short || e.name)}</option>`).join('')}</select></div>
+          <div class="field"><label for="lt">诉求</label><select class="select" id="lt">${topics.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>`,
+          ok: async (box) => {
+            const entId = box.querySelector('#le').value, topic = box.querySelector('#lt').value;
+            const confirm = box.querySelector('[data-ok]');
+            confirm.disabled = true;
+            try {
+              const { issue } = await M.link(meeting.id, { entId, title: topic ? `${topic}（${meeting.title}）` : undefined });
+              ctx.audit('关联企业诉求', issue.title);
+              ui.toast('已登记到企业台账', { type: 'ok', action: { label: '去看看', fn: () => ctx.nav.open('enterprise', 'issues', { entId, issueId: issue.id }) } });
+            } catch (e) {
+              confirm.disabled = false;
+              ui.toast(e.message || '登记企业诉求失败', { type: 'err' });
+              return false;
+            }
+          } });
         return d;
       }
       function toDoc(id) {
@@ -283,15 +321,21 @@
           <div class="field"><label>会议名称</label><input class="input" id="ut" value="${esc(title)}" data-op="meeting.up-title"></div>
           <div class="field"><label>会议类型（决定纪要模板）</label><select class="select" id="uy">${TEMPLATES.map((t) => `<option ${t.name === s.type ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
           <div class="field"><label>参会人（逗号分隔，帮助区分发言人）</label><input class="input" id="up" value="${esc(file ? '' : s.participants.join('，'))}"></div>`,
-          ok: async (box) => { const b = { title: box.querySelector('#ut').value.trim() || title, type: box.querySelector('#uy').value, participants: box.querySelector('#up').value.split(/[,，、\s]+/).filter(Boolean), file: name, size: file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, duration: file ? undefined : s.duration, source: '网页上传' }; await createAndRun(b); } });
+          ok: async (box) => {
+            const b = { title: box.querySelector('#ut').value.trim() || title, type: box.querySelector('#uy').value, participants: box.querySelector('#up').value.split(/[,，、\s]+/).filter(Boolean), file: name, size: file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, duration: file ? undefined : s.duration, source: file || !httpMeeting() ? '网页上传' : 'demo' };
+            const confirm = box.querySelector('[data-ok]');
+            confirm.disabled = true;
+            try { await createAndRun(b, file); }
+            catch (e) { confirm.disabled = false; ui.toast(e.message, { type: 'err' }); return false; }
+          } });
       }
-      async function registerMeeting(input) {
-        const { item } = await M.create(input);
+      async function registerMeeting(input, file) {
+        const { item } = await M.create(input, file);
         LIST = [Object.assign({ todoCount: 0 }, item), ...LIST.filter((row) => row.id !== item.id)];
         return item;
       }
-      async function createAndRun(b) {
-        const meeting = await registerMeeting(b);
+      async function createAndRun(b, file) {
+        const meeting = await registerMeeting(b, file);
         S.tab = 'flow'; render(); S.setup = null;
         if (meeting.status === 'done') await openMeeting(meeting.id, 2);
         else if (meeting.status === 'running' && meeting.jobId) { S.id = meeting.id; S.step = 1; body(); poll(meeting.id, meeting.jobId); }
@@ -322,6 +366,7 @@
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(S.cur ? `「${S.cur.title}」会上定了哪些事？` : '还有哪些会议待办没认领？');
         if (a === 'pickFile') { if (ev.target.id !== 'mfile') $('#mfile').click(); return; }
+        if (a === 'newUpload' && httpMeeting()) { S.tab = 'flow'; S.step = 0; S.src = 'upload'; S.setup = null; render(); $('#mfile').click(); return; }
         if (a === 'sampleUpload' || a === 'newUpload') return uploadModal(null);
         if (a === 'recStart') return recStart();
         if (a === 'recStop') return recStop();
@@ -446,21 +491,28 @@
           const s = C.sampleUpload; const title = String(file.name || '会议录音').replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}\s*/, '');
           const type = (TEMPLATES.find((t) => title.includes(t.name.slice(0, 2))) || TEMPLATES[0] || {}).name;
           const b = httpMeeting() && file.id === 'rec-1117' ? demoSample : { title, type, participants: [], file: file.name, size: file.size ? (file.size / 1048576).toFixed(1) + ' MB' : s.size, source: '对话拖入' };
-          if (!run) return createAndRun(b);
-          await run.step(1); const m = await createAndRun(b); await run.step(2);
+          const blob = file instanceof Blob ? file : file?.blob;
+          if (!run) return createAndRun(b, blob);
+          await run.step(1); const m = await createAndRun(b, blob); await run.step(2);
           await run.wait(() => S.step === 2 && S.cur && S.cur.id === m.id, 30000); await run.step(3);
           run.done(`录音「${S.cur.title}」已整理：${S.cur.transcript.length} 段转写、${(S.cur.todos || []).length} 条待办（按“${S.cur.type}”模板）`, [{ label: '看纪要', say: `看看${S.cur.title}纪要` }]);
         },
       };
       return {
-        go(route, params = {}) {
-          ready().then(() => {
-            if (route === 'all' || route === 'todos') { S.tab = route; render(); return; }
-            goFlow();
-            if (route === 'record') { S.step = 0; S.setup = null; S.src = 'live'; body(); return; }
-            const id = params.id || params.meetingId; if (!id) { S.step = 0; body(); return; }
-            openMeeting(id, route === 'transcript' ? 2 : 3);
-          });
+        async go(route, params = {}) {
+          await ready();
+          if (!canView) return;
+          const id = params.meetingId || params.id;
+          if (route === 'all' || ((route === 'todos' || params.tab === 'todos') && !id)) {
+            S.tab = route === 'all' ? 'all' : 'todos'; render(); return;
+          }
+          goFlow();
+          if (route === 'record' || params.upload || !id) {
+            S.step = 0; S.setup = null;
+            if (route === 'record' || params.upload) S.src = canOp ? (route === 'record' ? 'live' : 'upload') : 'nas';
+            body(); return;
+          }
+          return openMeeting(id, route === 'transcript' ? 2 : 3);
         },
         actions,
         unmount() { clearTimeout(timer); clearInterval(recTimer); stopPlay(); },

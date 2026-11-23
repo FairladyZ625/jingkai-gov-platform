@@ -32,6 +32,10 @@
       "params": {"id": "{{meeting.item.id}}"} }
   ],
   "errors": [
+    { "method": "GET", "path": "/api/apps/meeting/meetings/{id}",
+      "params": {"id": "MT-contract-missing"},
+      "status": 404,
+      "error": "NOT_FOUND" },
     { "method": "GET", "path": "/api/v1/jobs/{id}",
       "params": {"id": "JOB-contract-missing"},
       "status": 404,

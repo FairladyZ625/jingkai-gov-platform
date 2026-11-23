@@ -152,7 +152,9 @@ test('四条跨应用链接在目标首次挂载时进入正确页面并带参�
     const issues = activePanel(page, 'enterprise');
     await expect(issues.locator('#es .q')).toHaveText(`${name} 的诉求`);
     await expect(issues.locator('.ent-iss-l')).toContainText(topic);
-    expect(await page.evaluate(() => JKShell.S.mounted.enterprise.ctx.params)).toEqual({ entId });
+    const issueId = await issues.locator('.ent-iss-l .li.on').getAttribute('data-issue');
+    expect(issueId).toMatch(/^IS-/);
+    expect(await page.evaluate(() => JKShell.S.mounted.enterprise.ctx.params)).toEqual({ entId, issueId });
   });
 
   await test.step('政策提示「查看」→ 指定企业的诉求', async () => {
@@ -163,7 +165,9 @@ test('四条跨应用链接在目标首次挂载时进入正确页面并带参�
     const issues = activePanel(page, 'enterprise');
     await expect(issues.locator('#es .q')).toHaveText('书香里文化 的诉求');
     await expect(issues.locator('.ent-iss-l')).toContainText('政策咨询：');
-    await expectRoute(page, 'enterprise', 'issues', { entId: 'E001' });
+    const issueId = await issues.locator('.ent-iss-l .li.on').getAttribute('data-issue');
+    expect(issueId).toMatch(/^IS-/);
+    await expectRoute(page, 'enterprise', 'issues', { entId: 'E001', issueId });
   });
 
   await test.step('政策告知单 → 公文答复要素', async () => {
