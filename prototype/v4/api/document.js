@@ -1,6 +1,8 @@
 /* 接口适配 · 公文协作（接口规范 §4.4）。审签走平台 reviews；定稿后 PUT 返回 409 LOCKED。 */
 (function () {
   const H = window.JKHttp; window.JKApi = window.JKApi || {};
+  // 界面按姓名选审签人；真后端要账号 ID，按演示账号表换算，模拟后端仍收姓名。
+  const toUserId = (b) => { const name = b && b.assignee; const u = name && ((window.JK_DATA || {}).users || []).find((x) => x.name === name); return u ? Object.assign({}, b, { assignee: u.id }) : (b || {}); };
   window.JKApi.document = {
     /** → {items:DocTemplate[], groups:[[id,name]]} 10 类“要办什么事” */
     templates: () => H.get('/api/apps/document/templates'),
@@ -25,7 +27,7 @@
     /** (id, cid, {reply?, resolved?}) → {item:Comment} */
     patchComment: (id, cid, b) => H.patch(`/api/apps/document/drafts/${id}/comments/${cid}`, b),
     /** (id, {assignee?}) → {item, review}  有“必须改”问题时 422 CHECK_FAILED */
-    submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, b || {}),
+    submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, H.mode() === 'http' ? toUserId(b) : (b || {})),
     /** id → {filename, html, final} 公文版式 .doc；未定稿带水印 */
     exportWord: (id) => H.get(`/api/apps/document/drafts/${id}/export`),
   };

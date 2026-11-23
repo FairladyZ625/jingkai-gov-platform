@@ -44,7 +44,7 @@ def error_body(issues: Iterable[Issue | Mapping[str, Any]]) -> dict[str, Any]:
     items = [i.to_dict() if isinstance(i, Issue) else dict(i) for i in issues]
     return {
         "error": {
-            "code": "invalid_request",
+            "code": "INVALID_REQUEST",
             "message": "请求字段或数据不正确",
             "retryable": False,
             "issues": items,

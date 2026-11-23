@@ -6,7 +6,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from haiknow_sdk import KV, PermissionDenied, app_context
 
+from .notice_tools import router as notice_tools_router
+from .policy_routes import router as policy_router
+
+
 router = APIRouter()
+router.include_router(policy_router)
+router.include_router(notice_tools_router)
 
 
 def reset_seed(kv: KV, seed_dir: Path) -> None:
@@ -24,8 +30,8 @@ def health(request: Request):
     except HTTPException as exc:
         if exc.status_code != 401:
             raise
-        return JSONResponse({"error": {"code": "unauthenticated", "message": "未登录", "details": {}}}, status_code=401)
+        return JSONResponse({"error": {"code": "UNAUTHENTICATED", "message": "未登录", "details": {}}}, status_code=401)
     except PermissionDenied as exc:
         details = {"app": exc.app_id, "need": exc.action}
-        return JSONResponse({"error": {"code": "forbidden", "message": "无权查看此应用", "details": details}}, status_code=403)
+        return JSONResponse({"error": {"code": "FORBIDDEN", "message": "无权查看此应用", "details": details}}, status_code=403)
     return {"id": ctx.app_id, "status": "ok"}

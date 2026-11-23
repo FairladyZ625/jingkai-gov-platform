@@ -27,6 +27,12 @@ def test_v4_manifest(app):
     frontend = json.loads(subprocess.check_output(["node", "-e", script, app], cwd=ROOT))
     backend = json.loads((ROOT / "apps" / app / "app.json").read_text())
     assert frontend["id"] == backend["id"] == app
+    if app == "policy":
+        # 比较两端共同声明的能力。后端还声明工具桥的端点和写入语义。
+        backend["tools"] = [
+            {"name": tool["name"], "desc": tool["description"], "params": tool["input"]}
+            for tool in backend["tools"]
+        ]
     assert {k: backend[k] for k in FIELDS} == {k: frontend[k] for k in FIELDS}
     print(f"{app} 清单比对：0 差异")
 

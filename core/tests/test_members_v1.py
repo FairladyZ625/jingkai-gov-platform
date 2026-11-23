@@ -42,7 +42,7 @@ def test_members_require_caller_scope_and_valid_action(make_client):
         params={"project": "sample-project", "action": "approve"},
     )
     assert hidden_app.status_code == 404
-    assert hidden_app.json()["error"]["code"] == "not_found"
+    assert hidden_app.json()["error"]["code"] == "NOT_FOUND"
 
     login(client, "sampleoperator")
     hidden_project = client.get(
@@ -50,14 +50,14 @@ def test_members_require_caller_scope_and_valid_action(make_client):
         params={"project": "limited-project", "action": "approve"},
     )
     assert hidden_project.status_code == 404
-    assert hidden_project.json()["error"]["code"] == "not_found"
+    assert hidden_project.json()["error"]["code"] == "NOT_FOUND"
 
     invalid_action = client.get(
         "/api/v1/apps/sample-app/members",
         params={"project": "sample-project", "action": "publish"},
     )
     assert invalid_action.status_code == 422
-    assert invalid_action.json()["error"]["code"] == "invalid_request"
+    assert invalid_action.json()["error"]["code"] == "INVALID_REQUEST"
 
 
 def test_python_preview_members_binds_context_app(make_client, tmp_path):

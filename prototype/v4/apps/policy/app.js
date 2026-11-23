@@ -7,6 +7,8 @@
   const DEF = { name: '政策兑现', summary: '按企业情况逐条核对兑现事项', steps: ['选对象', '核对条件', '试算额度', '告知单'], tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']], samples: [], objects: ['企业', '个人', '其他组织'], manualTags: [], licenses: [], fields: {}, sampleFill: {}, levels: { ok: ['可进一步核对'], check: ['待确认'], no: ['不满足'] }, windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' }, text: {} };
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).policy || {});
   const T = Object.assign({ pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况', resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签是否完整', viewOnly: '你的角色只能查看事项库', demoBadge: '示例（无对应原文）' }, C.text);
+  const flowRoutes = ['home', 'match', 'estimate', 'notice'];
+  const restoringText = '正在恢复试算，请稍候。';
 
   JK.registerApp({
     manifest: {
@@ -30,10 +32,11 @@
         { id: 'policy.toDocument', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
       starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
+      // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。
       demo: [
-        { title: '政策匹配', say: `帮我查一下${seedShort('E002')}能申报哪些政策` },
+        { title: '政策匹配', say: `帮我查一下${seedShort('E020')}能申报哪些政策` },
         { title: '补填再算', say: '补填数据采购额 30 万' },
-        { title: '告知单', say: `给${seedShort('E002')}生成政策告知单` },
+        { title: '告知单', say: `给${seedShort('E020')}生成政策告知单` },
       ],
     },
 
@@ -42,6 +45,17 @@
       const canOp = perms.can('operate');
       const S = { tab: canOp ? 'flow' : 'items', step: 0, mode: 'ent', entId: null, manual: { object: '企业', tags: [], license: [], yearsInZone: '', amounts: {} }, overrides: {}, match: null, filter: null, picked: new Set(), open: new Set(), calc: {}, notice: '', q: '', obj: '', win: '', busy: false, error: null };
       let ITEMS = [], DOCS = [], ENTS = [], loaded = false, loadErr = null;
+      let matchVersion = 0;
+      let restoringFlow = false;
+      let restoringAmounts = false;
+      function invalidateMatch() {
+        matchVersion++;
+        restoringFlow = false;
+        restoringAmounts = false;
+        S.busy = false;
+        S.match = null;
+      }
+      const restoreStatus = () => restoringAmounts ? '<span class="meta" role="status">' + restoringText + '</span>' : '';
       const byId = (id) => ITEMS.find((x) => x.id === id);
       const ent = () => ENTS.find((e) => e.id === S.entId);
       const F = (k) => C.fields[k] || [k, '', 1];
@@ -119,7 +133,10 @@
       }
 
       /* ---------- 第 2 步：核对条件 ---------- */
-      function who() { const e = ent(); return S.mode === 'ent' && e ? e.short : `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`; }
+      function who() {
+        if (S.mode === 'ent') return ent()?.short || (S.entId ? `企业 ${S.entId}` : '未选择企业');
+        return `${S.manual.object}${S.manual.tags.length ? '（' + S.manual.tags.slice(0, 2).join('、') + '）' : ''}`;
+      }
       function step1() {
         const r = S.match; if (!r) { $('#ps').innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div></div>'; foot(back(), ''); return; }
         const sm = r.summary; const L = C.levels;
@@ -131,8 +148,12 @@
           <div class="kpis pol-kpis x-stats">${kp('ok', sm.ok)}${kp('check', sm.check)}${kp('no', sm.no)}</div>
           <div class="pol-groups" id="pres">${!r.results.length ? ui.empty({ icon: 'search', title: T.resultEmpty, desc: T.resultEmptyDesc }) : ['ok', 'check'].map((lv) => { const g = okCheck.filter((x) => x.level === lv); return g.length ? `${grpH(lv, okCheckAll.filter((x) => x.level === lv).length)}<div class="stack rows">${g.map(resCard).join('')}</div>` : ''; }).join('')}${okCheckAll.length > okCheck.length ? `<button class="btn ghost sm pol-more" data-act="showAll" data-op="policy.show-all">再看 ${okCheckAll.length - okCheck.length} 项</button>` : ''}
           ${no.length ? `<details class="pol-no" ${S.filter === 'no' ? 'open' : ''}><summary class="sect" data-op="policy.no-toggle"><span class="x-ring h-${ui.hue(L.no[0], 'policyLevel')}"></span>${esc(L.no[0])}<span class="t-3 num">${no.length}</span><span class="sp"></span><span class="t-3 pol-why-t">看原因</span></summary><div class="stack rows">${no.map(resCard).join('')}</div></details>` : ''}</div>`;
+        matchFooter();
+      }
+      function matchFooter() {
+        const r = S.match;
         const pick = chosen();
-        foot(back(), `<span class="meta" data-op="policy.selection">已选 ${pick.length} 项 · 默认选中 ${r.defaultItemIds.length} 项 · 本批已结束 ${sm.ended} 项</span><button class="btn primary" data-act="toCalc" data-op="policy.next" ${pick.length ? '' : 'disabled'}>试算额度</button>`);
+        foot(back(), `<span class="meta" data-op="policy.selection">已选 ${pick.length} 项 · 默认选中 ${r.defaultItemIds.length} 项 · 本批已结束 ${r.summary.ended} 项</span>${restoreStatus()}<button class="btn primary" data-act="toCalc" data-op="policy.next" ${pick.length && !restoringAmounts ? '' : 'disabled'}>试算额度</button>`);
       }
       function resCard(x) {
         const p = byId(x.id) || {}; const L = C.levels[x.level]; const open = S.open.has(x.id);
@@ -180,7 +201,7 @@
         list.forEach((x) => { S.calc[x.id] ??= { amount: baseAmount(x), result: x.calc, edited: false }; });
         $('#ps').innerHTML = `<div class="pol-calc-summary">${calcSummary(list)}</div><div class="q-sub" style="margin-top:4px">各项金额单独列示，叠加规则和实际支持额度以正式审核为准。</div>
           <div class="stack rows">${list.map((x) => calcRow(x)).join('')}</div>`;
-        foot(back(), `<button class="btn primary" data-act="toNotice" data-op="policy.to-notice">生成告知单</button>`);
+        foot(back(), `${restoreStatus()}<button class="btn primary" data-act="toNotice" data-op="policy.to-notice" ${restoringAmounts ? 'disabled' : ''}>生成告知单</button>`);
       }
       function calcSummary(list) {
         const ratios = list.map((x) => S.calc[x.id]?.result).filter((r) => r?.kind === 'ratio');
@@ -190,7 +211,7 @@
       function calcRow(x) {
         const p = byId(x.id) || {}; const base = p.rule && p.rule.base; const c = S.calc[x.id] || {}; const r = c.result;
         return `<div class="card tight pol-calc"><div class="grow pol-cl"><div class="pol-t">${esc(x.title)} ${exampleTag(p)}</div><div class="meta clip" title="${esc(p.rule ? p.rule.text : '')}">${esc(p.rule ? p.rule.text : '')}</div><div class="pol-calc-text">${calcResultText(r)}</div></div>
-          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}"></div>` : ''}
+          ${base ? `<div class="field pol-cf"><label class="meta">${esc(F(base)[0])}（${esc(F(base)[1])}）</label><input class="input sm num" type="number" min="0" data-camt="${x.id}" data-op="policy.calc-${x.id}" value="${esc(toUnit(base, c.amount))}" ${restoringAmounts ? 'disabled' : ''}></div>` : ''}
           <div class="pol-amt pol-ca num">${calcResultAmount(p, r)}</div></div>`;
       }
       const calcResultText = (r) => r && r.kind !== 'fixed' ? `<div class="t-sm t-2 num" style="margin-top:4px">${esc(r.text)} ${r.capped ? tag('已按封顶', 'status', { cls: 'plain' }) : ''}</div>` : '';
@@ -220,6 +241,7 @@
 
       /* ---------- 第 4 步：告知单 ---------- */
       async function showNotice() {
+        if (restoringAmounts) { ui.toast(restoringText); return; }
         if (!chosen().length || S.busy) return;
         const match = S.match, step = S.step;
         const list = chosen();
@@ -331,15 +353,24 @@
           defaultItemIds: response.defaultItemIds ?? (ok.length ? ok : eligible.slice(0, 2)).map((x) => x.id),
         };
       }
-      async function runMatch() {
-        S.busy = true; S.match = null; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
+      async function runMatch(fromSnapshot = false) {
+        invalidateMatch();
+        const version = matchVersion;
+        restoringFlow = fromSnapshot;
+        S.busy = true; S.step = 1; S.showAll = false; S.calc = {}; S.notice = ''; S.filter = null; body();
         try {
           let b;
           if (S.mode === 'ent') b = { entId: S.entId, overrides: S.overrides };
           else { const m = S.manual; b = { profile: Object.assign({ subjectType: m.object === '其他组织' ? '其他组织' : m.object, tags: [...m.tags], license: [...m.license], regInZone: true }, m.yearsInZone !== '' ? { yearsInZone: +m.yearsInZone } : {}, m.amounts, S.overrides) }; }
-          S.match = normalizeMatch(await P.match(b));
+          const response = await P.match(b);
+          if (version !== matchVersion) return;
+          S.match = normalizeMatch(response);
           S.picked = new Set(S.match.defaultItemIds);
-        } catch (e) { ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0; }
+        } catch (e) {
+          if (version !== matchVersion) return;
+          // 恢复失败时继续沿用原快照，直到用户开始新办理或下次返回重试。
+          ui.toast(e.message || '匹配失败', { type: 'err' }); S.step = 0;
+        }
         S.busy = false; if (S.tab === 'flow') body(); return S.match;
       }
       async function applyFill(field, unitVal) {
@@ -349,8 +380,9 @@
       }
       async function copyNotice() { try { await navigator.clipboard.writeText(S.notice); } catch (e) { /* file:// 下可能无权限 */ } ui.toast('告知单已复制'); }
       function toDocument() {
-        const e = ent(); const ids = chosen().map((x) => x.id);
-        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: e ? e.id : '', policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
+        const entId = S.mode === 'ent' ? S.entId || '' : '';
+        const ids = chosen().map((x) => x.id);
+        ctx.nav.open('document', 'new', { from: 'policy', templateId: 'T10', inputs: { ent: entId, policy: ids[0] || '', issue: `咨询${ids.length ? byId(ids[0]).title : '政策'}申报` }, notice: S.notice });
       }
       async function logIssue() {
         const e = ent(); if (!e) return;
@@ -373,32 +405,115 @@
       }
       const ready = async () => { for (let i = 0; i < 60 && !loaded; i++) await new Promise((r) => setTimeout(r, 50)); };
 
+      /* ---------- 对话快照 ---------- */
+      function snapshotFlow() {
+        const params = S.mode === 'manual' ? { manual: structuredClone(S.manual) } : (S.entId ? { entId: S.entId } : {});
+        if (Object.keys(S.overrides).length) params.overrides = structuredClone(S.overrides);
+        if (!S.match || S.step === 0) return { route: 'home', params };
+
+        const defaults = S.match.defaultItemIds;
+        if (S.step > 1 || S.picked.size !== defaults.length || defaults.some((id) => !S.picked.has(id))) {
+          params.pickedIds = [...S.picked];
+        }
+        const amounts = Object.fromEntries(Object.entries(S.calc).filter(([, entry]) => entry.edited).map(([id, entry]) => [id, entry.amount]));
+        if (Object.keys(amounts).length) params.calcAmounts = amounts;
+        if (S.filter) params.filter = S.filter;
+        if (S.showAll) params.expanded = true;
+        if (S.step === 3) params.notice = S.notice;
+        return { route: flowRoutes[S.step], params };
+      }
+      function snapshot(route, params) {
+        if (!loaded || restoringFlow) return;
+        const flow = canOp ? snapshotFlow() : null;
+        if (S.tab === 'flow') return flow;
+        const next = {};
+        if (S.tab === 'items') {
+          const q = $('#iq')?.value;
+          if (q) next.q = q;
+          if (S.obj) next.object = S.obj;
+          if (S.win) next.win = S.win;
+        }
+        if (flow && (flow.route !== 'home' || Object.keys(flow.params).length)) next.flow = flow;
+        if (route === 'detail' && S.tab === 'items') return { route, params: { ...next, itemId: params.itemId || params.id } };
+        return { route: S.tab, params: next };
+      }
+      async function restore(route, params) {
+        const version = matchVersion;
+        restoringFlow = true;
+        await ready();
+        if (version !== matchVersion) return;
+        restoringFlow = false;
+        if (!el.isConnected || !loaded) return;
+        const browsing = ['items', 'docs', 'detail'].includes(route);
+        if (!browsing && !flowRoutes.includes(route)) return go(route, params);
+        S.tab = browsing ? (route === 'detail' ? 'items' : route) : 'flow';
+        if (browsing) {
+          S.q = params.q || ''; S.obj = params.object || ''; S.win = params.win || '';
+        }
+        const flow = browsing ? params.flow : { route, params };
+        const { manual, entId, overrides, pickedIds, expanded, filter, calcAmounts, notice } = flow?.params || {};
+        if (canOp && flow) {
+          S.mode = manual ? 'manual' : 'ent';
+          S.manual = manual ? structuredClone(manual) : S.manual;
+          S.entId = manual ? null : (entId || null);
+          S.overrides = structuredClone(overrides || {});
+        }
+        render();
+        if (route === 'detail') openDetail(params.itemId || params.id);
+        const step = flowRoutes.indexOf(flow?.route);
+        if (!canOp || step < 1 || !(manual || entId)) return;
+
+        const match = await runMatch(true);
+        if (!match || S.match !== match || !el.isConnected) return;
+        restoringFlow = false;
+        if (Array.isArray(pickedIds)) S.picked = new Set(pickedIds);
+        S.showAll = !!expanded;
+        S.filter = filter || null;
+        const ids = chosen().map((x) => x.id).filter((id) => calcAmounts && Object.hasOwn(calcAmounts, id) && byId(id)?.rule?.base);
+        for (const id of ids) S.calc[id] = { amount: calcAmounts[id], result: null, edited: true };
+        restoringAmounts = ids.length > 0;
+        const hasNotice = flow.route === 'notice' && typeof notice === 'string';
+        S.step = hasNotice ? 3 : Math.min(step, 2);
+        if (hasNotice) S.notice = notice;
+        if (S.tab === 'flow') body();
+
+        if (restoringAmounts) {
+          await Promise.all(ids.map(recalc));
+          if (S.match !== match) return;
+          restoringAmounts = false;
+          if (!el.isConnected) return;
+          if (S.tab === 'flow' && S.step === 1 && S.match) matchFooter();
+          if (S.tab === 'flow' && S.step === 2) body();
+        }
+        if (flow.route === 'notice' && !hasNotice && S.step === 2 && S.match === match) await showNotice();
+      }
+
       /* ---------- 事件 ---------- */
       el.addEventListener('click', async (ev) => {
         const t = ev.target.closest('[data-tab],[data-step],[data-mode],[data-ent],[data-act],[data-filter],[data-toggle],[data-src],[data-detail],[data-doc],[data-obj],[data-mobj],[data-mtag],[data-mlic],[data-sample],[data-empty-action]');
         if (!t) return; const d = t.dataset;
         if (d.tab) { S.tab = d.tab; render(); return; }
-        if (d.step != null && !t.disabled) { S.step = +d.step; body(); return; }
-        if (d.mode) { S.mode = d.mode; body(); return; }
-        if (d.ent) { S.entId = d.ent; S.overrides = {}; S.match = null; body(); return; }
+        if (d.step != null && !t.disabled) { S.step = +d.step; if (S.step === 0) invalidateMatch(); body(); return; }
+        if (d.mode) { if (S.mode !== d.mode) invalidateMatch(); S.mode = d.mode; body(); return; }
+        if (d.ent) { invalidateMatch(); S.entId = d.ent; S.overrides = {}; body(); return; }
         if (d.filter) { S.filter = S.filter === d.filter ? null : d.filter; body(); return; }
         if (d.toggle) { S.open.has(d.toggle) ? S.open.delete(d.toggle) : S.open.add(d.toggle); body(); return; }
         if (d.src) return openSource(d.src);
         if (d.detail) return openDetail(d.detail);
         if (d.doc) { const r = await ctx.kb.search(DOCS.find((x) => x.id === d.doc).title, { space: 'policy', limit: 1 }).catch(() => ({ hits: [] })); if (r.hits && r.hits[0]) ctx.kb.open(r.hits[0].id); else ui.toast('知识库里还没有这份文件'); return; }
         if (d.obj != null && t.closest('.seg')) { S.obj = d.obj; body(); return; }
-        if (d.mobj) { S.manual.object = d.mobj; body(); return; }
-        if (d.mtag) { const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
-        if (d.mlic) { const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
+        if (d.mobj) { if (S.manual.object !== d.mobj) invalidateMatch(); S.manual.object = d.mobj; body(); return; }
+        if (d.mtag) { invalidateMatch(); const a = S.manual.tags; a.includes(d.mtag) ? a.splice(a.indexOf(d.mtag), 1) : a.push(d.mtag); body(); return; }
+        if (d.mlic) { invalidateMatch(); const a = S.manual.license; a.includes(d.mlic) ? a.splice(a.indexOf(d.mlic), 1) : a.push(d.mlic); body(); return; }
         if (d.sample) { const inp = t.parentElement.querySelector('[data-fill]'); if (inp) inp.value = toUnit(d.sample, C.sampleFill[d.sample] || 10 * F(d.sample)[2]); return; }
         if (d.emptyAction != null) { if (loadErr) { loaded = false; body(); load(); } else { S.q = ''; S.obj = ''; S.win = ''; body(); } return; }
         const a = d.act;
         if (a === 'ask') return ctx.nav.chat(ent() ? `${ent().short}能申请哪些支持？` : '实体书店房租补贴的条件是什么？');
-        if (a === 'clear') { S.entId = null; S.match = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
+        if (a === 'clear') { invalidateMatch(); S.entId = null; body(); setTimeout(() => { const q = el.querySelector('#pq'); q && q.focus(); }, 0); return; }
         if (a === 'run') return runMatch();
         if (a === 'refill') { const inp = t.parentElement.querySelector('[data-fill]'); if (!inp.value) { ui.toast('先填一个数', { type: 'warn' }); return; } return applyFill(inp.dataset.fill, inp.value); }
         if (a === 'showAll') { S.showAll = true; body(); return; }
-        if (a === 'toCalc') { S.step = 2; body(); return; }
+        if (a === 'toCalc' && !restoringAmounts) { S.step = 2; body(); return; }
         if (a === 'toNotice') return showNotice();
         if (a === 'copy') return copyNotice();
         if (a === 'download') return ui.download(`政策告知单-${who()}.txt`, S.notice);
@@ -411,8 +526,8 @@
         if (d.pick) { t.checked ? S.picked.add(d.pick) : S.picked.delete(d.pick); delete S.calc[d.pick]; body(); return; }
         if (d.lic) { if (t.checked) applyFill('license', d.lic); return; }
         if (d.camt) { if (S.calc[d.camt]?.edited) await recalc(d.camt); return; }
-        if (d.mnum) { S.manual[d.mnum] = t.value; return; }
-        if (d.mamt) { if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
+        if (d.mnum) { invalidateMatch(); S.manual[d.mnum] = t.value; return; }
+        if (d.mamt) { invalidateMatch(); if (t.value === '') delete S.manual.amounts[d.mamt]; else S.manual.amounts[d.mamt] = +t.value * F(d.mamt)[2]; return; }
       });
       el.addEventListener('input', (ev) => { if (ev.target.dataset.camt) setCalcAmount(ev.target); });
       el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.dataset.fill) { const b = ev.target.parentElement.querySelector('[data-act=refill]'); b && b.click(); } });
@@ -426,7 +541,7 @@
           await ready(); const id = resolveEnt(es, text);
           if (!id) { run && run.fail('没认出是哪家企业，请说出企业名称'); return; }
           if (!canOp) { run && run.fail(T.viewOnly); return; }
-          gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.match = null; S.overrides = {}; body();
+          invalidateMatch(); gotoTab('flow'); S.step = 0; S.mode = 'ent'; S.entId = null; S.overrides = {}; body();
           const e = ENTS.find((x) => x.id === id);
           if (run) { await run.step(1); await run.fill('[data-op="policy.ent"]', e.short); await run.wait(`[data-op="policy.opt-${id}"]`); await run.click(`[data-op="policy.opt-${id}"]`); await run.step(2); await run.click('[data-op="policy.go"]'); await run.wait(() => S.match && el.querySelector('[data-op="policy.kpi-ok"]')); await run.step(3); await run.highlight('[data-op="policy.kpi-ok"]'); }
           else { S.entId = id; await runMatch(); }
@@ -456,6 +571,7 @@
         async calc({ amount, policy, text } = {}, run) {
           await ready();
           if (amount == null) { const mm = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (mm) amount = +mm[1] * 1e4; }
+          if (restoringAmounts && S.match && !policy && !amount) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
           if (S.match && !policy && !amount) { gotoTab('flow'); if (run) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.total"]'); await run.highlight('[data-op="policy.total"]'); run.done('已按事项分别列出试算参考和支持标准', [{ label: '生成告知单', say: '生成一次性告知单' }]); } else { S.step = 2; body(); } return; }
           const id = resolvePolicy(policy, text) || (ITEMS.find((p) => p.rule && p.rule.base) || {}).id;
           let amt = amount; if (amt == null) { const m = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (m) amt = +m[1] * 1e4; }
@@ -464,7 +580,9 @@
           return m;
         },
         async notice({ ent: es, text } = {}, run) {
-          await ready(); const id = resolveEnt(es, text) || S.entId;
+          await ready();
+          if (restoringAmounts) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
+          const id = resolveEnt(es, text) || (S.mode === 'ent' ? S.entId : null);
           if (!S.match || (id && id !== S.entId)) { if (!id) { run && run.fail('要给哪家企业生成？'); return; } await actions.match({ ent: { id } }, run ? Object.assign(Object.create(run), { done() {} }) : null); }
           if (!chosen().length) { run && run.fail('请先勾选要告知的事项'); return; }
           gotoTab('flow');
@@ -491,30 +609,22 @@
           run && run.done(`这是一份政策文件，已存入知识库“政策文件”。可以直接问：“这份文件里企业能申请什么？”`, [{ label: '在知识库里问', say: `${file.name.replace(/\.\w+$/, '')}里企业能申请什么支持？` }, { label: '查看事项库', say: '打开政策事项库' }]);
         },
       };
+      async function go(route, params = {}) {
+        await ready();
+        if (route === 'items' || route === 'docs') { S.tab = route; if (params.q != null) S.q = params.q; if (params.object != null) S.obj = params.object; render(); return; }
+        if (route === 'detail') { S.tab = 'items'; render(); openDetail(params.itemId || params.id); return; }
+        S.tab = 'flow';
+        if (params.entId && params.entId !== S.entId) { invalidateMatch(); S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; }
+        if (route === 'calc' && params.itemId) { render(); calcModal(params.itemId, params.amount); return; }
+        render();
+        if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then((match) => { if (match && route === 'notice') return showNotice(); });
+      }
       return {
-        go(route, params = {}) {
-          ready().then(() => {
-            if (route === 'items' || route === 'docs') { S.tab = route; if (params.q != null) S.q = params.q; if (params.object != null) S.obj = params.object; render(); return; }
-            if (route === 'detail') { S.tab = 'items'; render(); openDetail(params.itemId || params.id); return; }
-            S.tab = 'flow';
-            if (params.entId && params.entId !== S.entId) { S.entId = params.entId; S.mode = 'ent'; S.overrides = {}; S.match = null; }
-            if (route === 'calc' && params.itemId) { render(); calcModal(params.itemId, params.amount); return; }
-            render();
-            if ((route === 'match' || route === 'notice' || params.run) && S.entId && canOp) runMatch().then(() => { if (route === 'notice') return showNotice(); });
-          });
-        },
-        getCalcAmounts() {
-          return Object.fromEntries(Object.entries(S.calc).filter(([, entry]) => entry.edited).map(([id, entry]) => [id, entry.amount]));
-        },
-        async restoreCalcAmounts(amounts) {
-          for (const { id } of chosen()) {
-            if (!Object.hasOwn(amounts, id) || !byId(id)?.rule?.base) continue;
-            S.calc[id] = { amount: amounts[id], result: null, edited: true };
-            await recalc(id);
-          }
-        },
+        go,
+        snapshot,
+        restore,
         actions,
-        unmount() {},
+        unmount() { invalidateMatch(); },
       };
     },
   });

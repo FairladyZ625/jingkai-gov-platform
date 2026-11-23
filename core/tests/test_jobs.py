@@ -12,7 +12,7 @@ from test_platform import login
 ROUTER = '''
 import time
 from fastapi import APIRouter, Depends
-from haiknow_sdk import AppContext, app_context
+from haiknow_sdk import AppContext, DataError, ModelError, app_context
 from haiknow_sdk.preview.jobs import operation
 
 router = APIRouter()
@@ -37,6 +37,14 @@ def failure(job, body):
 @operation('ai-image', version='1')
 def ai_image(job, body):
     return job.step('image', lambda key: job.context.ai.image('虚构演示'))
+
+@operation('loan', version='1')
+def loan(job, body):
+    raise DataError('loan_period_invalid', '借期需在 1–30 天', fields=['period'], retryable=True)
+
+@operation('legacy-model', version='1')
+def legacy_model(job, body):
+    raise ModelError('bad_response', '模型响应格式异常')
 
 @router.post('/submit')
 def submit(body: dict, ctx: AppContext = Depends(app_context)):
@@ -91,10 +99,42 @@ def test_accepts_202_and_deduplicates_changed_input_conflicts(jobs_client):
     assert c.post('/api/v1/jobs', json=body()).json()['id'] == job['id']
     conflict = c.post('/api/v1/jobs', json=body(input={'value': 8}))
     assert conflict.status_code == 409
-    assert conflict.json()['error']['code'] == 'invalid_state'
+    assert conflict.json()['error']['code'] == 'INVALID_STATE'
     assert conflict.json()['error']['retryable'] is False
     assert conflict.json()['error']['jobId'] == job['id']
     assert len(c.get('/api/v1/jobs?app=job-a').json()['items']) == 1
+
+
+def test_custom_job_error_preserves_spelling_in_http_and_persisted_snapshot(jobs_client, make_client):
+    with jobs_client as c:
+        login(c, 'sampleoperator')
+        request = body(operation='loan')
+        jid = c.post('/api/v1/jobs', json=request).json()['id']
+        error = {
+            'code': 'loan_period_invalid',
+            'message': '借期需在 1–30 天',
+            'retryable': True,
+            'fields': ['period'],
+            'jobId': jid,
+        }
+        assert wait_job(c, jid)['error'] == error
+        assert c.get('/api/v1/jobs?app=job-a').json()['items'][0]['error'] == error
+        assert c.post('/api/v1/jobs', json=request).json()['error'] == error
+    reopened = make_client(jobs_client.app.state.platform.apps_dir)
+    login(reopened, 'sampleoperator')
+    assert reopened.get(f'/api/v1/jobs/{jid}').json()['error'] == error
+
+
+def test_persisted_legacy_model_job_exposes_uppercase_code(jobs_client):
+    with jobs_client as c:
+        login(c, 'sampleoperator')
+        jid = c.post('/api/v1/jobs', json=body(operation='legacy-model')).json()['id']
+        assert wait_job(c, jid)['error'] == {
+            'code': 'BAD_RESPONSE', 'message': '模型响应格式异常', 'retryable': False, 'jobId': jid,
+        }
+        service = c.app.state.platform.jobs
+        with service.store._lock:
+            assert service._load(jid)['error']['code'] == 'bad_response'
 
 
 def test_python_preview_jobs_uses_context(jobs_client):
@@ -120,7 +160,7 @@ def test_auth_scope_validation_and_sdk_app_binding(jobs_client):
     for invalid in ({'operation': 'missing'}, {'input': []}, {'idempotencyKey': ''}):
         r = c.post('/api/v1/jobs', json=body(**invalid))
         assert r.status_code == 422, r.text
-        assert r.json()['error']['code'] == 'invalid_request'
+        assert r.json()['error']['code'] == 'INVALID_REQUEST'
     job = c.post('/api/apps/job-a/submit', json={
         'operation': 'demo', 'project': 'sample-project', 'input': {}, 'idempotency_key': 'sdk',
     }).json()
@@ -227,7 +267,7 @@ def test_ai_queue_preserves_quota_error_and_can_be_retried_after_admin_change(jo
         jid = c.post('/api/v1/jobs', json=body(operation='ai-image')).json()['id']
         failed = wait_job(c, jid)
         assert failed['status'] == 'failed'
-        assert failed['error']['code'] == 'quota_exceeded' and not failed['error']['retryable']
+        assert failed['error']['code'] == 'QUOTA_EXCEEDED' and not failed['error']['retryable']
         assert failed['error']['jobId'] == jid
         assert failed['steps'][0]['status'] == 'failed'
         login(c, 'sampleadmin')
@@ -253,8 +293,8 @@ def test_queued_task_rechecks_operation_version_and_permissions(jobs_client):
     with c:
         a, b = wait_job(c, first), wait_job(c, second)
         assert a['status'] == b['status'] == 'failed'
-        assert a['error']['code'] == 'invalid_state'
-        assert b['error']['code'] == 'forbidden'
+        assert a['error']['code'] == 'INVALID_STATE'
+        assert b['error']['code'] == 'FORBIDDEN'
         assert a['steps'] == b['steps'] == []
         assert c.post('/api/v1/jobs/' + first + '/retry').status_code == 409
 
@@ -273,7 +313,7 @@ def test_failure_retry_skips_completed_steps_and_hides_internal_text(jobs_client
         login(c, 'sampleoperator')
         jid = c.post('/api/v1/jobs', json=body(operation='failure')).json()['id']
         failed = wait_job(c, jid)
-        assert failed['status'] == 'failed' and failed['error']['code'] == 'internal_error'
+        assert failed['status'] == 'failed' and failed['error']['code'] == 'INTERNAL_ERROR'
         assert '不应回显' not in json.dumps(failed, ensure_ascii=False)
         retry = c.post('/api/v1/jobs/' + jid + '/retry')
         assert retry.status_code == 202 and retry.json()['attempt'] == 2

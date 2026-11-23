@@ -60,7 +60,7 @@ auth、admin、kb 的前缀分别映射到 core 的 `/api/auth`、`/api/admin`�
 `/api/v1/` 错误使用 `{error: {code, message, details}}`。登录凭据错误使用
 `BAD_CREDENTIALS`，缺少有效会话使用 `UNAUTHENTICATED`，拒绝访问使用
 `FORBIDDEN`，资源或路由不存在使用 `NOT_FOUND`。其余 core 错误保留原 HTTP
-状态和具体错误语义，错误码写作大写。业务路由抛出 4xx `HTTPException` 时保留公开字符串提示，
+状态和具体错误语义，平台错误码使用大写 SNAKE_CASE。公文、企业、会议和政策应用的健康检查同样使用 `UNAUTHENTICATED` 和 `FORBIDDEN`。业务路由抛出 4xx `HTTPException` 时保留公开字符串提示，
 5xx 使用通用提示。
 
 ## 本机 Codex CLI 对话

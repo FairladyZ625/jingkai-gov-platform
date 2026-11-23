@@ -1,11 +1,20 @@
 /* 接口适配 · 会议记录（接口规范 §4.3）。转写为长任务：transcribe 返回 job，轮询 job() 直到 done。 */
 (function () {
   const H = window.JKHttp; window.JKApi = window.JKApi || {};
+  // 真后端只收 multipart 表单。带真实文件（blob）时上传该文件；示例录音没有文件内容，
+  // 按 source=demo 登记，由后端读取 apps/meeting/samples/demo.webm。模拟后端仍收原对象。
+  const toForm = (b) => {
+    const form = new FormData(); const hasBlob = typeof Blob !== 'undefined' && b.blob instanceof Blob;
+    form.append('title', b.title || '会议录音'); if (b.type) form.append('type', b.type);
+    form.append('participants', JSON.stringify(b.participants || []));
+    if (hasBlob) { form.append('file', b.blob, b.file || b.blob.name || 'recording.webm'); form.append('source', 'upload'); } else form.append('source', 'demo');
+    return form;
+  };
   window.JKApi.meeting = {
     /** → {items:MeetingSummary[], templates:MeetingTemplate[], hotwords:string[]} */
     list: () => H.get('/api/apps/meeting/meetings'),
     /** {title, type, participants[], file, size, source, duration?} → {item:Meeting}（上传 / 现场录音登记） */
-    create: (b) => H.post('/api/apps/meeting/meetings', b),
+    create: (b) => H.post('/api/apps/meeting/meetings', H.mode() === 'http' ? toForm(b || {}) : b),
     /** (id, {type?, title?, participants?, hotwords?}) → {job:Job} */
     transcribe: (id, b) => H.post(`/api/apps/meeting/meetings/${id}/transcribe`, b || {}),
     /** jobId → {job:{id,status,progress,step,steps[],stepName}} */

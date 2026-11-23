@@ -30,7 +30,11 @@ def install_platform(app: FastAPI) -> None:
     """安装需要包住 core 路由或挂平台存储的模块，每个模块一行。"""
     from haiknow_core.main import current_user  # 登录依赖只在这里指定
 
-    from . import admin, jobs_api, reviews_api
+    from apps.policy import instance as policy
+
+    from . import admin, apps_bridge, demo, jobs_api, reviews_api
+    from .skills import publication as skills_publication
+    from .skills.storage import Skills
     from .conversations import routes as conversations
     from .kb import ask as kb_ask
     from .operator import routes as operator
@@ -40,14 +44,30 @@ def install_platform(app: FastAPI) -> None:
     orchestrator.install(app, current_user)
     jobs_api.install(app, current_user)
     reviews_api.install(app, current_user)
+    # #118：技能分享、发布、上架审核与评分须在 reviews_api 之后挂载，避免被 replace_core_route 盖掉。
+    skills_publication.install(app, current_user)
     operator.install(app, current_user)
     kb_ask.install(app, app.state.platform, current_user)
+    skills = Skills(app.state.platform)
+
+    def list_skills(user):
+        if "view" not in app.state.platform.rbac.actions(user, "skills"):
+            return []
+        return [
+            skills.view(user, doc, history=False)
+            for doc in skills.records.list_records(user, "skills")["items"]
+            if not doc["data"]["deleted"] and skills.access(user, doc["data"])[0]
+        ]
+
+    apps_bridge.install(app, current_user, list_skills=list_skills, register_catalog=False)
+    demo.install(app)
     admin.install(app)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。
         from apps.document.instance import install as install_document
 
         install_document(app)
+    policy.install(app, current_user)
 
 
 def create_app() -> FastAPI:

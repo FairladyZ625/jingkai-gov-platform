@@ -1,14 +1,16 @@
-"""冻结 SDK 1.0 自有公共名字、签名与 v1 契约；更新必须评审 ADR 与版本。"""
+"""分别冻结 SDK 1 的历史契约和 SDK 2 的当前公共面。"""
 import ast
-import json
+import hashlib
 import inspect
+import json
 import runpy
 
 import pytest
 
 from conftest import ROOT
 
-SNAPSHOT = ROOT / 'tests/compat/sdk1-surface.json'
+SDK1_SNAPSHOT = ROOT / 'tests/compat/sdk1-surface.json'
+SDK2_SNAPSHOT = ROOT / 'tests/compat/sdk2-surface.json'
 
 
 def python_surface():
@@ -55,7 +57,20 @@ def sdk_surface():
 
 
 def test_sdk1_public_surface():
-    assert sdk_surface() == json.loads(SNAPSHOT.read_text()), '公共面变化：先修改 ADR、升版本并请 CODEOWNERS 评审，禁止直接刷新快照消红'
+    snapshot = SDK1_SNAPSHOT.read_bytes()
+    assert hashlib.sha256(snapshot).hexdigest() == '274cd2492f061de8534a299373a1b6ad8130144af4e9a1817326eb9114ff38ab'
+    frozen = json.loads(snapshot)
+    current = sdk_surface()
+    # 包版本号和公开 HTTP 由 SDK 2 快照验证，旧应用依赖的签名与资源句柄仍可用。
+    current['javascript']['exports']['SDK_VERSION'] = frozen['javascript']['exports']['SDK_VERSION']
+    current['python']['haiknow_sdk/__init__.py']['SDK_VERSION'] = frozen['python']['haiknow_sdk/__init__.py']['SDK_VERSION']
+    assert current['python'] == frozen['python']
+    assert current['javascript'] == frozen['javascript']
+    assert current['javascript_ui'] == frozen['javascript_ui']
+
+
+def test_sdk2_public_surface_and_http_contract():
+    assert sdk_surface() == json.loads(SDK2_SNAPSHOT.read_text()), '公共面变化须先评审 ADR 与版本策略'
 
 
 def test_js_signature_extraction_ignores_implementation_and_finds_nested_api():
@@ -102,7 +117,7 @@ def test_ui_component_surface_is_frozen():
     """组件库改签名或删导出必须红；改函数体、未知导出写法照旧处理。"""
     extract = runpy.run_path(str(ROOT / 'tests/compat/js_surface.py'))['surface']
     source = (ROOT / 'core/sdk/js/ui/index.js').read_text()
-    frozen = json.loads(SNAPSHOT.read_text())['javascript_ui']
+    frozen = json.loads(SDK1_SNAPSHOT.read_text())['javascript_ui']
     assert extract(source, require_context=False) == frozen
     assert len(frozen['exports']) == 36
 

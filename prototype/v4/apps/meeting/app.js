@@ -191,6 +191,7 @@
         if (!m || !mi) { ms.innerHTML = '<div class="skel-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>'; foot(); return; }
         const td = m.todos || []; const miss = td.filter((t) => t.owner === '待确认' || t.due === '待确认').length; const sent = td.filter((t) => t.status === '已派发').length;
         ms.innerHTML = `<div class="q">${esc(T.outQ)}</div><div class="q-sub">${esc(T.outSub)}</div>
+          ${window.JKHttp.mode() === 'http' ? '<div class="callout">模拟：尚未形成收件箱待办；当前派发仅更新会议内状态，演示后修。</div>' : ''}
           <div class="mt-stats" style="margin-bottom:var(--s5)"><span><b class="num">${mi.body.length}</b> 议题</span><span><b class="num">${td.length}</b> 待办</span><span class="${miss ? 'warn' : ''}"><b class="num">${miss}</b> 缺负责人/时限</span><span><b class="num">${sent}</b> 已派发</span></div>
           <div class="sec row">待办<span class="sp"></span>${canOp ? `<button class="link" data-act="selAll">全选可派发</button>` : ''}</div>
           ${td.length ? `<div class="stack rows mt-todos">${td.map(todoRow).join('')}</div>` : '<div class="meta">会上没有形成待办</div>'}
@@ -215,7 +216,7 @@
       async function commit() {
         const ids = [...S.sel]; const r = await M.commitTodos(S.id, { ids }); const g = await M.get(S.id); S.cur = g.item; S.minutes = g.minutes; S.sel = new Set(); ALLTODOS = null;
         ctx.audit('派发会议待办', `${S.cur.title} · ${r.committed.length} 条`); ctx.bus.emit('inbox:changed', { app: 'meeting' });
-        ui.toast(`已派发 ${r.committed.length} 条到负责人的“我的待办”${r.skipped && r.skipped.length ? `，${r.skipped.length} 条缺负责人未派发` : ''}`, { type: 'ok' }); step3(); return r;
+        ui.toast(`${window.JKHttp.mode() === 'http' ? '模拟：尚未形成收件箱待办；会议内已标记 ' : '已派发 '}${r.committed.length}${window.JKHttp.mode() === 'http' ? ' 条' : ' 条到负责人的“我的待办”'}${r.skipped && r.skipped.length ? `，${r.skipped.length} 条缺负责人未派发` : ''}`, { type: 'ok' }); step3(); return r;
       }
       function editPara(i) {
         const b = S.minutes.body[i];
@@ -388,10 +389,10 @@
           }
           const ok = td2.filter((t) => t.owner !== '待确认'); const miss = td2.length - ok.length;
           await run.highlight('[data-op="meeting.commit"]', '确认后才派发');
-          const c = await run.ask(`可派发 ${ok.length} 条${miss ? `，另有 ${miss} 条缺负责人（不会派发）` : ''}。确认派发到负责人的“我的待办”吗？`, ['确认派发', '我先改一下']);
+          const c = await run.ask(`可派发 ${ok.length} 条${miss ? `，另有 ${miss} 条缺负责人（不会派发）` : ''}。${window.JKHttp.mode() === 'http' ? '当前为模拟派发，尚未形成收件箱待办，是否标记会议内状态？' : '确认派发到负责人的“我的待办”吗？'}`, ['确认派发', '我先改一下']);
           if (c !== '确认派发') { run.done('好的，改好负责人后点“派发选中”即可'); return; }
           await run.step(3); S.sel = new Set(ok.map((t) => t.id)); step3(); await run.click('[data-op="meeting.commit"]'); await run.wait(() => S.cur.todos.filter((t) => ok.some((o) => o.id === t.id)).every((t) => t.status === '已派发'));
-          run.done(`已派发 ${ok.length} 条：${ok.map((t) => `${t.owner}·${t.task}`).join('；')}${miss ? `。${miss} 条缺负责人，请补上` : ''}`);
+          run.done(`${window.JKHttp.mode() === 'http' ? '模拟：尚未形成收件箱待办；会议内已标记 ' : '已派发 '}${ok.length} 条：${ok.map((t) => `${t.owner}·${t.task}`).join('；')}${miss ? `。${miss} 条缺负责人，请补上` : ''}`);
         },
         async record(a, run) {
           await ready(); if (!canOp) return noPerm(run); goFlow(); S.step = 0; S.setup = null; body();

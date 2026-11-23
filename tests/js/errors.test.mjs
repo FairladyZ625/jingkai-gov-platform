@@ -18,6 +18,19 @@ assert.equal(errorMessage(err('原口令不正确', { status: 401, code: 'invali
 assert.equal(errorMessage(err('Forbidden', { status: 403, code: 'forbidden' })), '没有执行此操作的权限');
 assert.equal(errorMessage(err('', { status: 401, code: 'unauthenticated' })), '登录已失效，请重新登录');
 assert.equal(errorMessage(err('Bad gateway', { status: 502, code: 'provider_error' })), '服务商暂时不可用，请检查服务商配置或稍后重试');
+assert.equal(errorMessage(err('', { status: 403, code: 'OUTBOUND_DENIED' })), PLATFORM_ERROR_MESSAGES.outbound_denied);
+for (const [code, expected] of [
+  ['BAD_CREDENTIALS', '账号或口令不正确'],
+  ['ACCOUNT_DISABLED', '账号已停用，请联系管理员'],
+  ['BAD_PASSWORD', '原密码不正确'],
+  ['WEAK_PASSWORD', '新密码至少需要 6 位'],
+  ['WRITE_CONFIRMATION_REQUIRED', '请先确认写入操作，再提交执行结果'],
+  ['NOT_IMPLEMENTED', '本期暂不支持将技能升级为小应用'],
+  ['INVALID_SKILL_DRAFT', '模型返回的草稿格式有误，请重试'],
+  ['TOOL_UNAVAILABLE', '业务工具当前不可用，请稍后重试'],
+]) {
+  for (const message of ['', 'Request failed']) assert.equal(errorMessage(err(message, { code })), expected);
+}
 // 说明里夹带原始码时不直出，改走映射
 assert.equal(errorMessage(err('操作失败（forbidden）', { code: 'forbidden' })), PLATFORM_ERROR_MESSAGES.forbidden);
 // 未知码：不露码，按状态兜底；控制台留码
@@ -34,6 +47,8 @@ assert.equal(errorMessage(new TypeError('Failed to fetch')), PLATFORM_ERROR_MESS
 assert.equal(errorMessage(err('x', { code: 'xxx_failed' }), { xxx_failed: '导出失败，请重试' }), '导出失败，请重试');
 defineErrors('app-a', { xxx_failed: 'A 应用导出失败' });
 assert.equal(appErrorMessage('app-a', err('x', { code: 'xxx_failed' })), 'A 应用导出失败');
+assert.equal(appErrorMessage('app-a', err('x', { code: 'XXX_FAILED' })), 'A 应用导出失败');
+assert.equal(errorMessage(err('操作失败（forbidden）', { code: 'FORBIDDEN' })), PLATFORM_ERROR_MESSAGES.forbidden);
 assert.equal(appErrorMessage('app-b', err('x', { code: 'xxx_failed' })), GENERIC_ERROR_MESSAGE);
 // 从 errors.json 加载；缺失文件静默
 await loadAppErrors('app-c', async (url) => {

@@ -4,6 +4,7 @@
 window.JK_CONFIG = {
   platformName: '经开智能体工作站',
   orgName: '北京经开区 · AI 工作组',
+  showDevPlan: false,              // 显示侧栏「开发计划」入口
   defaultTheme: 'light',            // 'dark' | 'light'
   stateKey: 'jk4-state-r1',        // 改这个值 = 所有浏览器数据重新开始
   /* 首页：问候下面的 3 条建议（点一下就让 AI 去办） */

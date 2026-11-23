@@ -25,4 +25,4 @@ def test_stale_base_version_is_rejected(client_for):
         f"{BASE}/records/{record['id']}", json={"baseVersion": 1, "title": "又改一次"}
     )
     assert stale.status_code == 409
-    assert stale.json()["error"]["code"] == "version_conflict"
+    assert stale.json()["error"]["code"] == "VERSION_CONFLICT"
