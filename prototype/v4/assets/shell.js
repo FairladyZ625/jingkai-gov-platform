@@ -133,21 +133,40 @@
   async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; renderLogin(); }
 
   /* ---------------- 外壳骨架 ---------------- */
+  const drawerViewport = matchMedia('(max-width:1180px)');
+  function sidebarExpanded() {
+    const shell = $('.shell');
+    return drawerViewport.matches ? shell.classList.contains('side-drawer-open') : !shell.classList.contains('side-min');
+  }
+  function setSidebarDrawer(open, restoreFocus = false) {
+    const shell = $('.shell'); if (!shell) return;
+    open = drawerViewport.matches && open;
+    if (!open && shell.classList.contains('side-drawer-open')) $('.side-account-menu')?.remove();
+    shell.classList.toggle('side-drawer-open', open);
+    $('#rail').inert = open;
+    $('#main').inert = open;
+    $('.rail-logo').setAttribute('aria-expanded', String(sidebarExpanded()));
+    if (open) $('#btn-side').focus();
+    else if (restoreFocus) $('.rail-logo').focus();
+  }
+  drawerViewport.addEventListener('change', () => setSidebarDrawer(false, $('.shell')?.classList.contains('side-drawer-open')));
+
   function renderShell() {
     root().innerHTML = `<div class="shell ${localStorage.getItem('jk4-side') === 'min' ? 'side-min' : ''}">
       <nav class="rail" id="rail" aria-label="主导航"></nav>
-      <aside class="side">
+      <div class="side-scrim" id="side-scrim" aria-hidden="true"></div>
+      <aside class="side" id="shell-side" aria-label="工作区侧栏">
         <div class="brand"><span class="brand-mark">${icon('cube')}</span><b class="grow clip">${esc(CFG.platformName)}</b><button class="btn icon sm ghost" id="btn-side" title="收起侧栏">${icon('sidebar')}</button></div>
         <div class="side-sc" id="side-sc"></div>
         <div class="side-foot">
           ${CFG.showDevPlan === true ? `<a class="nav-i" id="btn-plan" href="plan.html" target="_blank" rel="noopener" title="开发计划与任务进度（GitHub 实时）" style="text-decoration:none"><span class="ico">${icon('flag')}</span><span class="t">开发计划</span><span class="tag">50 项</span></a>` : ''}
           <button class="nav-i" id="btn-demo" data-op="shell.demo" title="把每个功能自动走一遍"><span class="ico">${icon('play')}</span><span class="t">一键演示</span><span class="tag">约 3 分钟</span></button>
-          <div class="me" id="btn-me" data-op="shell.me"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><div class="nm clip">${esc(S.me.name)}</div><div class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</div></span><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
+          <div class="me"><button class="me-account" id="btn-me" data-op="shell.me" aria-label="账户菜单"><span class="avatar h-${roleHue()}">${esc(S.me.name[0])}</span><span class="grow"><span class="nm clip">${esc(S.me.name)}</span><span class="rl clip">${esc([S.me.title, (S.me.dept || '').split(' · ').pop()].filter(Boolean).join(' · '))}</span></button><button class="btn icon sm ghost" id="btn-theme" title="切换深色 / 浅色">${icon(theme() === 'dark' ? 'sun' : 'moon')}</button></div>
         </div>
       </aside>
       <main class="main" id="main">
-        <section class="chatcol" id="chatcol"><div class="dropmask">${icon('upload', 22)}&nbsp;松开，AI 识别文件并帮你处理</div></section>
-        <section class="panel" id="panel"><div class="bar-h"><div class="ptabs" id="ptabs"></div><button class="btn icon sm ghost" id="btn-chat-toggle" title="显示 / 隐藏对话">${icon('chat')}</button><button class="btn icon sm ghost" id="btn-max" title="最大化">${icon('maximize')}</button><button class="btn icon sm ghost" id="btn-pclose" title="关闭面板">${icon('x')}</button></div><div class="pbody" id="pbody"></div></section>
+        <section class="chatcol" id="chatcol"><button class="btn ghost mobile-view-switch" id="btn-mobile-app" aria-controls="panel">${icon('arrow-right')} 返回应用</button><div class="dropmask">${icon('upload', 22)}&nbsp;松开，AI 识别文件并帮你处理</div></section>
+        <section class="panel" id="panel"><div class="bar-h"><button class="btn ghost mobile-view-switch" id="btn-mobile-chat" aria-controls="chatcol">${icon('chat')} 返回对话</button><div class="ptabs" id="ptabs"></div><button class="btn icon sm ghost" id="btn-chat-toggle" title="显示 / 隐藏对话">${icon('chat')}</button><button class="btn icon sm ghost" id="btn-max" title="最大化">${icon('maximize')}</button><button class="btn icon sm ghost" id="btn-pclose" title="关闭面板">${icon('x')}</button></div><div class="pbody" id="pbody"></div></section>
       </main></div>`;
     renderSide(); renderChat(); bindShell();
   }
@@ -158,7 +177,7 @@
     const it = (k, ic, t, on, extra = '') => `<button class="rail-i ${on ? 'on' : ''}" ${k} title="${esc(t)}"><span class="ri">${ic}${extra}</span><span class="rt">${esc(t)}</span></button>`;
     const has = (id) => appsVisible('platform').some((a) => a.id === id);
     const pending = pendingCount();
-    el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏">${icon('cube')}</button>
+    el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏" aria-controls="shell-side" aria-expanded="${sidebarExpanded()}">${icon('cube')}</button>
       ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !S.active || work)}
       ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
       ${it('data-nav="cmdk" data-op="rail.cmdk"', icon('search'), '搜索', false)}
@@ -188,14 +207,23 @@
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
       const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
+      if (b.dataset.conv || b.dataset.nav) setSidebarDrawer(false);
       if (b.dataset.conv) return openConv(b.dataset.conv);
       const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(); else if (n) openBuiltin(n);
     };
     $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(); if (n) openBuiltin(n); };
-    $('#btn-side').onclick = () => { const s = $('.shell'); s.classList.toggle('side-min'); localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : ''); };
+    $('#btn-side').onclick = () => {
+      if (drawerViewport.matches) return setSidebarDrawer(!sidebarExpanded(), sidebarExpanded());
+      const s = $('.shell'); s.classList.toggle('side-min');
+      localStorage.setItem('jk4-side', s.classList.contains('side-min') ? 'min' : '');
+      $('.rail-logo').setAttribute('aria-expanded', String(sidebarExpanded()));
+    };
+    $('#side-scrim').onclick = () => setSidebarDrawer(false, true);
     $('#btn-theme').onclick = (e) => { e.stopPropagation(); setTheme(theme() === 'dark' ? 'light' : 'dark'); };
-    $('#btn-me').onclick = (e) => { if (e.target.closest('#btn-theme')) return; meMenu($('#btn-me')); };
-    $('#btn-demo').onclick = () => window.JKDemo && JKDemo.start();
+    $('#btn-me').onclick = () => meMenu($('#btn-me'));
+    $('#btn-demo').onclick = () => { setSidebarDrawer(false); if (window.JKDemo) JKDemo.start(); };
+    $('#btn-mobile-chat').onclick = () => { $('#main').classList.add('mobile-chat'); $('#btn-mobile-app').focus(); };
+    $('#btn-mobile-app').onclick = () => { $('#main').classList.remove('mobile-chat'); $('#btn-mobile-chat').focus(); };
     $('#btn-max').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-chat-toggle').onclick = () => setLayout(S.layout === 'max' ? 'split' : 'max');
     $('#btn-pclose').onclick = () => { if (switchingAccount) return; Op.running?.stop(true); rememberPanel(); closePanel(); };
@@ -207,13 +235,14 @@
     cc.addEventListener('dragleave', () => { dc = Math.max(0, dc - 1); if (!dc) cc.classList.remove('dragging'); });
     cc.addEventListener('drop', (e) => { e.preventDefault(); dc = 0; cc.classList.remove('dragging'); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) readFile(f).then(handleFile); });
   }
-  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); cmdk(); } if (e.key === 'Escape' && !switchingAccount && Op.running && !$('.modal')) Op.running.stop(); }); }
+  if (!window.__jk4keys) { window.__jk4keys = 1; document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); setSidebarDrawer(false); cmdk(); } if (e.key === 'Escape' && !$('.modal')) { if ($('.side-drawer-open')) { setSidebarDrawer(false, true); return; } if (!switchingAccount && Op.running) Op.running.stop(); } }); }
   function meMenu(anchor) {
     const items = [{ head: `${S.me.name} · ${roleName()}` }, { v: 'settings', icon: 'user', label: '个人设置' }];
     if (isAdmin()) items.push({ v: 'admin', icon: 'shield', label: '管理后台' });
     items.push({ head: '切换视角（演示）' }); (CFG.demoAccounts || []).forEach((a) => items.push({ v: 'as:' + a.username, lead: `<span class="avatar h-${JK.hue(a.role, 'role')}" style="width:20px;height:20px;font-size:10px;flex:none">${esc(a.name[0])}</span>`, label: a.name, right: `<span class="t-3 t-xs">${esc(a.role)}</span>`, on: a.username === S.me.username }));
     items.push({ sep: true }, { v: 'reset', icon: 'refresh', label: '重置演示数据' }, { v: 'logout', icon: 'logout', label: '退出登录' });
-    menu(anchor, items, async (v) => { if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
+    const pop = menu(anchor, items, async (v) => { setSidebarDrawer(false); if (v === 'settings') openSettings(); else if (v === 'admin') openBuiltin('admin'); else if (v.startsWith('as:')) switchUser(v.slice(3)); else if (v === 'reset') { if (await JK.confirm('会清空本机所有修改，恢复初始演示数据。', { okText: '重置', danger: true })) reset(); } else if (v === 'logout') logout(); });
+    pop.classList.add('side-account-menu');
   }
   async function reset() { await API.demo.reset(); localStorage.removeItem(storeKey()); try { await API.auth.login({ username: S.me.username, password: (CFG.demoAccounts.find((a) => a.username === S.me.username) || { password: 'jk123456' }).password }); } catch (e) { return renderLogin(); } JK.bus.emit('data:reset'); await afterLogin(); toast('演示数据已重置'); }
 
@@ -323,6 +352,8 @@
   }
   function renderBuiltin(id) { const slot = S.mounted[id]; if (!slot) return; if (id === 'inbox') renderInbox(slot.el); else if (id === 'admin') window.JKAdmin.render(slot.el, slot.tab || 'users', shellApi); }
   function activate(id) {
+    setSidebarDrawer(false);
+    $('#main').classList.remove('mobile-chat');
     S.active = id; $$('.pview').forEach((v) => v.classList.toggle('on', v.dataset.view === id));
     $('#ptabs').innerHTML = S.open.map((x) => `<button class="ptab ${x === id ? 'on' : ''}" data-id="${x}">${appIcon(x, 'sm')}<span>${esc(mf(x).short || mf(x).name)}</span><span class="x" title="关闭">${icon('x')}</span></button>`).join('');
     const pt = $('#ptabs'); pt.classList.toggle('many', S.open.length > 4); const on = pt.querySelector('.ptab.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -339,7 +370,7 @@
     activate(wasActive ? S.open[S.open.length - 1] : S.active);
     if (wasActive) rememberActivePanel();
   }
-  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max'); renderSide(); renderChatBody(); }
+  function closePanel() { S.open.forEach(unmountApp); S.open = []; S.active = null; S.layout = 'home'; const m = $('#main'); m.classList.remove('split', 'max', 'mobile-chat'); renderSide(); renderChatBody(); }
 
   // 政策应用恢复自己的办理快照，其他应用沿用现有控件。
   async function restoreApp(slot, route, params) {
@@ -539,7 +570,7 @@
   function renderChat() { renderChatBody(); }
   function renderChatBody() {
     const cc = $('#chatcol'); if (!cc) return; const mask = cc.querySelector('.dropmask');
-    [...cc.children].forEach((x) => { if (x !== mask) x.remove(); });
+    [...cc.children].forEach((x) => { if (x !== mask && x.id !== 'btn-mobile-app') x.remove(); });
     const c = conv();
     if (!c) { cc.appendChild(homeView()); }
     else {
