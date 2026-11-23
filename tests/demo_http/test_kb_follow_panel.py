@@ -13,6 +13,34 @@ FOLLOW = "请列出这项数据券政策的申报期限、适用对象和需要�
 
 
 @pytest.mark.parametrize("server", [()], indirect=True)
+def test_delayed_metadata_does_not_replace_focused_kb_input(server):
+    with sync_playwright() as engine, engine.chromium.launch() as browser:
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(server.url)
+        login(page, "liyang", server.password)
+        held = []
+        page.route("**/api/v1/kb/stats", lambda route: held.append(route))
+        with page.expect_request(lambda r: r.url.endswith("/kb/stats")):
+            page.locator('[data-op="nav.kb"]').first.click()
+        field = page.locator('[data-op="kb.q"]')
+        field.fill(FIRST)
+        expect(field).to_be_focused()
+        field.evaluate("input => { window.initialKbInput = input; input.setSelectionRange(2, 5); }")
+        assert len(held) == 1
+
+        with page.expect_response(lambda r: r.url.endswith("/kb/stats")) as metadata:
+            held[0].continue_()
+        assert metadata.value.ok
+        expect(page.locator(".kb-summary")).not_to_contain_text("0 个可见空间")
+        assert field.evaluate("input => input === window.initialKbInput")
+        expect(field).to_be_focused()
+        assert field.evaluate("input => [input.selectionStart, input.selectionEnd]") == [2, 5]
+        with page.expect_response(lambda r: r.url.endswith("/kb/ask")) as answer:
+            page.keyboard.press("Enter")
+        assert answer.value.ok and answer.value.request.post_data_json["q"] == FIRST
+
+
+@pytest.mark.parametrize("server", [()], indirect=True)
 def test_panel_and_chat_citation_scopes(server):
     with sync_playwright() as engine, engine.chromium.launch() as browser:
         page = browser.new_page(viewport={"width": 1440, "height": 900})

@@ -127,18 +127,27 @@
       /* ===================== 搜索与问答 ===================== */
       const spaceName = (id) => (S.spaces.find((s) => s.id === id) || {}).name || id;
       const isQuestion = (q) => /[?？吗呢]$|多少|什么|怎么|如何|哪些|是否|能否|能不能|几|为什么|谁/.test(q);
-      function renderHome() {
+      function renderHomeMetadata() {
         const st = S.stats || {};
+        const chips = body.querySelector('#kb-sp');
+        if (!chips) return;
+        chips.innerHTML = `
+          <button class="chip-btn ${S.space === 'all' ? 'on' : ''}" data-sp="all">全部 <span class="n">${st.docs ?? ''}</span></button>
+          ${S.spaces.map((s) => `<button class="chip-btn ${S.space === s.id ? 'on' : ''}" data-sp="${esc(s.id)}" data-op="kb.space-${esc(s.id)}">${esc(s.name)} <span class="n">${s.count}</span></button>`).join('')}
+          <span class="sp"></span><button class="btn ghost sm ${S.showFilters || Object.values(S.filters).some(Boolean) ? 'on' : ''}" data-op="kb.filters">${icon('filter')}筛选${Object.values(S.filters).filter(Boolean).length ? ` · ${Object.values(S.filters).filter(Boolean).length}` : ''}</button>`;
+        body.querySelector('.kb-summary').innerHTML = `${st.docs ?? 0} 份资料 · ${S.spaces.length} 个可见空间 · 真实公开资料 ${st.real || 0} 份 + 示例资料 ${st.example || 0} 份${Object.entries(st.otherSources || {}).map(([from, n]) => ` + ${esc(from)} ${n} 份`).join('')}`;
+        const spaces = chips.querySelectorAll('[data-sp]');
+        spaces.forEach((b) => (b.onclick = () => { clearScope(); S.space = b.dataset.sp; spaces.forEach((x) => x.classList.toggle('on', x === b)); renderAnswer(); runSearch(); }));
+        chips.querySelector('[data-op="kb.filters"]').onclick = () => { S.showFilters = !S.showFilters; body.querySelector('#kb-filt').classList.toggle('hide', !S.showFilters); if (S.showFilters) renderFilters(); };
+        if (S.showFilters) renderFilters();
+      }
+      function renderHome() {
         body.innerHTML = `
           <div class="kb-q">
             <div class="kb-box"><span class="kb-ico">${icon('search')}</span><input class="kb-input" data-op="kb.q" placeholder="${esc(C.placeholder)}" value="${esc(S.q)}" autocomplete="off"><button class="btn primary" data-op="kb.ask">${icon('sparkles')}问 AI</button></div>
             <div id="kb-scope" class="meta" aria-live="polite"></div>
-            <div class="row wrap kb-chips" id="kb-sp">
-              <button class="chip-btn ${S.space === 'all' ? 'on' : ''}" data-sp="all">全部 <span class="n">${st.docs ?? ''}</span></button>
-              ${S.spaces.map((s) => `<button class="chip-btn ${S.space === s.id ? 'on' : ''}" data-sp="${s.id}" data-op="kb.space-${s.id}">${esc(s.name)} <span class="n">${s.count}</span></button>`).join('')}
-              <span class="sp"></span><button class="btn ghost sm ${S.showFilters || Object.values(S.filters).some(Boolean) ? 'on' : ''}" data-op="kb.filters">${icon('filter')}筛选${Object.values(S.filters).filter(Boolean).length ? ` · ${Object.values(S.filters).filter(Boolean).length}` : ''}</button>
-            </div>
-            <div class="meta kb-summary">${st.docs ?? 0} 份资料 · ${S.spaces.length} 个可见空间 · 真实公开资料 ${st.real || 0} 份 + 示例资料 ${st.example || 0} 份${Object.entries(st.otherSources || {}).map(([from, n]) => ` + ${esc(from)} ${n} 份`).join('')}</div>
+            <div class="row wrap kb-chips" id="kb-sp"></div>
+            <div class="meta kb-summary"></div>
             <div id="kb-filt" class="${S.showFilters ? '' : 'hide'}"></div>
           </div>
           <div id="kb-ans"></div><div id="kb-res"></div>`;
@@ -147,9 +156,7 @@
         inp.oninput = () => { S.q = inp.value; ++askSeq; ++seq; preview = null; S.asking = false; S.answer = null; renderAnswer(); clearTimeout(timer); timer = setTimeout(() => runSearch(true), 140); };
         inp.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); S.q = inp.value; submit(); } };
         body.querySelector('[data-op="kb.ask"]').onclick = () => { S.q = inp.value; submit(); };
-        body.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = () => { clearScope(); S.space = b.dataset.sp; body.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b)); renderAnswer(); runSearch(); }));
-        body.querySelector('[data-op="kb.filters"]').onclick = () => { S.showFilters = !S.showFilters; body.querySelector('#kb-filt').classList.toggle('hide', !S.showFilters); if (S.showFilters) renderFilters(); };
-        if (S.showFilters) renderFilters();
+        renderHomeMetadata();
         renderAnswer(); renderResults();
       }
       function renderFilters() {
@@ -621,16 +628,12 @@
       if (openingQuestion) go('home', { q: p.q, ask: true }); else render();
       (async () => {
         await loadMeta(); if (current !== handle) return;
-        const input = body.querySelector('[data-op="kb.q"]');
-        const selection = input && input === document.activeElement && [input.selectionStart, input.selectionEnd];
-        render();
-        if (selection && S.tab === 'home') {
-          const next = body.querySelector('[data-op="kb.q"]'); next.focus(); next.setSelectionRange(...selection);
-        }
+        // 空间和统计晚到时只刷新它们，不能替换正在处理输入、输入法或 Enter 的节点。
+        if (S.tab === 'home') renderHomeMetadata(); else render();
         if (pendingOpen) { const po = pendingOpen; pendingOpen = null; go('doc', po); }
         else if (p.id) go('doc', p);
         else if (p.file) handle.actions.intake({ file: p.file });
-        else if (!openingQuestion && p.route) go(p.route, p);
+        else if (!openingQuestion && p.route && !(p.route === 'home' && S.tab === 'home')) go(p.route, p);
       })();
       return handle;
     },
