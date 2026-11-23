@@ -41,6 +41,27 @@
     try { await (V[tab] || V.users)(body, el); } catch (e) { body.innerHTML = JK.empty({ icon: 'alert', title: '加载失败', desc: e.message }); }
   }
   const re = (el) => render(el, el.dataset.tab, SH);
+  function issuePassword() {
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  function showIssuedPassword(username, secret, created) {
+    modal({ title: created ? '账号已创建' : '口令已重置', width: 460, okText: '我已保存', ok: () => {},
+      body: `<div class="stack"><p ${created ? 'data-op="admin.u-created"' : ''}>账号 <b>${esc(username)}</b> 的口令仅在本次弹窗查看；关闭后无法找回。请在非共享屏幕下查看，并安全交付给本人。</p><div data-secret-slot></div><button class="btn" data-reveal-password>查看口令</button><p class="t-3 t-xs">登录后可在个人设置中修改口令。</p></div>`,
+      onMount(d) {
+        const reveal = d.querySelector('[data-reveal-password]');
+        reveal.onclick = () => {
+          reveal.disabled = true;
+          const field = document.createElement('input');
+          field.className = 'input mono'; field.readOnly = true; field.autocomplete = 'off'; field.spellcheck = false;
+          field.setAttribute('aria-label', '本次生成的口令'); field.setAttribute('data-issued-password', '');
+          field.value = secret; secret = '';
+          d.querySelector('[data-secret-slot]').append(field);
+          field.focus(); field.select();
+        };
+      },
+    });
+  }
   const V = {
     async users(b, el) {
       const r = await API.admin.users(); const roles = r.roles, deps = r.departments; const q = el.dataset.q || '';
@@ -51,11 +72,30 @@
       b.querySelectorAll('[data-role]').forEach((s) => (s.onchange = async () => { try { await API.admin.patchUser(s.dataset.role, { role: s.value }); toast('角色已更新，立即生效'); } catch (e) { toast(e.message, { type: 'err' }); re(el); } }));
       b.querySelectorAll('[data-more]').forEach((x) => (x.onclick = () => { const on = x.dataset.st === 'active'; JK.menu(x, [{ v: 'reset', icon: 'key', label: '重置密码' }, { v: 'toggle', icon: on ? 'lock' : 'check', label: on ? '停用账号' : '启用账号' }], async (v) => {
         const id = x.dataset.more;
-        if (v === 'reset') { if (!(await confirm('密码将重置为 jk123456。'))) return; await API.admin.patchUser(id, { resetPassword: true }); toast('已重置为 jk123456'); }
+        if (v === 'reset') {
+          if (!(await confirm('将生成独立的新口令，原口令不再可用。确认重置？', { okText: '重置', danger: true }))) return;
+          try {
+            const password = issuePassword();
+            const reply = await API.admin.patchUser(id, { resetPassword: password });
+            if (reply.item?.id !== id) throw Error('没有收到口令重置回执，请核对账号状态');
+            if (el.isConnected) showIssuedPassword(reply.item.username, password, false);
+          } catch (e) { toast(e.message, { type: 'err' }); }
+          return;
+        }
         if (v === 'toggle') { if (on && !(await confirm('停用后该账号无法登录，已有数据保留。', { okText: '停用', danger: true }))) return; try { await API.admin.patchUser(id, { status: on ? 'disabled' : 'active' }); toast(on ? '已停用' : '已启用'); re(el); } catch (e) { toast(e.message, { type: 'err' }); } }
       }); }));
-      b.querySelector('[data-op="admin.add-user"]').onclick = () => modal({ title: '新增账号', width: 460, okText: '创建', body: `<div class="col gap3"><div class="grid g2"><div class="field"><label>姓名</label><input class="input" data-op="admin.u-name" placeholder="如 张晓"></div><div class="field"><label>账号</label><input class="input" data-op="admin.u-username" placeholder="登录名，如 zhangxiao"></div></div><div class="grid g2"><div class="field"><label>角色</label><select class="select" data-op="admin.u-role">${roles.map((ro) => `<option value="${ro.id}" ${ro.id === 'member' ? 'selected' : ''}>${esc(ro.name)}</option>`).join('')}</select></div><div class="field"><label>部门</label><select class="select" data-op="admin.u-dept">${deps.filter((d) => d.parent).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div></div><div class="hint t-3 t-xs">初始密码 jk123456，首次登录后可在个人设置修改。</div></div>`,
-        foot: '', ok: async (d) => { const v = (s) => d.querySelector(`[data-op="admin.u-${s}"]`).value.trim(); try { await API.admin.createUser({ name: v('name'), username: v('username'), role: v('role'), deptId: v('dept') }); toast('账号已创建'); re(el); } catch (e) { toast(e.message, { type: 'err' }); return false; } },
+      b.querySelector('[data-op="admin.add-user"]').onclick = () => modal({ title: '新增账号', width: 460, okText: '创建', body: `<div class="col gap3"><div class="grid g2"><div class="field"><label>姓名</label><input class="input" data-op="admin.u-name" placeholder="如 张晓"></div><div class="field"><label>账号</label><input class="input" data-op="admin.u-username" placeholder="登录名，如 zhangxiao"></div></div><div class="grid g2"><div class="field"><label>角色</label><select class="select" data-op="admin.u-role">${roles.map((ro) => `<option value="${ro.id}" ${ro.id === 'member' ? 'selected' : ''}>${esc(ro.name)}</option>`).join('')}</select></div><div class="field"><label>部门</label><select class="select" data-op="admin.u-dept">${deps.filter((d) => d.parent).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div></div><div class="hint t-3 t-xs">系统为新账号生成独立口令。创建成功后，该口令可在结果弹窗查看一次。</div></div>`,
+        foot: '', ok: async (d) => {
+          const submit = d.querySelector('[data-ok]'); if (submit.disabled) return false;
+          submit.disabled = true;
+          const v = (s) => d.querySelector(`[data-op="admin.u-${s}"]`).value.trim();
+          try {
+            const password = issuePassword();
+            const reply = await API.admin.createUser({ name: v('name'), username: v('username'), role: v('role'), deptId: v('dept') || null, password });
+            if (!reply.item?.id || reply.item.status !== 'active') throw Error('没有收到账号创建并启用的回执，请核对账号状态');
+            if (el.isConnected) { showIssuedPassword(reply.item.username, password, true); re(el); }
+          } catch (e) { submit.disabled = false; toast(e.message, { type: 'err' }); return false; }
+        },
         onMount: (d) => { const ok = d.querySelector('[data-ok]'); ok.dataset.op = 'admin.u-save'; } });
     },
     async org(b, el) {
