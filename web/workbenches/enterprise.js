@@ -164,11 +164,21 @@
       if (f.dataset.form === 'new-company' || f.dataset.form === 'edit-company') {
         data.name = data.name.trim(); data.employees = Number(data.employees);
         if (!data.name) { f.querySelector('[role="alert"]').textContent = '请填写企业全称'; return; }
-        return mutate(() => form === 'edit-company' ? api.patch(detail.item.id, data) : api.create(data), r => go('company', { id: r.item.id }));
+        if (form === 'edit-company') {
+          const changed = Object.fromEntries(Object.entries(data).filter(([key, value]) => String(value) !== String(detail.item[key] ?? (key === 'employees' ? 0 : ''))));
+          if (!Object.keys(changed).length) { form = null; return load('没有修改内容，已读取最新档案。'); }
+          return mutate(() => api.patch(detail.item.id, changed), r => go('company', { id: r.item.id }));
+        }
+        return mutate(() => api.create(data), r => go('company', { id: r.item.id }));
       }
       if (f.dataset.form === 'new-visit') return mutate(() => api.visit(data.company, { notes: data.notes.trim(), type: data.type }), () => { form = null; go('visits', { company: data.company }); });
       if (f.dataset.form === 'new-issue') return mutate(() => api.createIssue({ entId: data.company, title: data.title.trim(), from: data.from, owner: data.owner.trim(), due: data.due, next: data.next.trim() }), r => go('issue', { id: r.item.id }));
-      if (f.dataset.form === 'update-issue') return mutate(() => api.patchIssue(f.dataset.id, data), () => load('办理进展已保存。'));
+      if (f.dataset.form === 'update-issue') {
+        const original = issues.find(i => i.id === f.dataset.id);
+        const changed = Object.fromEntries(Object.entries(data).filter(([key, value]) => key === 'note' ? value.trim() : value !== String(original[key] ?? '')));
+        if (!Object.keys(changed).length) return load('没有修改内容，已读取最新进展。');
+        return mutate(() => api.patchIssue(f.dataset.id, changed), () => load('办理进展已保存。'));
+      }
     };
     load();
     return { unmount() { alive = false; sequence++; el.onclick = el.onsubmit = null; } };

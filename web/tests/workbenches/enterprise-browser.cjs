@@ -176,3 +176,27 @@ test('返回对话时原已打开应用显示已更新的诉求状态', { timeou
   await expect(card).toBeVisible();
   await expect(card.locator('..')).toContainText('已办结');
 });
+test('补充进展和编辑档案仅提交实际改动，保留其他经办人已保存的字段', { timeout: 45000 }, async t => {
+  const page = await setup(t);
+  const issueId = await page.evaluate(async () => {
+    const item = (await JKApi.enterprise.createIssue({ entId: 'E001', title: '并发办理验证', owner: '原负责人' })).item;
+    JKWorkbench.open('enterprise', { recordId: 'issue?id=' + item.id }); return item.id;
+  });
+  await expect(page.getByLabel('负责人', { exact: true })).toHaveValue('原负责人');
+  await page.evaluate(id => JKApi.enterprise.patchIssue(id, { owner: '新负责人', status: '已办结', next: '办结归档', due: '2030-12-12' }), issueId);
+  await page.getByLabel('本次进展与依据').fill('补记之前的电话沟通');
+  await page.getByRole('button', { name: '保存办理进展', exact: true }).click();
+  await expect(page.locator('.ew-notice')).toContainText('已保存');
+  await expect(page.getByLabel('负责人', { exact: true })).toHaveValue('新负责人');
+  await expect(page.getByLabel('办理状态')).toHaveValue('已办结');
+  await expect(page.getByLabel('下一步安排')).toHaveValue('办结归档');
+  await expect(page.getByLabel('办理期限')).toHaveValue('2030-12-12');
+  await page.evaluate(() => JKWorkbench.open('enterprise', { recordId: 'company?id=E001' }));
+  await page.getByRole('button', { name: '编辑企业资料', exact: true }).click();
+  await page.getByLabel('企业简称').fill('更新简称');
+  await page.evaluate(() => JKApi.enterprise.patch('E001', { industry: '他人更新的行业', employees: 123 }));
+  await page.getByRole('button', { name: '保存企业档案', exact: true }).click();
+  await expect(page.locator('.ew-profile')).toContainText('123');
+  const company = await page.evaluate(async () => (await JKApi.enterprise.get('E001')).item);
+  assert.equal(company.industry, '他人更新的行业'); assert.equal(company.short, '更新简称');
+});
