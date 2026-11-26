@@ -1,6 +1,37 @@
 const test=require('node:test'), assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
 const {chromium}=require('@playwright/test');
 const root=path.resolve(__dirname,'../..');
+test('查看会议来源前保留未保存正文，保存失败不能绕过离开保护',{timeout:60000},async()=>{
+ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1280,height:900}});page.setDefaultTimeout(12000);
+  await page.goto('file://'+root+'/index.html');await page.locator('[data-u="wangmin"]').click();await page.locator('.hello').waitFor();
+  const id=await page.evaluate(async()=>{
+   const api=JKApi.document,d=(await api.draft({templateId:'T06',inputs:{orig:'会议事项办理通知',oldEnd:'2026-11-01',newEnd:'2026-11-30'}})).item;
+   // 本回归覆盖公文离开保护；来源读取与定稿权限由 HTTP/API 用例覆盖。
+   JKAPI.state().drafts[d.id].source={app:'meeting',id:'source-fixture',version:2,title:'公开演示会议定稿'};
+   JKWorkbench.open('document',{recordId:d.id});return d.id;
+  });
+  const paragraph=page.locator('[data-editor] textarea[name="para"]').first(),source=page.locator('.dw-source [data-action="source"]');
+  await paragraph.fill('经核对新增但尚未保存的公文修改。');
+  await source.click();
+  assert.equal((await page.evaluate(()=>JKWorkbench.current())).id,'document');
+  await page.getByRole('alert').filter({hasText:'请先保存正文修改'}).waitFor();
+  assert.equal(await paragraph.inputValue(),'经核对新增但尚未保存的公文修改。');
+  await page.evaluate(()=>{window.originalDocumentSave=JKApi.document.save;JKApi.document.save=async()=>{throw new Error('本次保存失败，请重试');};});
+  await page.getByRole('button',{name:'保存新版本',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'本次保存失败'}).waitFor();
+  await source.click();
+  assert.equal((await page.evaluate(()=>JKWorkbench.current())).id,'document');
+  assert.equal(await paragraph.inputValue(),'经核对新增但尚未保存的公文修改。');
+  await page.evaluate(()=>{JKApi.document.save=window.originalDocumentSave;delete window.originalDocumentSave;});
+  await page.getByRole('button',{name:'保存新版本',exact:true}).click();await page.getByText('已保存新版本',{exact:true}).waitFor();
+  await source.click();
+  assert.deepEqual(await page.evaluate(()=>JKWorkbench.current()),{id:'meeting',recordId:'source-fixture~minutes~2'});
+  await page.evaluate(id=>JKWorkbench.open('document',{recordId:id}),id);
+  await require('@playwright/test').expect(paragraph).toHaveValue('经核对新增但尚未保存的公文修改。');
+ }finally{await browser.close();}
+});
 test('公文工作台真实页面：档案直达、修改留版、核查、批注、送审、审批与下载',{timeout:90000},async()=>{
  const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
  try{

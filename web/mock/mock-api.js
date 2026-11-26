@@ -738,10 +738,13 @@
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
   const docAuthorId = d => d.authorId || S.users.find(u => u.name === d.author)?.id || null;
+  // 旧离线协议的 assignee 是展示姓名；新单据单独绑定 ID，避免改名/同名改变办理人。
+  const reviewAssigneeId = r => r.assigneeId || S.users.find(u => u.id === r.assignee || u.name === r.assignee)?.id || r.assignee;
+  const assignedToMe = r => !reviewAssigneeId(r) || reviewAssigneeId(r) === me().id;
   on('GET', '/api/apps/document/workbench', () => ({
     items: Object.values(S.drafts).map(d => ({...docSummary(d), authorId:docAuthorId(d), project:'jkq', source:d.source || null})).sort((a,b) => b.updated.localeCompare(a.updated)),
     reviewers: S.users.filter(u => u.status === 'active' && can('document','view',u) && can('document','approve',u)).map(u => ({id:u.id,name:u.name})),
-    reviews: S.inbox.filter(r => r.type === 'review' && r.app === 'document' && (r.submitter === me().id || (r.status === 'pending' && can('document','approve') && docAuthorId(S.drafts[r.ref] || {}) !== me().id && (!r.assignee || [me().id,me().name].includes(r.assignee))))).map(r => ({...r, status:r.status === 'pending' && r.version !== undefined && r.version !== S.drafts[r.ref]?.versions.at(-1).v ? 'stale' : r.status, recordId:r.ref, assignee:S.users.find(u => u.id === r.assignee || u.name === r.assignee)?.id || r.assignee}))
+    reviews: S.inbox.filter(r => r.type === 'review' && r.app === 'document' && (r.submitter === me().id || (r.status === 'pending' && can('document','approve') && docAuthorId(S.drafts[r.ref] || {}) !== me().id && assignedToMe(r)))).map(r => ({...r, status:r.status === 'pending' && r.version !== undefined && r.version !== S.drafts[r.ref]?.versions.at(-1).v ? 'stale' : r.status, recordId:r.ref, assignee:reviewAssigneeId(r)}))
   }));
   on('POST', '/api/apps/document/workbench/reviews/:id', (b,p) => {
     if (!can('document','approve')) err(403,'FORBIDDEN','没有公文审核权限');
@@ -798,7 +801,7 @@
     if (reviewer.id === me().id || reviewer.name === d.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
     if (!can('document', 'approve', reviewer)) err(403, 'FORBIDDEN', '指定用户没有审签权限');
     d.status = '审签中';
-    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: reviewer.id, submitter: me().id, version: d.versions.at(-1).v };
+    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: reviewer.name, assigneeId: reviewer.id, submitter: me().id, version: d.versions.at(-1).v };
     S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r };
   });
   on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${escapeHtml(c.title)}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${escapeHtml(c.docNo) || '发文字号（请填写）'}</p><h1>${escapeHtml(c.title)}</h1><p>${escapeHtml(c.to)}</p>${c.paragraphs.map((x) => `<p>　　${escapeHtml(x)}</p>`).join('')}<p class="sign">${escapeHtml(c.sign)}</p><p class="sign">${escapeHtml(c.date)}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
@@ -813,7 +816,7 @@
     if (r.type === 'review') {
       const d = S.drafts[r.ref];
       if (me().id === r.submitter || me().name === d?.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
-      if (r.assignee && r.assignee !== me().name && r.assignee !== me().id) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
+      if (!assignedToMe(r)) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
       const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
       if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
       if (r.version !== undefined && r.version !== d.versions.at(-1).v) err(409,'STALE_VERSION','文稿已有新版本，旧审签单已失效');
