@@ -170,12 +170,12 @@ def test_real_conversation_generates_notice_for_explicit_selection(policy_client
     reply = _send(policy_client(), "给书香里生成告知单 RP-001、RP-006")
     assert reply["toolCalls"] == [{"tool": "policy.notice", "args": NOTICE, "status": "ok"}]
     assert reply["content"].count("咨询电话：请填写") == 2
-    assert "政策兑现一次性告知单" in reply["content"]
+    assert "政策参考清单" in reply["content"]
 
 
 def test_real_conversation_needs_selection_before_generating_notice(policy_client):
     reply = _send(policy_client(), "给书香里生成告知单")
-    assert reply["content"] == "请提供要写入告知单的政策事项编号。"
+    assert reply["content"] == "请提供要写入政策参考清单的政策支持编号。"
 
 
 def test_view_only_role_does_not_receive_company_match_card(policy_client):

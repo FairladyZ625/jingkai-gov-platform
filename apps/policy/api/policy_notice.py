@@ -1,4 +1,4 @@
-"""按所选事项生成一次性告知单草稿，并准备公文起草参数。"""
+"""按所选政策支持生成参考清单，并准备公文起草参数。"""
 
 from html import unescape
 
@@ -16,7 +16,7 @@ _TEMPLATE_ID = "T10"  # 公文的「企业诉求答复意见」模板
 
 def build_notice(ent_id: str | None, items: list[dict], *, subject_type=None, amounts=None) -> dict:
     subject = f"企业编号：{ent_id}" if ent_id else f"申报对象：{subject_type}（手动描述）"
-    heading = _HEADER.render("政策兑现一次性告知单\n{{subject}}", {"subject": subject})
+    heading = _HEADER.render("政策参考清单\n{{subject}}", {"subject": subject})
     sections = [heading.html]
     for index, item in enumerate(items, 1):
         source = item.get("source") or {}

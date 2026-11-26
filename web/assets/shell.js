@@ -13,6 +13,13 @@
   let switchingAccount = false;
   let afterReauthentication = null;
   const pendingConversations = new WeakMap();
+  let draftContext = { mode: 'general', enterpriseId: '' };
+  const chatContext = () => {
+    const current = conv();
+    const saved = current ? current.context || {} : draftContext;
+    return { mode: saved.mode === 'policy_service' ? 'policy_service' : 'general', enterpriseId: saved.mode === 'policy_service' ? saved.enterpriseId || '' : '' };
+  };
+  const messageContext = context => ({ mode: context.mode, ...(context.mode === 'policy_service' && context.enterpriseId ? { enterpriseId: context.enterpriseId } : {}) });
   const loginDemoAccounts = () => offlineDemo() || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
 
   window.addEventListener?.('jk:api:notice', ({ detail }) => {
@@ -103,6 +110,7 @@
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
     if (previousUserId && previousUserId !== S.me.id) history.replaceState(null, '', location.pathname + location.search);
+    draftContext = { mode: 'general', enterpriseId: '' };
     S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
@@ -705,12 +713,13 @@
     if (panel) return openApp(panel.app, panel.route, panel.params, true);
   }
   function newChat() {
+    draftContext = { mode: 'general', enterpriseId: '' };
     switchConversation(null);
     const t = $('#chatcol textarea');
     if (t) t.focus();
   }
   function openConv(id) { Workbench?.hide(); if (id !== S.cur) return switchConversation(id); }
-  function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [] }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
+  function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [], context: { ...draftContext } }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
   function renderChat() { renderChatBody(); }
   function renderChatBody() {
     const cc = $('#chatcol'); if (!cc) return; const mask = cc.querySelector('.dropmask');
@@ -744,7 +753,7 @@
     return v;
   }
   function composerHTML(big) {
-    return `<div class="composer" data-op="chat.composer"><div class="pending-file hide"></div><textarea rows="${big ? 2 : 1}" data-op="chat.input" placeholder="${esc(CFG.composerPlaceholder || '说一句要办的事')}"></textarea>
+    return `<div class="composer" data-op="chat.composer"><div class="agent-context" data-agent-context></div><div class="pending-file hide"></div><textarea rows="${big ? 2 : 1}" data-op="chat.input" placeholder="${esc(CFG.composerPlaceholder || '说一句要办的事')}"></textarea>
       <div class="tools"><button class="btn icon sm ghost" data-act="attach" data-op="chat.attach" title="添加文件（也可以直接拖进来或粘贴）">${icon('paperclip')}</button><button class="btn icon sm ghost" data-act="at" title="指定应用">${icon('grid')}</button><span class="sp"></span><span class="t-3 t-xs" data-hint></span><button class="send" data-act="send" data-op="chat.send" disabled title="发送（Enter）">${icon('send')}</button></div></div>`;
   }
   function composer() { const w = h(`<div class="composer-wrap">${composerHTML(false)}</div>`); bindComposer(w); return w; }
@@ -763,7 +772,32 @@
     sendB.onclick = go;
     scope.querySelector('[data-act="attach"]').onclick = (e) => attachMenu(e.currentTarget, (f) => { pendingFile = f; showPF(); upd(); ta.focus(); });
     scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = startersFor(v)[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
-    showPF(); upd();
+    bindAgentContext(scope); showPF(); upd();
+  }
+  function bindAgentContext(scope) {
+    const bar = scope.querySelector('[data-agent-context]'); if (!bar) return;
+    const context = chatContext(), userId = S.me?.id, conversationId = S.cur;
+    const policy = context.mode === 'policy_service';
+    bar.innerHTML = `<div class="agent-context-row"><label>助手模式<select aria-label="助手模式"><option value="general">通用助手</option><option value="policy_service" ${!can('policy', 'view') ? 'disabled' : ''}>政策服务专员</option></select></label>${policy ? `<label class="agent-company">服务企业<select aria-label="服务企业" ${!can('enterprise', 'view') ? 'disabled' : ''}><option value="">${can('enterprise', 'view') ? '不指定，先咨询政策' : '当前账号无权读取企业台账'}</option></select></label>` : ''}</div>${policy ? '<p class="agent-context-note">先查政策依据，再结合企业需求核对条件、材料和办理步骤。</p>' : ''}`;
+    const mode = bar.querySelector('[aria-label="助手模式"]'); mode.value = context.mode;
+    const save = next => { const c = conv(); if (c) { c.context = next; saveConvs(); } else draftContext = next; };
+    mode.onchange = () => { save({ mode: mode.value, enterpriseId: '' }); bindAgentContext(scope); };
+    const company = bar.querySelector('[aria-label="服务企业"]');
+    if (!company || !can('enterprise', 'view')) return;
+    if (context.enterpriseId) company.add(new Option('已选择企业 · 正在读取名称', context.enterpriseId));
+    company.value = context.enterpriseId;
+    company.onchange = () => save({ mode: 'policy_service', enterpriseId: company.value });
+    API.enterprise.list({ sort: 'name' }).then(({ items }) => {
+      if (!company.isConnected || userId !== S.me?.id || conversationId !== S.cur) return;
+      const selected = chatContext().enterpriseId;
+      company.innerHTML = `<option value="">不指定，先咨询政策</option>${items.map(e => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}`;
+      if (selected && !items.some(e => e.id === selected)) company.add(new Option('所选企业暂不可读取，可重新选择', selected));
+      company.value = selected;
+    }).catch(error => {
+      if (!company.isConnected || userId !== S.me?.id || conversationId !== S.cur) return;
+      const note = document.createElement('span'); note.className = 'agent-context-note'; note.setAttribute('role', 'status');
+      note.textContent = '企业列表未能读取，可先咨询政策。' + (error.message || ''); bar.appendChild(note);
+    });
   }
   function attachMenu(anchor, pick) {
     const samples = (window.JK_SAMPLE_FILES || []).map(sampleFileView);
@@ -808,8 +842,8 @@
     (m.cards || []).forEach((card) => body.appendChild(renderReplyCard(card)));
     if (m.cites && m.cites.length) {
       body.appendChild(h(`<div class="srcs">${m.cites.slice(0, 4).map((c) => `<div class="src" data-cid="${esc(c.id || '')}" data-hl="${esc((c.snippet || '').slice(0, 60))}"><span class="n">${c.n}</span><span class="grow" style="min-width:0"><div class="st clip">${esc(c.title || '')}</div><div class="sm clip">${esc([c.source && c.source.docNo, c.source && c.source.org, c.source && c.source.date].filter(Boolean).join(' · ') || (c.snippet || '').slice(0, 40))}</div></span>${c.source && /^https?:\/\//i.test(c.source.url) ? `<a class="btn icon sm ghost" href="${esc(c.source.url)}" target="_blank" rel="noopener" title="官网原文">${icon('external')}</a>` : ''}</div>`).join('')}</div>`));
-      body.querySelectorAll('.src').forEach((s) => (s.onclick = (e) => { if (e.target.closest('a')) return; openCite(s.dataset.cid, s.dataset.hl); }));
-      body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openCite(x.id, (x.snippet || '').slice(0, 60)); }));
+      body.querySelectorAll('.src').forEach((s, index) => (s.onclick = (e) => { if (e.target.closest('a')) return; openChatCitation(m.cites[index]); }));
+      body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openChatCitation(x); }));
     }
     const nextButtons = (m.next || []).map((a, i) => {
       if ((a.say && !recommendText(a.say)) || (a.open && !can(a.open, 'view')) || (a._run && !canIntent(a._run.intent))) return '';
@@ -823,7 +857,7 @@
     if (m.model) { const meta = h(`<div class="meta"><span>${esc(m.model)}${m.routeNote ? ' · ' + esc(m.routeNote) : ''}</span><span class="sp"></span><button class="btn sm ghost" data-a="copy" title="复制">${icon('copy')}</button>${m.q ? `<button class="btn sm ghost" data-a="redo" title="换个模型重答">${icon('refresh')}</button>${JK.registry.skills ? `<button class="btn sm ghost" data-a="skill" title="存为我的技能">${icon('skill')}</button>` : ''}` : ''}</div>`); body.appendChild(meta);
       meta.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a;
         if (a === 'copy') { const t = (m.text || '').replace(/\*\*/g, ''); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('已复制'), () => toast('已复制')); }
-        if (a === 'redo') { const others = S.models.filter((x) => x.enabled && x.id !== S.model && x.kind !== 'route').slice(0, 6); menu(b, [{ head: '换个模型重答' }, ...others.map((x) => ({ v: x.id, label: x.name }))], async (v) => { await API.models.setCurrent(v); S.model = v; $$('.model-chip').forEach((c) => (c.outerHTML = modelChip())); $$('#chatcol .bar-h, #chatcol .home').forEach(bindModelChip); answer(m.q); }); }
+        if (a === 'redo') { const others = S.models.filter((x) => x.enabled && x.id !== S.model && x.kind !== 'route').slice(0, 6); menu(b, [{ head: '换个模型重答' }, ...others.map((x) => ({ v: x.id, label: x.name }))], async (v) => { await API.models.setCurrent(v); S.model = v; $$('.model-chip').forEach((c) => (c.outerHTML = modelChip())); $$('#chatcol .bar-h, #chatcol .home').forEach(bindModelChip); m.context?.mode === 'policy_service' ? answerHttp(m.q, m.context) : answer(m.q); }); }
         if (a === 'skill') send('帮我做一个技能：' + m.q); }; }
     return el;
   }
@@ -870,6 +904,7 @@
     }
     return view;
   }
+  function openChatCitation(c) { if (!c) return; if (c.source?.app === 'policy' && c.source.itemId) { if (can('policy', 'view')) return openApp('policy', 'detail', { itemId: c.source.itemId }); return; } openCite(c.id, (c.snippet || '').slice(0, 60)); }
   function openCite(id, hl) { if (!id) return; if (JK.services.kb && JK.services.kb.open) JK.services.kb.open(id, { highlight: hl }); else if (JK.registry.kb) openApp('kb', 'doc', { fileId: id, highlight: hl }); }
   function postAI(o) { return push({ role: 'ai', text: o.text, cites: o.cites, next: o.next, model: o.model, routeNote: o.routeNote, q: o.q }); }
   function planEl(m) {
@@ -911,7 +946,12 @@
   async function send(text, opt = {}) {
     if (switchingAccount) return;
     text = String(text || '').trim(); if (!text) return;
-    if (!opt.silentUser) push({ role: 'user', text });
+    const context = chatContext();
+    if (!opt.silentUser) push({ role: 'user', text, context });
+    if (context.mode === 'policy_service') {
+      if (!can('policy', 'view')) return postAI({ text: '当前身份没有政策查询权限，请切回通用助手或联系管理员。' });
+      return answerHttp(text, context);
+    }
     const epoch = conversationEpoch;
     // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
     const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
@@ -968,7 +1008,7 @@
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }
-  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
+  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: { ...(c.url ? { url: c.url } : {}), ...(c.source || {}) } })); }
   async function answer(text, scope) {
     if (!scope && H.mode() === 'http') return answerHttp(text);
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
@@ -990,11 +1030,13 @@
       finish({ q: text, text: (rep.content || '好的。').replace(/（演示环境[^）]*）/g, '').trim(), cites: (rep.citations || []).map((x, i) => ({ n: i + 1, id: x.fileId, title: x.name, snippet: x.snippet })), model: rep.model, routeNote: rep.routeNote, next: suggestFor(rep.intent) });
     } catch (e) { finish({ text: '抱歉，这个问题我暂时答不上来：' + (e.message || '出错了') }); }
   }
-  async function answerHttp(text) {
+  async function answerHttp(text, selectedContext = chatContext()) {
+    const context = { ...selectedContext };
     const c = ensureConv(text);
     const userId = S.me.id;
     const conversations = S.convs;
-    const message = postAI({ text: '正在生成回复…', q: text });
+    const message = postAI({ text: context.mode === 'policy_service' ? '正在查询政策依据…' : '正在生成回复…', q: text });
+    message.context = context;
     let receivedText = false;
     let streamed = false;
     let pending = pendingConversations.get(c);
@@ -1024,14 +1066,14 @@
         text: reply.content ?? (receivedText ? message.text : '回复已完成'),
         model: reply.model ?? message.model, routeNote: reply.routeNote ?? message.routeNote,
         cards: reply.cards ?? message.cards, cites: reply.citations ? citesOf(reply) : message.cites,
-        next: suggestFor(reply.intent),
+        next: context.mode === 'policy_service' ? [] : suggestFor(reply.intent),
       });
     }
 
     try {
       const cid = c.sid || await pending;
       if (userId !== S.me?.id || S.convs !== conversations) return;
-      const result = await API.chat.send(cid, { text, model: S.model, stream: true }, (type, data) => {
+      const result = await API.chat.send(cid, { text, model: S.model, stream: true, ...messageContext(context) }, (type, data) => {
         streamed = true;
         if (type === 'meta') {
           message.model = data.model;

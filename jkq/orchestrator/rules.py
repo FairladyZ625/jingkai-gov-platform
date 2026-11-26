@@ -20,7 +20,7 @@ ENT = r"(?P<ent>书香里(?:文化)?|纸鹿二号(?:智驾)?)"
 RULES = (
     Rule(rf"(?:帮我)?(?:查(?:一下)?)?{ENT}能(?:申请|申报)哪些(?:政策)?(?:支持|政策)?", ToolCall("policy.match", {})),
     Rule(r"补填数据采购额(?P<amount>[0-9]{1,7})万", ToolCall("policy.match", {})),
-    Rule(rf"给{ENT}生成(?:政策)?告知单", ToolCall("policy.notice", {})),
+    Rule(rf"给{ENT}生成(?:政策参考清单|参考清单|(?:政策)?告知单)", ToolCall("policy.notice", {})),
     Rule(rf"查(?:一下)?{ENT}", ToolCall("enterprise.get", {})),
     Rule(rf"给{ENT}加(?:一条)?走访记录", ToolCall("enterprise.propose_update", {})),
     Rule(r"打开企业台账筛选高新(?:技术)?企业", ToolCall("enterprise.search", {"tag": "高新技术"})),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -61,9 +62,20 @@ def _item(item_id: object) -> dict:
 
 
 @router.get("/items")
-def items(q: str = "", object: str = "", window: str = ""):
+async def items(request: Request, q: str = "", object: str = "", window: str = "",
+                queryMode: Literal["question"] | None = None, enterpriseId: str | None = None):
     if window and window not in WINDOWS:
         raise PolicyRequestError(400, "INVALID_REQUEST", "申报窗口须为 open、ended 或 unknown")
+    if queryMode == "question":
+        from .policy_search import search_question
+        if len(q) > 4000 or (enterpriseId is not None and (not enterpriseId.strip() or len(enterpriseId) > 200)):
+            raise PolicyRequestError(400, "INVALID_REQUEST", "政策问题或企业编号格式不正确")
+        result = search_question(q, object, window)
+        # 跨应用访问由实例注入，独立挂载政策应用时不假定企业服务存在。
+        reader = getattr(request.app.state, "policy_enterprise_reader", None)
+        result["enterprise"] = (await reader(request, enterpriseId) if callable(reader)
+                                else {"id": enterpriseId, "status": "unavailable"}) if enterpriseId else None
+        return result
     return list_items(q, object, window)
 
 

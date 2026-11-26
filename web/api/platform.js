@@ -42,7 +42,7 @@
       /** → {items:Conversation[]} */ list: () => H.get('/api/v1/conversations'),
       /** {title,app} → {item} */ create: (b) => H.post('/api/v1/conversations', b),
       /** → {ok} */ remove: (id) => H.del('/api/v1/conversations/' + id),
-      /** {text,model,app,files} → {conversation,user,reply:Message} 模型回复（模拟/SSE） */ send: (id, b, onEvent) => {
+      /** {text,model,app,files,mode?,enterpriseId?} → {conversation,user,reply:Message} 模型回复（模拟/SSE） */ send: (id, b, onEvent) => {
         const path = `/api/v1/conversations/${encodeURIComponent(id)}/messages`;
         return onEvent ? H.stream(path, b, onEvent) : H.post(path, b);
       },

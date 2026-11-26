@@ -1,10 +1,10 @@
 /* 政策兑现（app id: policy）· v4 综合版
- * 合并：v2 四步向导（选对象→核对→试算→告知单） + v1 手动画像/试算预设/data-op 锚点 + v3 补数即重算、告知单可编辑
+ * 合并：v2 四步向导（选对象→核对→试算→政策参考清单） + v1 手动画像/试算预设/data-op 锚点 + v3 补数即重算、政策参考清单可编辑
  * 契约：APP_CONTRACT.md（mount(el, ctx) 返回 { go, actions }）；颜色只走 ctx.ui.tag / theme 变量；文案在 config.js */
 (function () {
   const clz = (c) => String(c || '').replace(/第\s*([^\s第]+?)\s*(项|条|款|章)/g, '第$1$2').replace(/、\s+/g, '、');
   const seedShort = (id) => window.JK_DATA?.enterprises?.find((e) => e.id === id)?.short || '示例企业';
-  const DEF = { name: '政策兑现', summary: '按企业情况逐条核对兑现事项', steps: ['选对象', '核对条件', '试算额度', '告知单'], tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']], samples: [], objects: ['企业', '个人', '其他组织'], manualTags: [], licenses: [], fields: {}, sampleFill: {}, levels: { ok: ['可进一步核对'], check: ['待确认'], no: ['不满足'] }, windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' }, text: {} };
+  const DEF = { name: '政策兑现', summary: '根据企业信息，查找可能适用的政策支持，查看申请条件和原文依据。', steps: ['选对象', '核对条件', '试算额度', '政策参考清单'], tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']], samples: [], objects: ['企业', '个人', '其他组织'], manualTags: [], licenses: [], fields: {}, sampleFill: {}, levels: { ok: ['可进一步核对'], check: ['待确认'], no: ['不满足'] }, windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' }, text: {} };
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).policy || {});
   const T = Object.assign({ pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况', resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签是否完整', viewOnly: '你的角色只能查看事项库', demoBadge: '示例（无对应原文）' }, C.text);
   const flowRoutes = ['home', 'match', 'estimate', 'notice'];
@@ -14,29 +14,29 @@
     manifest: {
       id: 'policy', name: C.name, short: '政策', icon: 'policy', hue: 'indigo', version: '4.0.0', owner: 'AI 工作组',
       summary: C.summary, routes: ['flow', 'match', 'calc', 'notice', 'items', 'detail', 'docs'],
-      perms: { view: '查看事项库与原文', operate: '匹配 / 试算 / 告知单', approve: '—' },
+      perms: { view: '查看事项库与原文', operate: '匹配 / 试算 / 政策参考清单', approve: '—' },
       tools: [
-        { name: 'policy.match', desc: '为企业逐条核对兑现事项', params: { entId: 'string' } },
+        { name: 'policy.match', desc: '根据企业信息筛选可能适用的政策支持', params: { entId: 'string' } },
         { name: 'policy.calc', desc: '按原文规则试算额度', params: { itemId: 'string', amount: 'number' } },
-        { name: 'policy.notice', desc: '生成一次性告知单', params: { entId: 'string', itemIds: 'string[]' } },
-        { name: 'policy.search', desc: '按口语搜索兑现事项', params: { q: 'string' } },
+        { name: 'policy.notice', desc: '生成政策参考清单', params: { entId: 'string', itemIds: 'string[]' } },
+        { name: 'policy.search', desc: '按需求搜索已收录的政策支持', params: { q: 'string', queryMode: 'string?', enterpriseId: 'string?' } },
       ],
       accepts: [{ kind: '政策文件', ext: ['pdf', 'doc', 'docx', 'txt', 'wps'], match: /政策|办法|细则|措施|若干|实施意见|申报指南/ }],
       intents: [
         { id: 'policy.match', requires: 'operate', action: 'match', examples: [`帮我查一下${seedShort('E002')}能申报哪些政策`, `${seedShort('E001')}能申请哪些支持？`], keywords: ['政策', '申报', '补贴', '兑现', '能报', '支持', '奖励'], slots: { ent: 'enterprise' }, plan: ['打开政策兑现', '选择企业', '逐条核对事项', '汇总结论'] },
         { id: 'policy.fill', requires: 'operate', action: 'fill', examples: ['补填数据采购额 30 万', '数据采购额是 30 万'], keywords: ['补填', '补充', '采购额', '重算'], slots: { amount: 'amount' }, plan: ['找到待确认项', '填入数值', '重新核对'] },
         { id: 'policy.calc', action: 'calc', examples: ['数据采购 200 万能补多少', '书店年房租 42 万能补多少', '算一下算力采购 680 万的补贴'], keywords: ['能补多少', '试算', '算一下', '额度'], slots: { amount: 'amount', policy: 'policy' }, plan: ['打开试算', '选择事项', '填入金额', '给出额度'] },
-        { id: 'policy.notice', requires: 'operate', action: 'notice', examples: [`给${seedShort('E002')}生成政策告知单`, '生成一次性告知单'], keywords: ['告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成告知单', '等你确认'] },
+        { id: 'policy.notice', requires: 'operate', action: 'notice', examples: [`给${seedShort('E002')}生成政策参考清单`, '生成政策参考清单', '生成一次性告知单'], keywords: ['政策参考清单', '参考清单', '告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成政策参考清单', '等你确认'] },
         { id: 'policy.detail', action: 'detail', examples: ['实体书店房租补贴的条件是什么', '数据券的申报条件'], keywords: ['条件是什么', '什么条件', '怎么申请', '要求'], slots: { policy: 'policy' }, plan: ['打开事项库', '找到事项', '展示条件与原文'] },
         { id: 'policy.items', action: 'items', examples: ['看看面向个人的政策', '打开政策事项库'], keywords: ['事项库', '有哪些政策', '个人政策'], plan: ['打开事项库', '筛选'] },
-        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把告知单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
+        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把政策参考清单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
       starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
       // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。
       demo: [
         { title: '政策匹配', say: `帮我查一下${seedShort('E020')}能申报哪些政策` },
         { title: '补填再算', say: '补填数据采购额 30 万' },
-        { title: '告知单', say: `给${seedShort('E020')}生成政策告知单` },
+        { title: '政策参考清单', say: `给${seedShort('E020')}生成政策参考清单` },
       ],
     },
 
@@ -108,7 +108,7 @@
           ${S.mode === 'ent' ? `<div class="pick"><div class="search">${icon('search')}<input class="input" id="pq" data-op="policy.ent" placeholder="企业名称、简称或信用代码" autocomplete="off" value="${e ? esc(e.short) : ''}"></div><div id="pdd"></div></div>
             ${e ? profileCard(e) : `<div class="sec">常用示例</div><div class="chips">${C.samples.map((id) => ENTS.find((x) => x.id === id)).filter(Boolean).map((e) => `<button class="chip-btn" data-ent="${e.id}" data-op="policy.sample-${e.id}">${esc(e.short)}</button>`).join('')}</div>`}`
           : manualForm()}`;
-        foot('', `<button class="btn primary" data-act="run" data-op="policy.go" ${S.mode === 'ent' && !e ? 'disabled' : ''}>开始核对${ITEMS.length ? ` ${ITEMS.length} 项` : ''}</button>`);
+        foot(`<span class="meta">当前已收录 ${ITEMS.length} 项政策支持，将按申请条件筛选</span>`, `<button class="btn primary" data-act="run" data-op="policy.go" ${S.mode === 'ent' && !e ? 'disabled' : ''}>查找政策支持</button>`);
         const q = $('#pq'); if (q) { q.oninput = () => showDD(q.value.trim()); q.onfocus = () => showDD(q.value.trim() === (e && e.short) ? '' : q.value.trim()); q.onblur = () => setTimeout(() => { const d = $('#pdd'); if (d) d.innerHTML = ''; }, 200); }
       }
       function showDD(v) {
@@ -144,7 +144,7 @@
         const kp = (lv, n) => `<button class="kpi-c h-${ui.hue(L[lv][0], 'policyLevel')} ${S.filter === lv ? 'on' : ''}" data-filter="${lv}" data-op="policy.kpi-${lv}"><div class="v num">${n}</div><div class="l">${esc(L[lv][0])}</div></button>`;
         const list = r.results.filter((x) => !S.filter || x.level === S.filter);
         const okCheckAll = list.filter((x) => x.level !== 'no'), no = list.filter((x) => x.level === 'no'); const okCheck = S.showAll ? okCheckAll : okCheckAll.slice(0, 6);
-        $('#ps').innerHTML = `<div class="q">${esc(who())}：${sm.ok} 项可核对${sm.check ? `，${sm.check} 项待确认` : ''}</div><div class="q-sub">勾选要告知企业的事项；待确认项补一个数就能重算</div>
+        $('#ps').innerHTML = `<div class="q">${esc(who())}：${sm.ok} 项政策可进一步核对${sm.check ? `，${sm.check} 项政策有条件待确认` : ''}</div><div class="q-sub">每一项代表政策提供的一种支持；请核实申请条件，再勾选放入参考清单</div>
           <div class="kpis pol-kpis x-stats">${kp('ok', sm.ok)}${kp('check', sm.check)}${kp('no', sm.no)}</div>
           <div class="pol-groups" id="pres">${!r.results.length ? ui.empty({ icon: 'search', title: T.resultEmpty, desc: T.resultEmptyDesc }) : ['ok', 'check'].map((lv) => { const g = okCheck.filter((x) => x.level === lv); return g.length ? `${grpH(lv, okCheckAll.filter((x) => x.level === lv).length)}<div class="stack rows">${g.map(resCard).join('')}</div>` : ''; }).join('')}${okCheckAll.length > okCheck.length ? `<button class="btn ghost sm pol-more" data-act="showAll" data-op="policy.show-all">再看 ${okCheckAll.length - okCheck.length} 项</button>` : ''}
           ${no.length ? `<details class="pol-no" ${S.filter === 'no' ? 'open' : ''}><summary class="sect" data-op="policy.no-toggle"><span class="x-ring h-${ui.hue(L.no[0], 'policyLevel')}"></span>${esc(L.no[0])}<span class="t-3 num">${no.length}</span><span class="sp"></span><span class="t-3 pol-why-t">看原因</span></summary><div class="stack rows">${no.map(resCard).join('')}</div></details>` : ''}</div>`;
@@ -202,7 +202,7 @@
         list.forEach((x) => { S.calc[x.id] ??= { amount: baseAmount(x), result: x.calc, edited: false }; });
         $('#ps').innerHTML = `<div class="pol-calc-summary">${calcSummary(list)}</div><div class="q-sub" style="margin-top:4px">各项金额单独列示，叠加规则和实际支持额度以正式审核为准。</div>
           <div class="stack rows">${list.map((x) => calcRow(x)).join('')}</div>`;
-        foot(back(), `${restoreStatus()}<button class="btn primary" data-act="toNotice" data-op="policy.to-notice" ${restoringAmounts ? 'disabled' : ''}>生成告知单</button>`);
+        foot(back(), `${restoreStatus()}<button class="btn primary" data-act="toNotice" data-op="policy.to-notice" ${restoringAmounts ? 'disabled' : ''}>生成政策参考清单</button>`);
       }
       function calcSummary(list) {
         const ratios = list.map((x) => S.calc[x.id]?.result).filter((r) => r?.kind === 'ratio');
@@ -240,7 +240,7 @@
         }
       }
 
-      /* ---------- 第 4 步：告知单 ---------- */
+      /* ---------- 第 4 步：政策参考清单 ---------- */
       async function showNotice() {
         if (restoringAmounts) { ui.toast(restoringText); return; }
         if (!chosen().length || S.busy) return;
@@ -260,19 +260,19 @@
           S.step = 3;
           if (S.tab === 'flow') body();
         } catch (e) {
-          ui.toast(e.message || '生成告知单失败', { type: 'err' });
+          ui.toast(e.message || '生成政策参考清单失败', { type: 'err' });
         } finally {
           S.busy = false;
         }
       }
       function step3() {
         const e = ent();
-        $('#ps').innerHTML = `<div class="q">告知单已生成</div><div class="q-sub">可直接修改，复制后发给企业</div>
+        $('#ps').innerHTML = `<div class="q">政策参考清单已生成</div><div class="q-sub">可直接修改，复制后发给企业</div>
           <textarea class="textarea pol-notice" id="pn" data-op="policy.notice-text" spellcheck="false">${esc(S.notice)}</textarea>
           <div class="row wrap" style="margin-top:var(--s3)"><button class="btn sm" data-act="download" data-op="policy.download">${icon('download')}下载</button><button class="btn sm" data-act="toDoc" data-op="policy.to-doc">${icon('doc')}转为公文答复</button>
           ${e && S.mode === 'ent' ? `<button class="btn sm" data-act="issue" data-op="policy.issue">${icon('flag')}记入企业诉求</button>` : ''}<button class="btn sm ghost" data-act="skill" data-op="policy.skill">${icon('skill')}存为技能</button></div>`;
         $('#pn').oninput = (ev) => (S.notice = ev.target.value);
-        foot(back(), `<button class="btn primary" data-act="copy" data-op="policy.copy">${icon('copy')}复制告知单</button>`);
+        foot(back(), `<button class="btn primary" data-act="copy" data-op="policy.copy">${icon('copy')}复制政策参考清单</button>`);
       }
 
       /* ---------- 事项库 ---------- */
@@ -384,7 +384,7 @@
         else S.overrides[field] = +unitVal * F(field)[2];
         await runMatch(); ui.toast('已补充并重新核对');
       }
-      async function copyNotice() { try { await navigator.clipboard.writeText(S.notice); } catch (e) { /* file:// 下可能无权限 */ } ui.toast('告知单已复制'); }
+      async function copyNotice() { try { await navigator.clipboard.writeText(S.notice); } catch (e) { /* file:// 下可能无权限 */ } ui.toast('政策参考清单已复制'); }
       function toDocument() {
         const entId = S.mode === 'ent' ? S.entId || '' : '';
         const ids = chosen().map((x) => x.id);
@@ -522,10 +522,10 @@
         if (a === 'toCalc' && !restoringAmounts) { S.step = 2; body(); return; }
         if (a === 'toNotice') return showNotice();
         if (a === 'copy') return copyNotice();
-        if (a === 'download') return ui.download(`政策告知单-${who()}.txt`, S.notice);
+        if (a === 'download') return ui.download(`政策参考清单-${who()}.txt`, S.notice);
         if (a === 'toDoc') return toDocument();
         if (a === 'issue') return logIssue();
-        if (a === 'skill') return ctx.nav.open('skills', 'build', { from: 'policy', prompt: `做一个“${ent() ? ent().industry.split(' · ').pop() : S.manual.tags[0] || '企业'}政策预判”技能：按企业画像核对兑现事项，给出可核对/待确认/不满足和告知单` });
+        if (a === 'skill') return ctx.nav.open('skills', 'build', { from: 'policy', prompt: `做一个“${ent() ? ent().industry.split(' · ').pop() : S.manual.tags[0] || '企业'}政策预判”技能：按企业画像核对兑现事项，给出可核对/待确认/不满足和政策参考清单` });
       });
       el.addEventListener('change', async (ev) => {
         const t = ev.target; const d = t.dataset;
@@ -553,7 +553,7 @@
           else { S.entId = id; await runMatch(); }
           if (!S.match) return;
           const sm = S.match.summary; const firstCheck = S.match.results.find((x) => x.level === 'check');
-          run && run.done(`${e.short}：核对 ${S.match.total} 项事项，${sm.ok} 项可进一步核对${sm.check ? `，${sm.check} 项待确认` : ''}${sm.no ? `，${sm.no} 项不满足` : ''}。默认选中 ${S.match.defaultItemIds.length} 项，本批已结束 ${sm.ended} 项。`, [...(firstCheck ? [{ label: '补填缺的信息', say: '补填数据采购额 30 万' }] : []), { label: '生成告知单', say: `给${e.short}生成政策告知单` }, { label: '起草答复函', say: '把告知单转成公文答复' }]);
+          run && run.done(`${e.short}：从已收录的 ${S.match.total} 项政策支持中筛选，${sm.ok} 项可进一步核对${sm.check ? `，${sm.check} 项待确认` : ''}${sm.no ? `，${sm.no} 项不满足` : ''}。默认选中 ${S.match.defaultItemIds.length} 项，本批已结束 ${sm.ended} 项。`, [...(firstCheck ? [{ label: '补填缺的信息', say: '补填数据采购额 30 万' }] : []), { label: '生成政策参考清单', say: `给${e.short}生成政策参考清单` }, { label: '起草答复函', say: '把政策参考清单转成公文答复' }]);
           return S.match;
         },
         async fill({ amount, field, value, text } = {}, run) {
@@ -578,7 +578,7 @@
           await ready();
           if (amount == null) { const mm = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (mm) amount = +mm[1] * 1e4; }
           if (restoringAmounts && S.match && !policy && !amount) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
-          if (S.match && !policy && !amount) { gotoTab('flow'); if (run) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.total"]'); await run.highlight('[data-op="policy.total"]'); run.done('已按事项分别列出试算参考和支持标准', [{ label: '生成告知单', say: '生成一次性告知单' }]); } else { S.step = 2; body(); } return; }
+          if (S.match && !policy && !amount) { gotoTab('flow'); if (run) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.total"]'); await run.highlight('[data-op="policy.total"]'); run.done('已按事项分别列出试算参考和支持标准', [{ label: '生成政策参考清单', say: '生成政策参考清单' }]); } else { S.step = 2; body(); } return; }
           const id = resolvePolicy(policy, text) || (ITEMS.find((p) => p.rule && p.rule.base) || {}).id;
           let amt = amount; if (amt == null) { const m = /(\d+(?:\.\d+)?)\s*万/.exec(text || ''); if (m) amt = +m[1] * 1e4; }
           const m = calcModal(id); if (!m) { run && run.fail('该事项需按原文人工核对金额'); return; }
@@ -590,9 +590,9 @@
           if (restoringAmounts) { if (run) run.fail(restoringText); else ui.toast(restoringText); return; }
           const id = resolveEnt(es, text) || (S.mode === 'ent' ? S.entId : null);
           if (!S.match || (id && id !== S.entId)) { if (!id) { run && run.fail('要给哪家企业生成？'); return; } await actions.match({ ent: { id } }, run ? Object.assign(Object.create(run), { done() {} }) : null); }
-          if (!chosen().length) { run && run.fail('请先勾选要告知的事项'); return; }
+          if (!chosen().length) { run && run.fail('请先勾选要放入参考清单的政策支持'); return; }
           gotoTab('flow');
-          if (run) { await run.step(1); if (S.step < 2) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.to-notice"]'); } await run.step(2); if (S.step === 2) await run.click('[data-op="policy.to-notice"]'); await run.wait('[data-op="policy.notice-text"]'); await run.step(3); await run.highlight('[data-op="policy.copy"]', '确认无误后复制给企业'); run.done(`告知单已生成（${chosen().length} 项），确认后点“复制告知单”`, [{ label: '转为公文答复', say: '把告知单转成公文答复' }, { label: '记入企业诉求', say: '把这次咨询记入企业诉求' }]); }
+          if (run) { await run.step(1); if (S.step < 2) { await run.click('[data-op="policy.next"]'); await run.wait('[data-op="policy.to-notice"]'); } await run.step(2); if (S.step === 2) await run.click('[data-op="policy.to-notice"]'); await run.wait('[data-op="policy.notice-text"]'); await run.step(3); await run.highlight('[data-op="policy.copy"]', '确认无误后复制给企业'); run.done(`政策参考清单已生成（${chosen().length} 项），确认后点“复制政策参考清单”`, [{ label: '转为公文答复', say: '把政策参考清单转成公文答复' }, { label: '记入企业诉求', say: '把这次咨询记入企业诉求' }]); }
           else await showNotice();
           return S.notice;
         },
@@ -606,7 +606,7 @@
           if (run) { await run.step(1); if (obj) await run.click(`[data-op="policy.obj-${obj}"]`); if (q) await run.fill('[data-op="policy.items-q"]', q); run.done(`事项库：${el.querySelectorAll('[data-detail]').length} 项`); }
           else { S.obj = obj; S.q = q || ''; body(); }
         },
-        async toDocument(a, run) { if (!chosen().length) { run && run.fail('请先勾选要告知的事项'); return; } if (S.step !== 3) await showNotice(); if (S.step !== 3) return; if (run) { gotoTab('flow'); await run.click('[data-op="policy.to-doc"]'); run.done('已带上企业和政策依据，打开公文协作（答复意见）'); } else toDocument(); },
+        async toDocument(a, run) { if (!chosen().length) { run && run.fail('请先勾选要放入参考清单的政策支持'); return; } if (S.step !== 3) await showNotice(); if (S.step !== 3) return; if (run) { gotoTab('flow'); await run.click('[data-op="policy.to-doc"]'); run.done('已带上企业和政策依据，打开公文协作（答复意见）'); } else toDocument(); },
         async logIssue(a, run) { if (run) { gotoTab('flow'); if (S.step !== 3) await showNotice(); if (S.step !== 3) return; await run.click('[data-op="policy.issue"]'); run.done('已记入企业诉求'); } else logIssue(); },
         async intake({ file } = {}, run) {
           await ready(); gotoTab('docs');

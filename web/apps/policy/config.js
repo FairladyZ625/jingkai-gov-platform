@@ -4,9 +4,9 @@
 window.JK_APPCFG = window.JK_APPCFG || {};
 window.JK_APPCFG.policy = {
   name: '政策兑现',
-  summary: '按企业情况逐条核对兑现事项，结论附原文',
-  steps: ['选对象', '核对条件', '试算额度', '告知单'],
-  tabs: [['flow', '办理'], ['items', '事项库'], ['docs', '政策文件']],
+  summary: '根据企业信息，查找可能适用的政策支持，查看申请条件和原文依据。',
+  steps: ['选对象', '核对条件', '试算额度', '政策参考清单'],
+  tabs: [['flow', '查找支持'], ['items', '政策支持目录'], ['docs', '政策文件']],
   /* 第 1 步“常用示例”：点一下直接选中（企业 id 来自台账） */
   samples: ['E001', 'E007', 'E005', 'E017'],
   /* 手动描述：对象类型、身份标签、资质 */
@@ -27,9 +27,9 @@ window.JK_APPCFG.policy = {
   levels: { ok: ['可进一步核对', 'green'], check: ['待确认', 'amber'], no: ['不满足', 'gray'] },
   windowText: { open: '申报中', ended: '本批已结束', unknown: '窗口待通知' },
   text: {
-    pickQ: '为谁核对？', pickSub: '搜企业，或手动描述情况',
+    pickQ: '为谁查找政策支持？', pickSub: '选择企业或描述情况；筛选范围是当前已收录的政策目录',
     resultEmpty: '没有适用事项', resultEmptyDesc: '检查企业标签和资质是否完整，或换成手动描述',
-    viewOnly: '你的角色只能查看事项库，不能做匹配和告知',
+    viewOnly: '你的角色可以查阅政策与原文，不能进行企业匹配或生成参考清单',
     demoBadge: '示例（无对应原文）',
   },
 };
