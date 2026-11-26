@@ -58,7 +58,8 @@ def test_issue_lifecycle(site):
     url = ISSUES + "/" + item["id"]
     res = c.patch(url, json={"status": "待补材料", "note": "已联系", "next": "等待补件"})
     updated = res.json()["item"]
-    assert updated["steps"] == [*item["steps"], [START.isoformat(), "待补材料 · 已联系"]]
+    assert updated["steps"] == [*item["steps"], [START.isoformat(),
+        "状态：办理中 → 待补材料 · 下一步：未填写 → 等待补件 · 备注：已联系 · 操作人：样例管理员"]]
     assert c.patch(url, json={"status": "待补材料"}).json()["item"]["steps"] == updated["steps"]
     listing = c.get(ISSUES, params={"entId": ent, "status": "待补材料", "owner": item["owner"]}).json()
     assert listing["items"] == [{**updated, "entName": "演示企业"}]
@@ -161,3 +162,62 @@ def test_qualification_window(site):
     scan(c, "first")
     scan(c, "again")
     assert len(c.get("/api/v1/messages").json()["items"]) == 2
+
+
+def test_explicit_unassigned_owner_and_legacy_default(site):
+    client, _ = site
+    company = create_company(client)
+    unassigned = create_issue(client, company, owner="", due="", next="")
+    assert (unassigned["owner"], unassigned["status"], unassigned["due"]) == ("", "待分派", "")
+    legacy = create_issue(client, company)
+    assert (legacy["owner"], legacy["status"]) == ("sampleadmin", "办理中")
+
+
+def test_issue_updates_log_each_changed_field_and_clear_values(site):
+    client, _ = site
+    company = create_company(client)
+    item = create_issue(client, company, owner="", due="", next="")
+    url = ISSUES + "/" + item["id"]
+    update = {"owner": "办理员甲", "due": "2026-12-01", "next": "联系企业", "note": "企业来电确认", "status": "办理中"}
+    response = client.patch(url, json=update)
+    assert response.is_success, response.text
+    row = response.json()["item"]
+    assert row["steps"][-1] == [START.isoformat(),
+        "状态：待分派 → 办理中 · 负责人：未分派 → 办理员甲 · 截止日期：未设置 → 2026-12-01 · 下一步：未填写 → 联系企业 · 备注：企业来电确认 · 操作人：样例管理员"]
+    same = client.patch(url, json={k: v for k, v in update.items() if k != "note"}).json()["item"]
+    assert same["steps"] == row["steps"]
+    cleared = client.patch(url, json={"owner": "", "due": "", "next": ""}).json()["item"]
+    assert [cleared[k] for k in ("owner", "due", "next")] == ["", "", ""]
+    assert cleared["steps"][-1] == [START.isoformat(),
+        "负责人：办理员甲 → 未分派 · 截止日期：2026-12-01 → 未设置 · 下一步：联系企业 → 未填写 · 操作人：样例管理员"]
+
+
+def test_company_detail_reuses_issue_content_without_exposing_private_fields(site):
+    client, _ = site
+    company = create_company(client)
+    item = create_issue(client, company, owner="办理员甲", due="2026-12-01", next="准备材料")
+    changed = client.patch(ISSUES + "/" + item["id"], json={"note": "企业确认办理计划"}).json()["item"]
+    listing = client.get(ISSUES, params={"entId": company}).json()["items"]
+    detail = client.get(APP + "/companies/" + company).json()["issues"]
+    assert detail == listing == [{**changed, "entName": "演示企业"}]
+    assert client.post("/api/auth/login", json={"user_id": "partner"}).is_success
+    for response in [client.get(ISSUES), client.get(APP + "/companies/" + company)]:
+        assert response.is_success, response.text
+        for text in ("演示诉求详情", "办理员甲", "准备材料", "企业确认办理计划"):
+            assert text not in response.text
+    assert client.post(ISSUES, json={"entId": company, "title": "禁止创建", "owner": ""}).status_code == 403
+
+
+def test_readonly_issue_projection_also_masks_legacy_records(site):
+    client, _ = site
+    company = create_company(client)
+    legacy = {"entId": company, "status": "办理中", "title": "旧版诉求原文", "owner": "旧版经办人",
+              "next": "旧版后续安排", "steps": [["2026-11-01", "旧版办理备注"]]}
+    response = client.post("/api/v1/apps/enterprise/records", json={
+        "project": "jkq", "type": "enterprise.issue", "data": {"item": legacy}})
+    assert response.is_success, response.text
+    assert client.post("/api/auth/login", json={"user_id": "partner"}).is_success
+    listing = client.get(ISSUES)
+    assert listing.is_success, listing.text
+    assert all(text not in listing.text for text in ("旧版诉求原文", "旧版经办人", "旧版后续安排", "旧版办理备注"))
+    assert client.get(ISSUES, params={"owner": "旧版经办人"}).json()["items"] == []
