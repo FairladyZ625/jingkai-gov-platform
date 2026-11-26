@@ -123,10 +123,11 @@ def save(ctx, identity, content, note, base_version=None):
 def summaries(ctx):
     records = ctx.records.list(type=RECORD_TYPE)["items"]
     records.sort(key=lambda record: record["createdAt"], reverse=True)
-    return [_summary(record) for record in records]
+    return [summary(record) for record in records]
 
 
-def _summary(record):
+def summary(record):
+    """文稿列表和工作台共用的记录摘要，不改变底层记录。"""
     data = record["data"]
     version = _edition(record)
     return {
