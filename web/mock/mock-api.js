@@ -698,9 +698,36 @@
     items = items.slice().sort((a, b) => sort === 'revenue' ? b.revenue.value - a.revenue.value : sort === 'name' ? a.short.localeCompare(b.short, 'zh') : b.lastVisitDays - a.lastVisitDays);
     return { items: items.map(maskEnt), total: items.length, facets: { industries: [...new Set(S.enterprises.map((e) => e.industry.split(' · ')[0]))], tags: [...new Set(S.enterprises.flatMap((e) => e.tags))], servicers: [...new Set(S.enterprises.map((e) => e.servicer))] } };
   });
-  on('GET', '/api/apps/enterprise/companies/:id', (b, p) => { const e = ent(p.id); if (!e) err(404, 'NOT_FOUND', '企业不存在'); return { item: maskEnt(e), visits: S.visits.filter((v) => v.entId === e.id), issues: S.issues.filter((i) => i.entId === e.id), files: S.files.filter((f) => f.tags.includes(e.id)), proposals: S.proposals.filter((x) => x.entId === e.id && x.status === 'pending'), history: e.history || [] }; });
+  const enterpriseReadOnly = () => !!roleOf().mask || !can('enterprise', 'operate');
+  const issueDay = () => new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  function issueView(issue) {
+    if (!enterpriseReadOnly()) return issue;
+    return { id: issue.id, entId: issue.entId, created: issue.created, status: issue.status,
+      from: issue.from, due: issue.due || '', title: '企业诉求', owner: '', next: '', steps: [] };
+  }
+  function validateIssue(body, allowed) {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.keys(body).length || Object.keys(body).some(key => !allowed.includes(key)))
+      err(400, 'INVALID_REQUEST', '请提供支持的诉求字段');
+    if (Object.values(body).some(value => typeof value !== 'string')) err(400, 'INVALID_REQUEST', '诉求字段须为文本');
+    if ('status' in body && !['待分派', '办理中', '待补材料', '已办结'].includes(body.status)) err(400, 'INVALID_REQUEST', '诉求状态无效');
+    if ('from' in body && !['走访', '电话', '会议', '座谈', '政策咨询'].includes(body.from)) err(400, 'INVALID_REQUEST', '诉求来源无效');
+    if (body.due) {
+      const day = new Date(body.due + 'T00:00:00Z');
+      if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(body.due) || Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== body.due)
+        err(400, 'INVALID_REQUEST', '截止日期须为 YYYY-MM-DD');
+    }
+  }
+  on('GET', '/api/apps/enterprise/companies/:id', (b, p) => {
+    const e = ent(p.id); if (!e) err(404, 'NOT_FOUND', '企业不存在');
+    const visits = S.visits.filter(v => v.entId === e.id);
+    if (enterpriseReadOnly()) return { item: maskEnt(e),
+      visits: visits.map(v => ({ id: v.id, entId: v.entId, date: v.date, type: '走访', notes: '', followups: [] })),
+      issues: [], files: [], proposals: [], history: [] };
+    return { item: maskEnt(e), visits, issues: S.issues.filter(i => i.entId === e.id),
+      files: S.files.filter(f => f.tags.includes(e.id)), proposals: S.proposals.filter(x => x.entId === e.id && x.status === 'pending'), history: e.history || [] };
+  });
   on('PATCH', '/api/apps/enterprise/companies/:id', (b, p) => { const e = ent(p.id); if (!can('enterprise', 'operate') || roleOf().mask) err(403, 'FORBIDDEN', '当前角色只能查看台账，不能修改'); Object.entries(b).forEach(([k, v]) => { const old = e[k]; e[k] = v; e.history = e.history || []; e.history.unshift({ at: now(), by: me().name, field: k, old: String(old), new: String(v), source: '手动修改' }); }); audit('企业管理维护', `修改台账 · ${e.short}`); return { item: e }; });
-  on('POST', '/api/apps/enterprise/companies', (b) => { const id = 'E' + String(S.enterprises.length + 1).padStart(3, '0'); const e = { id, name: b.name, short: b.short || b.name.replace(/^北京|有限公司$/g, '').slice(0, 6), creditCode: b.creditCode || '待补', industry: b.industry || '待分类', scale: b.scale || '小型', tags: b.tags || [], license: [], subjectType: '企业', established: '待补', yearsInZone: +b.yearsInZone || 0, regInZone: true, employees: +b.employees || 0, revenue: { value: 0, unit: '万元', period: '—', source: '—', verify: '待核' }, amounts: {}, regAddr: b.addr || '待补', opAddr: b.addr || '待补', formerNames: [], contacts: b.contact ? [{ name: b.contact, title: '联系人', phone: b.phone || '待补', main: true }] : [], servicer: me().name, lastVisit: '—', lastVisitDays: 0, qualifications: [], products: b.industry || '待补', fieldStatus: {} }; S.enterprises.unshift(e); audit('企业管理维护', `新建企业档案 · ${e.short}`); return { item: e }; });
+  on('POST', '/api/apps/enterprise/companies', (b) => { const id = 'E' + String(S.enterprises.length + 1).padStart(3, '0'); const e = { id, name: b.name, short: b.short || b.name.replace(/^北京|有限公司$/g, '').slice(0, 6), creditCode: b.creditCode || '待补', industry: b.industry || '待分类', scale: b.scale || '小型', tags: b.tags || [], license: [], subjectType: '企业', established: '待补', yearsInZone: +b.yearsInZone || 0, regInZone: true, employees: +b.employees || 0, revenue: { value: 0, unit: '万元', period: '—', source: '—', verify: '待核' }, amounts: {}, regAddr: b.addr || '待补', opAddr: 'opAddr' in b ? b.opAddr : b.addr || '待补', formerNames: [], contacts: b.contact ? [{ name: b.contact, title: '联系人', phone: b.phone || '待补', main: true }] : [], servicer: me().name, lastVisit: '—', lastVisitDays: 0, qualifications: [], products: b.industry || '待补', fieldStatus: {} }; S.enterprises.unshift(e); audit('企业管理维护', `新建企业档案 · ${e.short}`); return { item: e }; });
   on('POST', '/api/apps/enterprise/companies/:id/visits', (b, p) => {
     const model = pickModel(S.modelId, true).used;
     const e = ent(p.id); const v = { id: nid('V'), entId: e.id, date: '2026-11-17', staff: me().name, type: b.type || '上门走访', notes: b.notes, followups: [] };
@@ -711,9 +738,38 @@
     return { visit: v, proposals, issues };
   });
   on('POST', '/api/apps/enterprise/proposals/:id/decision', (b, p) => { const x = S.proposals.find((y) => y.id === p.id); if (!x) err(404, 'NOT_FOUND', '建议不存在'); if (b.value) x.new = b.value; x.status = b.decision === 'accept' ? 'accepted' : 'rejected'; if (x.status === 'accepted') applyProposal(x); audit('企业管理维护', `${x.status === 'accepted' ? '确认写入' : '忽略'} · ${x.label}`); const left = S.proposals.filter((y) => y.entId === x.entId && y.status === 'pending').length; if (!left) S.inbox.forEach((i) => { if (i.type === 'proposal' && i.ref === x.entId) i.status = 'done'; }); return { item: x, pending: left }; });
-  on('GET', '/api/apps/enterprise/issues', (b, p, q) => { let items = S.issues; if (q.status) items = items.filter((i) => i.status === q.status); if (q.entId) items = items.filter((i) => i.entId === q.entId); if (q.owner) items = items.filter((i) => i.owner === q.owner); return { items: items.map((i) => ({ ...i, entName: ent(i.entId).short })), statuses: ['待分派', '办理中', '待补材料', '已办结'] }; });
-  on('POST', '/api/apps/enterprise/issues', (b) => { const i = { id: nid('IS'), entId: b.entId, title: b.title, from: b.from || '走访', created: '2026-11-17', owner: b.owner || me().name, status: '办理中', due: b.due || '2026-11-30', next: b.next || '待确定', steps: [['2026-11-17', '登记诉求（' + (b.from || '走访') + '）']] }; S.issues.unshift(i); audit('企业管理维护', `登记诉求 · ${ent(b.entId).short}`); return { item: i }; });
-  on('PATCH', '/api/apps/enterprise/issues/:id', (b, p) => { const i = S.issues.find((x) => x.id === p.id); if (b.status && b.status !== i.status) i.steps.push(['2026-11-17', `状态：${i.status} → ${b.status}${b.note ? '（' + b.note + '）' : ''}`]); else if (b.note) i.steps.push(['2026-11-17', b.note]); Object.assign(i, { status: b.status || i.status, next: b.next || i.next, owner: b.owner || i.owner }); audit('企业管理维护', `更新诉求 · ${i.title.slice(0, 10)}`); return { item: i }; });
+  on('GET', '/api/apps/enterprise/issues', (b, p, q) => {
+    let items = S.issues.map(issueView);
+    if (q.status) items = items.filter(i => i.status === q.status);
+    if (q.entId) items = items.filter(i => i.entId === q.entId);
+    if (q.owner) items = items.filter(i => i.owner === q.owner);
+    return { items: items.map(i => ({ ...i, entName: ent(i.entId)?.short || '' })), statuses: ['待分派', '办理中', '待补材料', '已办结'] };
+  });
+  on('POST', '/api/apps/enterprise/issues', b => {
+    if (enterpriseReadOnly()) err(403, 'FORBIDDEN', '无权修改企业台账');
+    validateIssue(b, ['entId', 'title', 'owner', 'from', 'due', 'next']);
+    if (!b.entId?.trim() || !b.title?.trim()) err(400, 'INVALID_REQUEST', '企业 ID 和诉求标题必填');
+    const company = ent(b.entId); if (!company) err(404, 'NOT_FOUND', '企业不存在');
+    const owner = ('owner' in b ? b.owner : me().name).trim(), day = issueDay();
+    const i = { id: nid('IS'), entId: b.entId, title: b.title, from: b.from || '走访', created: day,
+      owner, status: owner ? '办理中' : '待分派', due: b.due || '', next: b.next || '',
+      steps: [[day, '登记诉求（' + (b.from || '走访') + '） · 操作人：' + me().name]] };
+    S.issues.unshift(i); audit('企业管理维护', `登记诉求 · ${company.short}`); return { item: i };
+  });
+  on('PATCH', '/api/apps/enterprise/issues/:id', (b, p) => {
+    if (enterpriseReadOnly()) err(403, 'FORBIDDEN', '无权修改企业台账');
+    validateIssue(b, ['status', 'owner', 'due', 'note', 'next']);
+    const i = S.issues.find(x => x.id === p.id); if (!i) err(404, 'NOT_FOUND', '诉求不存在');
+    const changes = [];
+    for (const [key, label, empty] of [['status', '状态', '未填写'], ['owner', '负责人', '未分派'], ['due', '截止日期', '未设置'], ['next', '下一步', '未填写']]) {
+      if (key in b && b[key] !== (i[key] ?? '')) {
+        changes.push(`${label}：${i[key] || empty} → ${b[key] || empty}`); i[key] = b[key];
+      }
+    }
+    if (b.note?.trim()) changes.push('备注：' + b.note.trim());
+    if (changes.length) { changes.push('操作人：' + me().name); (i.steps ||= []).push([issueDay(), changes.join(' · ')]); }
+    audit('企业管理维护', `更新诉求 · ${i.title.slice(0, 10)}`); return { item: i };
+  });
   on('GET', '/api/apps/enterprise/alerts', () => ({ items: alerts() }));
   on('GET', '/api/apps/enterprise/export', (b, p, q) => { const ids = q.ids ? q.ids.split(',') : S.enterprises.map((e) => e.id); const rows = [['企业名称', '统一社会信用代码', '行业', '规模', '从业人数', '2025营收(万元)', '服务专员', '最近走访', '标签']]; ids.map(ent).forEach((e) => { const m = maskEnt(e); rows.push([m.name, m.creditCode, m.industry, m.scale, m.employees, m.revenue.value, m.servicer, m.lastVisit, m.tags.join('/')]); }); audit('企业管理维护', `导出台账 ${ids.length} 家`); return { filename: '企业台账导出.csv', csv: '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n') }; });
   on('POST', '/api/apps/enterprise/import', (b) => { const added = (b.rows || []).map((r) => routes.find((x) => x.method === 'POST' && x.re.test('/api/apps/enterprise/companies')).fn(r).item); return { added: added.length, items: added }; });

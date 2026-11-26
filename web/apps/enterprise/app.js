@@ -41,6 +41,15 @@
       const matchPolicy = () => viewPolicy() && perms.can('operate', 'policy');
       const S = { tab: 'flow', step: 0, entId: null, prof: null, ptab: 'base', alert: '', q: '', visit: null, notes: '', vtype: C.visitTypes[0], decided: {}, issueId: null, lq: '', ltag: '', lind: '', lalert: false, lsort: 'lastVisit', sel: new Set(), brief: null };
       let ENTS = [], ALERTS = [], ISSUES = [], FACETS = { industries: [], tags: [], servicers: [] }, loaded = false, loadErr = null;
+      let recordsChanged = false, refreshPending = null, disposed = false;
+      const markRecordsChanged = () => { recordsChanged = true; };
+      window.addEventListener('jk:enterprise:changed', markRecordsChanged);
+      const restoreRecords = () => {
+        if (!recordsChanged || window.JKWorkbench?.current()) return;
+        ready().then(() => { if (!disposed && el.isConnected) render(); })
+          .catch(e => { if (!disposed) ui.toast(e.message || '读取企业记录失败，请重试', { type: 'err' }); });
+      };
+      window.addEventListener('jk:workbench:changed', restoreRecords);
       const $ = (s) => el.querySelector(s);
       const entOf = (id) => ENTS.find((e) => e.id === id) || {};
       const iniHue = (e) => ui.hue((e.industry || '').split(' · ')[0]);
@@ -271,7 +280,17 @@
         const hit = ENTS.find((e) => s.includes(e.short) || s.includes(e.name) || (e.short.length >= 3 && s.includes(e.short.slice(0, 3)))) || ENTS.find((e) => s && e.short.includes(s));
         return hit ? hit.id : null;
       }
-      const ready = async () => { for (let i = 0; i < 60 && !loaded; i++) await new Promise((r) => setTimeout(r, 50)); };
+      const ready = async () => {
+        for (let i = 0; i < 60 && !loaded; i++) await new Promise((r) => setTimeout(r, 50));
+        if (recordsChanged) {
+          if (!refreshPending) refreshPending = (async () => {
+            await refreshLists();
+            if (S.entId) S.prof = await E.get(S.entId);
+            S.tableKey = null; recordsChanged = false;
+          })().finally(() => { refreshPending = null; });
+          await refreshPending;
+        }
+      };
 
       /* ---------- 事件 ---------- */
       el.addEventListener('click', async (ev) => {
@@ -395,7 +414,7 @@
           });
         },
         actions,
-        unmount() {},
+        unmount() { disposed = true; window.removeEventListener('jk:enterprise:changed', markRecordsChanged); window.removeEventListener('jk:workbench:changed', restoreRecords); },
       };
     },
   });

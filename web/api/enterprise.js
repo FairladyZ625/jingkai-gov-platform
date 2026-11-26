@@ -6,7 +6,7 @@
     list: (q) => H.get('/api/apps/enterprise/companies', q),
     /** id → {item:Enterprise, visits:Visit[], issues:Issue[], files:KbFile[], proposals:Proposal[], history:Change[]} */
     get: (id) => H.get('/api/apps/enterprise/companies/' + id),
-    /** {name, short?, creditCode?, industry?, scale?, tags?, yearsInZone?, employees?, addr?, contact?, phone?} → {item} */
+    /** {name, short?, creditCode?, industry?, scale?, tags?, yearsInZone?, employees?, opAddr?, addr?, contact?, phone?} → {item} */
     create: (b) => H.post('/api/apps/enterprise/companies', b),
     /** (id, {field:value}) → {item}（写变更历史；外部协作者 403） */
     patch: (id, b) => H.patch('/api/apps/enterprise/companies/' + id, b),
@@ -16,9 +16,9 @@
     decide: (pid, b) => H.post(`/api/apps/enterprise/proposals/${pid}/decision`, b),
     /** {status?, entId?, owner?} → {items:Issue[], statuses[]} */
     issues: (q) => H.get('/api/apps/enterprise/issues', q),
-    /** {entId, title, from?, owner?, due?, next?} → {item:Issue} */
+    /** {entId, title, from?, owner?, due?, next?} → {item:Issue}；owner:'' 为待分派，省略 owner 沿用当前办理人 */
     createIssue: (b) => H.post('/api/apps/enterprise/issues', b),
-    /** (id, {status?, note?, next?, owner?}) → {item:Issue} */
+    /** (id, {status?, note?, next?, owner?, due?}) → {item:Issue}；空字符串清空字段，实际修改和备注写入 steps */
     patchIssue: (id, b) => H.patch('/api/apps/enterprise/issues/' + id, b),
     /** → {items:Alert[]}（资质到期 / 久未走访 / 诉求临期） */
     alerts: () => H.get('/api/apps/enterprise/alerts'),
