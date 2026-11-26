@@ -17,7 +17,7 @@ def workspace(ctx: Viewer):
     reviewers = ctx.preview.members.list(drafts.PROJECT)["items"]
     records = ctx.records.list(type=drafts.RECORD_TYPE)["items"]
     groups = comments.by_draft(ctx)
-    items = [{**drafts._summary(r),
+    items = [{**drafts.summary(r),
               "authorId": r["data"].get("authorId") or ctx.records.get(r["id"], 1)["submitter"],
               "project": r["project"],
               "source": r["data"].get("source"),
