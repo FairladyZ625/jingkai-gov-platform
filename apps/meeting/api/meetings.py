@@ -116,11 +116,13 @@ def meeting_view(ctx, record):
     # 共享合成样本可只读预览，不能因复用档案而让另一成员启动或写入原会议。
     # 既核对样本身份，也逐字节核对实际音频；普通同名录音与自定义记录不适用。
     preview = False
-    if is_demo_sample(data) and not data.get('transcript') and meeting_owner(ctx, record) != ctx.user.id:
+    if is_demo_sample(data) and meeting_owner(ctx, record) != ctx.user.id:
         if data.get('fileId') and ctx.data_files.read(data['fileId']) == DEMO_AUDIO.read_bytes():
-            data = {**data, 'transcript': [line for part in demo_parts()
-                    for line in transcribe_part(part, hotwords=[], step_key='readonly-public-sample')],
-                    'transcriptMode': 'demo', 'readOnlySample': True}
+            data = {**data, 'readOnlySample': True}
+            if not data.get('transcript'):
+                data.update(transcript=[line for part in demo_parts()
+                            for line in transcribe_part(part, hotwords=[], step_key='readonly-public-sample')],
+                            transcriptMode='demo')
             preview = True
     item = {key: value for key, value in data.items() if key != 'minutesEdit'}
     if is_demo_sample(data):
