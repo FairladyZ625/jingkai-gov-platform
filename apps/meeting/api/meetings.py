@@ -15,7 +15,7 @@ from starlette.formparsers import MultiPartParser
 from .minutes import minutes_for, public_todos
 from .transcription import (
     DEMO_AUDIO, MEETING_LOCK, MEETING_TYPES, OPERATION, RECORD_TYPE, Options,
-    __haiknow_jobs__, attach_job, demo_parts, meeting_record, transcribe_part,
+    __haiknow_jobs__, attach_job, demo_parts, meeting_record, meeting_owner, transcribe_part,
 )
 
 
@@ -113,12 +113,21 @@ def preferred_sample(records):
 
 def meeting_view(ctx, record):
     data = record['data']
+    # 共享合成样本可只读预览，不能因复用档案而让另一成员启动或写入原会议。
+    # 既核对样本身份，也逐字节核对实际音频；普通同名录音与自定义记录不适用。
+    preview = False
+    if is_demo_sample(data) and not data.get('transcript') and meeting_owner(ctx, record) != ctx.user.id:
+        if data.get('fileId') and ctx.data_files.read(data['fileId']) == DEMO_AUDIO.read_bytes():
+            data = {**data, 'transcript': [line for part in demo_parts()
+                    for line in transcribe_part(part, hotwords=[], step_key='readonly-public-sample')],
+                    'transcriptMode': 'demo', 'readOnlySample': True}
+            preview = True
     item = {key: value for key, value in data.items() if key != 'minutesEdit'}
     if is_demo_sample(data):
         item.update(sampleId=DEMO_SAMPLE_ID, title=DEMO_SAMPLE_TITLE, type=DEMO_SAMPLE_TYPE)
     item.update(id=record['id'], todos=public_todos(data))
     item['status'] = 'done' if item.get('transcript') else 'new'
-    if item.get('jobId'):
+    if item.get('jobId') and not preview:
         try:
             job = ctx.preview.jobs.get(item['jobId'])
         except DataError as exc:
@@ -294,7 +303,7 @@ def save_meeting(ctx, title, type, people, source, name, audio, *, sample_id=Non
 
 def meeting_detail(ctx, record):
     item = meeting_view(ctx, record)
-    projected = {**record['data'], 'title': item['title'], 'type': item['type']}
+    projected = {**record['data'], **item}
     return {'item': item, 'minutes': minutes_for(projected)}
 
 

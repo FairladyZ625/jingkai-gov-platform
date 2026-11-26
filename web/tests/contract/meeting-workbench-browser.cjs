@@ -100,3 +100,13 @@ test('未保存编辑阻止定稿和离开页签；否定决定仅列讨论',{ti
   await page.locator('[data-checked]').check();await page.locator('[data-action="finalize"]').click();await expect(page.locator('.mw-detail-head')).toContainText('已定稿');
   await page.reload();await expect(page.locator('[name="paragraph"]')).toHaveValue('人工核对但尚未保存的内容。');
 });
+
+test('原应用明确示例录音可整理，真实同名录音仍拒绝离线转写',{timeout:45000},async t=>{
+  const page=await setup(t);
+  await page.evaluate(()=>{JKOp.speed=8;void JKShell.handleFile({...JK_SAMPLE_FILES.find(f=>f.id==='rec-1117')});});
+  await expect(page.locator('#chatcol .msg.ai .txt').filter({hasText:/已整理：\d+ 段转写/}).first()).toBeVisible({timeout:30000});
+  const info=await page.evaluate(async()=>{const m=JKAPI.ext.state().meetings[0];const fake=await JKApi.meeting.create({title:'真实同名录音',file:'【示例】文化企业座谈会录音_1117.m4a',source:'对话拖入'});let code;try{await JKApi.meeting.transcribe(fake.item.id,{});}catch(e){code=e.status;}return {source:m.source,lines:m.transcript.length,rejected:code};});
+  assert.equal(info.source,'demo');assert.ok(info.lines>0);assert.equal(info.rejected,503);
+  const actual=await page.evaluate(async()=>{await JKShell.S.mounted.meeting.ctl.actions.intake({file:{id:'rec-1117',name:JK_SAMPLE_FILES.find(f=>f.id==='rec-1117').name,blob:new Blob(['real audio'],{type:'audio/mp4'})}});const m=JKAPI.ext.state().meetings[0];return {source:m.source,transcript:m.transcript||[],status:m.status};});
+  assert.equal(actual.source,'对话拖入');assert.deepEqual(actual.transcript,[]);assert.equal(actual.status,'new');
+});
