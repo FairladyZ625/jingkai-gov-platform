@@ -314,6 +314,10 @@ def start_transcription(meeting_id: str, options: Options | None = None,
     inputs = {'ref': meeting_id, **options.model_dump(exclude_none=True)}
     with MEETING_LOCK:
         record = meeting_record(ctx, meeting_id)
+        if record['data'].get('ownerId') and record['data']['ownerId'] != ctx.user.id and not ctx.can('admin'):
+            raise DataError('forbidden', '仅会议整理负责人可启动转写')
+        from .transcription import require_owner
+        require_owner(ctx, record)
         current_id = record['data'].get('jobId')
         job_key = key if key is not None else f'meeting:{meeting_id}'
         if current_id:

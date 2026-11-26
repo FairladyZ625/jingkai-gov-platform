@@ -127,4 +127,4 @@ jobs:
         run: |
           npm --prefix web ci
           (cd web && npx --no-install playwright install --with-deps chromium)
-          node --test web/tests/contract/browser.cjs web/tests/contract/workbench-browser.cjs
+          node --test web/tests/contract/browser.cjs web/tests/contract/workbench-browser.cjs web/tests/contract/meeting-workbench-browser.cjs

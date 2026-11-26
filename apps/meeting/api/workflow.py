@@ -12,7 +12,7 @@ from .enterprise_link import create_issue
 from .meetings import BEIJING, MeetingRoute, meeting_detail
 from .minutes import Input, MeetingPatch, ShortText, edit_minutes, require_transcript, todos_for
 from .todos import commit_todos, my_todos
-from .transcription import meeting_record
+from .transcription import meeting_record, require_owner
 
 DOCUMENT_TEMPLATES = (
     (re.compile('征集'), 'T04', 'title'),
@@ -36,6 +36,11 @@ router = APIRouter(route_class=MeetingRoute)
 @router.patch('/meetings/{meeting_id}')
 def patch_meeting(meeting_id: str, patch: MeetingPatch, ctx=Depends(require('operate'))):
     record = meeting_record(ctx, meeting_id)
+    require_owner(ctx, record)
+    if record['data'].get('ownerId'):
+        from .workbench import owner
+        owner(ctx, record)
+        raise DataError('invalid_state', '请在会议纪要工作台保存带版本的修订，已定稿版本保持不变')
     edit_minutes(record['data'], patch)
     saved = ctx.records.save(id=meeting_id, baseVersion=record['version'], data=record['data'])
     return meeting_detail(ctx, saved)
@@ -43,9 +48,14 @@ def patch_meeting(meeting_id: str, patch: MeetingPatch, ctx=Depends(require('ope
 
 @router.post('/meetings/{meeting_id}/todos/commit')
 def dispatch_todos(meeting_id: str, body: CommitRequest, ctx=Depends(require('operate'))):
+    record = meeting_record(ctx, meeting_id)
+    require_owner(ctx, record)
+    if record['data'].get('ownerId'):
+        raise DataError('invalid_state', '工作台会议请核对定稿、成员和明确期限后派发')
     # 对并发写入重读版本，让重复派发得到与重试相同的结果。
     for attempt in range(3):
         record = meeting_record(ctx, meeting_id)
+        require_owner(ctx, record)
         require_transcript(record['data'])
         try:
             return commit_todos(ctx, record, body.ids)
@@ -62,6 +72,7 @@ def personal_todos(ctx=Depends(app_context)):
 @router.post('/meetings/{meeting_id}/link')
 async def link_meeting(meeting_id: str, body: LinkRequest, request: Request, ctx=Depends(require('operate'))):
     record = await run_in_threadpool(meeting_record, ctx, meeting_id)
+    require_owner(ctx, record)
     data = record['data']
     require_transcript(data)
     issue = await create_issue(request, {
