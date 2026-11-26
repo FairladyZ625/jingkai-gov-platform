@@ -24,8 +24,8 @@ function boot({ stored = null, prepare } = {}) {
   const run = (file) => {
     let source = read('web/' + file);
     if (file === 'mock/mock-api.js' && process.env.JK_POLICY_MUTATION === 'fixed-count') {
-      assert.ok(source.includes('核对了 ${total} 项事项'));
-      source = source.replace('核对了 ${total} 项事项', '核对了 18 项事项');
+      assert.ok(source.includes('从已收录 ${total} 项政策支持中筛选'));
+      source = source.replace('从已收录 ${total} 项政策支持中筛选', '从已收录 18 项政策支持中筛选');
     }
     vm.runInContext(source, ctx, { filename: file });
   };
@@ -69,7 +69,7 @@ test('事项库、匹配工具和两条对话入口使用同一事项与动态�
   const reply = await conversationChat(api, text);
   assert.equal(list.total, list.items.length);
   assert.equal(match.total, list.total);
-  assert.ok(fallback.content.includes(`核对了 ${list.total} 项事项`), `事项库 ${list.total} 项，兜底回复为 ${fallback.content}`);
+  assert.ok(fallback.content.includes(`从已收录 ${list.total} 项政策支持中筛选`), `事项库 ${list.total} 项，兜底回复为 ${fallback.content}`);
   assert.equal(fallback.content, reply.content);
   assert.ok(reply.content.includes(e.short));
   assert.ok(reply.content.includes(`默认选中 ${match.defaultItemIds.length} 项，本批已结束 ${match.summary.ended} 项`));
@@ -79,7 +79,7 @@ test('事项库、匹配工具和两条对话入口使用同一事项与动态�
   assert.equal(match.summary.ended, match.results.filter((r) => r.level !== 'no' && r.ended).length);
   assert.equal(await api.get('/api/apps/enterprise/companies/E002').then(({ item }) => item.example), true);
   assert.ok((await directChat(api, '查一下企业')).content.includes(e.short));
-  assert.ok((await directChat(api, '怎么用')).content.includes(`匹配 ${list.total} 项事项`));
+  assert.ok((await directChat(api, '怎么用')).content.includes(`从已收录 ${list.total} 项政策支持中筛选`));
 });
 
 test('E002 保留原始算力券与独立推理算力，转载依据不重复匹配', async () => {
@@ -212,13 +212,13 @@ test('无出处示例与无文号真实事项兼容列表、详情、对话和�
   assert.doesNotMatch(notice.text, /京技管发|https:\/\//);
 });
 
-test('告知单共用工具路由，按实际选择去重落款并留空电话', async () => {
+test('政策参考清单共用工具路由，按实际选择去重落款并留空电话', async () => {
   const { api, policy, seed } = boot();
   const { item } = await policy.item('RP-006');
   const args = { entId: 'E002', itemIds: [item.id, item.id], amounts: { [item.id]: 6800000 } };
   const notice = await policy.notice(args);
   assert.deepEqual(plain(await tool(api, 'notice', args)), plain(notice));
-  assert.ok(notice.text.startsWith(seed.enterprises.find((e) => e.id === 'E002').name));
+  assert.ok(notice.text.startsWith(`政策参考清单\n${seed.enterprises.find((e) => e.id === 'E002').name}：\n`));
   assert.ok(notice.text.includes('落款：' + item.source.deptResp + '　'));
   assert.match(notice.text, /试算参考：680 万元 × 30% = 204 万元/);
   assert.match(notice.text, /^咨询电话（请填写）：$/m);
@@ -226,7 +226,7 @@ test('告知单共用工具路由，按实际选择去重落款并留空电话',
   const multi = await policy.notice({ entId: 'E002', itemIds: ['RP-006', 'RP-007', 'RP-016', 'RP-074'] });
   assert.match(multi.text, /落款：信息技术产业局、营商环境建设局、市自动驾驶办公室、请填写（责任部门）　/);
   const missing = await policy.notice({ itemIds: ['RP-074'] });
-  assert.ok(missing.text.startsWith('申请人：'));
+  assert.ok(missing.text.startsWith('政策参考清单\n申请人：\n'));
   assert.match(missing.text, /落款：请填写（责任部门）　/);
   assert.doesNotMatch(missing.text, /商务金融局　/);
   const noDocNo = await policy.notice({ itemIds: ['PI-06'] });

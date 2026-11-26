@@ -4,6 +4,8 @@ import sys
 
 import pytest
 
+pytest.importorskip("fastapi", reason="政策岗位接口由安装 requirements-dev.txt 的 core CI 验证")
+
 from apps.policy.tests.test_notice_tools_http import policy_client  # noqa: F401
 
 
