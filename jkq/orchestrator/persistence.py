@@ -25,6 +25,7 @@ def _new_message(role: str, content: str, at: str, **metadata) -> dict:
 def start_turn(
     store: ConversationStore, owner: str, cid: str, text: str, files: list[dict],
     *, app: str | None = None, app_classes: dict | None = None, classification: str | None = None,
+    mode: str = "general", enterprise_id: str | None = None,
 ) -> PendingTurn:
     with store.transaction(write=True):
         conversation = store._owned(owner, cid)
@@ -41,9 +42,16 @@ def start_turn(
         )
         # 附件引用由客户端提交，未从可信附件存储核验前按机密处理。
         effective = strictest(classification, *apps, *prior, *(["confidential"] if files else []))
+        # 只保留连续同岗位、同企业的会话段；切走再切回也不会复活旧企业上下文。
+        for index in range(len(history) - 1, -1, -1):
+            previous = history[index]
+            if (previous.get("mode", "general"), previous.get("enterpriseId")) != (mode, enterprise_id):
+                history = history[index + 1:]
+                break
         at = now()
-        user = _new_message("user", text, at, files=files, classification=effective)
-        assistant = _new_message("assistant", "", at, incomplete=True, classification=effective)
+        context = {"mode": mode, "enterpriseId": enterprise_id}
+        user = _new_message("user", text, at, files=files, classification=effective, **context)
+        assistant = _new_message("assistant", "", at, incomplete=True, classification=effective, **context)
         for message in (user, assistant):
             inserted = store.db.execute(
                 "insert into jkq_messages(conversation_id, document) values (?,?)",

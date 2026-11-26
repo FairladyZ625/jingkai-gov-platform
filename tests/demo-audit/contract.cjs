@@ -31,7 +31,7 @@ for (const extension of [false, true]) {
     await match({ entId: company.id });
     await api.post('/api/apps/policy/notice', { entId: company.id, itemIds: [] });
     const rows = await audit();
-    assert.equal(rows[0][3], '生成一次性告知单 · ' + company.short);
+    assert.equal(rows[0][3], '生成政策参考清单 · ' + company.short);
     assert.equal(rows[1][3], '匹配 · ' + company.short);
     for (const [, , , action, model] of rows) {
       if (enterprises.some(e => action.includes(e.short))) {

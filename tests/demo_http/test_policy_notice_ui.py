@@ -1,4 +1,4 @@
-"""#208：手动描述企业在真实 HTTP 页面核对事项并生成告知单。"""
+"""#208 / #229：手动描述企业在真实 HTTP 页面筛选政策并生成参考清单。"""
 import re
 
 import pytest
@@ -46,4 +46,5 @@ def test_manual_enterprise_checks_scope_and_generates_notice(server):
         sent = notice.value.request.post_data_json
         assert sent["profile"] == {"subjectType": "企业"}
         assert "entId" not in sent and set(sent["itemIds"]) == set(selected)
-        expect(page.locator("#pn")).to_have_value(re.compile("政策兑现一次性告知单"))
+        expect(page.locator("#pn")).to_have_value(re.compile(r"^政策参考清单\n申报对象：企业（手动描述）\n"))
+        expect(page.locator("#pn")).to_have_value(notice.value.json()["text"])

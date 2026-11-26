@@ -3,9 +3,10 @@
 import json
 import re
 import unicodedata
+from urllib.parse import quote
 
 from fastapi import HTTPException
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, HTTPError
 
 from jkq.orchestrator.ports import ModelTurn, ToolCall
 
@@ -47,7 +48,7 @@ class PolicyToolBridge:
             raise HTTPException(404, "工具未注册到政策应用")
 
         if tool == "policy.notice" and "itemIds" not in args:
-            return {"result": {"text": "请提供要写入告知单的政策事项编号。"}}
+            return {"result": {"text": "请提供要写入政策参考清单的政策支持编号。"}}
         headers = [(name, value) for name, value in request.headers.raw if name == b"cookie"]
         options = {"params": args} if method == "GET" else {"json": args}
         async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://policy.internal",
@@ -72,7 +73,7 @@ class _NoticeSelectionGuard:
 
     async def call_from_chat(self, request, app_id, tool, args):
         if app_id == APP_ID and tool == "policy.notice" and "itemIds" not in args:
-            return {"tool": tool, "result": {"text": "请提供要写入告知单的政策事项编号。"}}
+            return {"tool": tool, "result": {"text": "请提供要写入政策参考清单的政策支持编号。"}}
         return await self._bridge.call_from_chat(request, app_id, tool, args)
 
 
@@ -82,7 +83,7 @@ def _policy_call(text: str) -> ToolCall | None:
         return ToolCall("policy.match", {"entId": _DEMO_ENTERPRISES[match[1]]})
     if match := re.fullmatch(r"搜索政策事项\s*:?\s*(\S.*)", text):
         return ToolCall("policy.search", {"q": match[1]})
-    if match := re.fullmatch(rf"给({_DEMO_NAMES})生成(?:政策)?告知单\s*:?\s*"
+    if match := re.fullmatch(rf"给({_DEMO_NAMES})生成(?:政策参考清单|参考清单|(?:政策)?告知单)\s*:?\s*"
                              r"([A-Za-z0-9-]+(?:[、,\s]+[A-Za-z0-9-]+)*)", text):
         return ToolCall("policy.notice", {
             "entId": _DEMO_ENTERPRISES[match[1]],
@@ -115,8 +116,30 @@ def _answers_policy_call(messages):
     return bool(calls) and all(call["function"]["name"].startswith(APP_ID + ".") for call in calls)
 
 
+async def selected_enterprise(request, enterprise_id: str) -> dict:
+    """沿原企业 HTTP 路由授权；不读取演示画像、原值库或其他企业历史。"""
+    unavailable = {'id': enterprise_id, 'status': 'unavailable'}
+    headers = [(name, value) for name, value in request.headers.raw if name in {b'cookie', b'authorization'}]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=request.app, raise_app_exceptions=False),
+                               base_url='http://policy.internal', headers=headers) as client:
+            response = await client.get('/api/apps/enterprise/companies/' + quote(enterprise_id, safe=''))
+        if not response.is_success:
+            return unavailable
+        item = response.json()['item']
+        if not isinstance(item, dict) or item.get('id') != enterprise_id or not item.get('name'):
+            return unavailable
+        # 只暴露当前岗位所需字段；保留原接口对只读账号的投影，绝不展开私库。
+        fields = {key: item[key] for key in ('id', 'name', 'industry', 'scale')
+                  if isinstance(item.get(key), str)}
+        return {'id': enterprise_id, 'status': 'available', 'item': fields}
+    except (KeyError, TypeError, ValueError, RuntimeError, HTTPError, TimeoutError):
+        return unavailable
+
+
 def install(app, current_user):
     """不重复注册会话路由；通用编排按 app.state 读取网关与工具桥。"""
+    app.state.policy_enterprise_reader = selected_enterprise
     if getattr(app.state, "apps_bridge", None) is None:
         app.state.apps_bridge = PolicyToolBridge(app)
     else:

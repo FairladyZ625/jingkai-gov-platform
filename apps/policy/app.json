@@ -3,7 +3,7 @@
   "sdk": "1",
   "id": "policy",
   "name": "政策兑现",
-  "summary": "按企业情况逐条核对兑现事项，结论附原文",
+  "summary": "根据企业信息，查找可能适用的政策支持，查看申请条件和原文依据。",
   "sector": "other",
   "kind": "module",
   "scenes": [],
@@ -37,7 +37,7 @@
   "tools": [
     {
       "name": "policy.match",
-      "description": "为企业逐条核对兑现事项",
+      "description": "根据企业信息筛选可能适用的政策支持",
       "write": false,
       "input": {
         "entId": "string"
@@ -56,7 +56,7 @@
     },
     {
       "name": "policy.notice",
-      "description": "生成一次性告知单",
+      "description": "生成政策参考清单",
       "write": false,
       "input": {
         "entId": "string",
@@ -66,10 +66,12 @@
     },
     {
       "name": "policy.search",
-      "description": "按口语搜索兑现事项",
+      "description": "按需求搜索已收录的政策支持",
       "write": false,
       "input": {
-        "q": "string"
+        "q": "string",
+        "queryMode": "string?",
+        "enterpriseId": "string?"
       },
       "endpoint": "GET /api/apps/policy/items"
     }
@@ -155,10 +157,13 @@
       "requires": "operate",
       "action": "notice",
       "examples": [
-        "给示例企业生成政策告知单",
+        "给示例企业生成政策参考清单",
+        "生成政策参考清单",
         "生成一次性告知单"
       ],
       "keywords": [
+        "政策参考清单",
+        "参考清单",
         "告知单",
         "告知书",
         "告知"
@@ -169,7 +174,7 @@
       "plan": [
         "核对事项",
         "试算额度",
-        "生成告知单",
+        "生成政策参考清单",
         "等你确认"
       ]
     },
@@ -217,10 +222,12 @@
       "requires": "operate",
       "action": "toDocument",
       "examples": [
+        "把政策参考清单转成公文答复",
         "把告知单转成公文答复"
       ],
       "keywords": [
         "转公文",
+        "转成公文",
         "答复函",
         "答复意见"
       ],
