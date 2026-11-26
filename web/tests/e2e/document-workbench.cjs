@@ -88,3 +88,70 @@ test('采用规则润色产生新版本后清除旧核查和预览，同版本�
   assert.ok(await page.locator('.dw-check').count());assert.equal(await adopt.count(),0);
  }finally{await browser.close();}
 });
+
+async function legacyDraft(page) {
+ await page.goto('file://'+root+'/index.html');await page.locator('[data-u="wangmin"]').click();await page.locator('[data-op="shell.me"]').waitFor({state:'attached'});
+ const id=await page.evaluate(async()=>{
+  const a=JKApi.document,d=(await a.draft({templateId:'T06',inputs:{orig:'跨入口核验通知',oldEnd:'2026-11-01',newEnd:'2026-11-30'}})).item;
+  await a.save(d.id,{content:{title:'跨入口核验通知',docNo:'演示〔2026〕1号',to:'各有关单位：',paragraphs:['旧版正文'],sign:'公文工作组',date:'2026年11月26日'},baseVersion:d.versions.at(-1).v});
+  await JKShell.openApp('document','detail',{id:d.id});return d.id;
+ });
+ await page.locator('.pview.on [data-op="document.p-0"]').waitFor();return id;
+}
+async function changeFromWorkbench(page,id,text) {
+ await page.evaluate(id=>JKWorkbench.open('document',{recordId:id}),id);
+ await page.locator('.wb-document textarea[name="para"]').first().fill(text);await page.getByRole('button',{name:'保存新版本',exact:true}).click();await page.getByText('已保存新版本',{exact:true}).waitFor();
+ await page.locator('[data-wb-chat]').click();await page.locator('.pview.on [data-op="document.paper"]').waitFor();
+}
+for(const unsaved of [false,true])test(`跨入口${unsaved?'保留未保存编辑并拒绝旧版覆盖':'自动刷新原应用，修改标题不回退正文'}`,{timeout:60000},async()=>{
+ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(12000);const id=await legacyDraft(page);
+  const legacy=page.locator('.pview[data-view="document"]');
+  if(unsaved){await legacy.locator('[data-pe="0"]').click();await legacy.locator('[data-ed="0"]').fill('尚未保存的独立编辑');await legacy.locator('.ap-h h2').click();}
+  await changeFromWorkbench(page,id,'工作台保存的新版正文');
+  const before=await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1),id);
+  if(unsaved){
+   assert.equal(await legacy.locator('[data-op="document.p-0"]').innerText(),'尚未保存的独立编辑');
+   await legacy.locator('[data-op="document.save"]').click();
+   await page.getByText(/文稿已有新版本/).first().waitFor();
+   const after=await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1),id);
+   assert.equal(after.v,before.v);assert.equal(after.content.paragraphs[0],'工作台保存的新版正文');
+   assert.equal(await legacy.locator('[data-op="document.p-0"]').innerText(),'尚未保存的独立编辑');
+   assert.equal(await legacy.locator('[data-op="document.save"]').count(),1);
+  }else{
+   await require('@playwright/test').expect(legacy.locator('[data-op="document.p-0"]')).toHaveText('工作台保存的新版正文',{timeout:3000});
+   await legacy.locator('[data-pe="title"]').click();await legacy.locator('[data-ed="title"]').fill('原应用仅修改标题');await legacy.locator('.ap-h h2').click();await legacy.locator('[data-op="document.save"]').click();
+   await page.getByText(/已保存为第/).last().waitFor();
+   const after=await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1),id);
+   assert.equal(after.content.title,'原应用仅修改标题');assert.equal(after.content.paragraphs[0],'工作台保存的新版正文');assert.equal(after.v,before.v+1);
+  }
+ }finally{await browser.close();}
+});
+
+test('已打开原应用文稿后，工作台新建进入模板选择',{timeout:60000},async()=>{
+ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(12000);await legacyDraft(page);
+  await page.evaluate(()=>JKWorkbench.open('document'));await page.getByRole('button',{name:'新建文稿',exact:true}).click();
+  await require('@playwright/test').expect(page.locator('.pview.on [data-tpl]')).toHaveCount(10,{timeout:3000});
+  assert.equal(await page.locator('.pview.on .dc-paper').count(),0);
+ }finally{await browser.close();}
+});
+
+for(const action of ['polish','fix'])test(`原应用${action==='polish'?'润色采用':'规则修正'}绑定产生结果时的版本`,{timeout:60000},async()=>{
+ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(12000);const id=await legacyDraft(page),legacy=page.locator('.pview[data-view="document"]');
+  if(action==='polish'){
+   await legacy.locator('[data-pe="0"]').click();await legacy.locator('[data-ed="0"]').fill('咱们要赶紧弄好资料。');await legacy.locator('.ap-h h2').click();await legacy.locator('[data-op="document.save"]').click();await page.getByText(/已保存为第/).last().waitFor();
+   await legacy.locator('[data-op="document.panel-polish"]').click();await legacy.locator('[data-op="document.polish"]').click();await legacy.locator('[data-op="document.polish-yes"]').waitFor();
+  }else{await legacy.locator('[data-op="document.check"]').click();await legacy.locator('[data-op="document.fix-all"]').waitFor();}
+  const external=await page.evaluate(async id=>{const a=JKApi.document,d=(await a.get(id)).item;return (await a.save(id,{content:{...d.versions.at(-1).content,paragraphs:['另一客户端刚保存的正文']},baseVersion:d.versions.at(-1).v})).item.versions.at(-1);},id);
+  await legacy.locator(`[data-op="document.${action==='polish'?'polish-yes':'fix-all'}"]`).click();
+  await page.getByText(/文稿已有新版本/).first().waitFor();
+  const latest=await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1),id);
+  assert.equal(latest.v,external.v);assert.equal(latest.content.paragraphs[0],'另一客户端刚保存的正文');
+  if(action==='polish'){assert.equal(await legacy.locator('[data-op="document.p-0"]').innerText(),'我局要及时完成资料。');assert.equal(await legacy.locator('[data-op="document.save"]').count(),1);}
+ }finally{await browser.close();}
+});

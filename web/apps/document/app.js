@@ -47,11 +47,12 @@
     mount(el, ctx) {
       const { ui, api, perms } = ctx; const D = api.document; const esc = ui.esc, icon = ui.icon, tag = ui.tag;
       const canView = perms.can('view') && !perms.isPartner, canOp = canView && perms.can('operate'), canApprove = canView && perms.can('approve');
-      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, notice: '', refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, checkError: '', polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editing: null, hl: null, cpara: 0, busy: false };
+      const S = { tab: 'flow', step: 0, tpl: null, inputs: {}, from: null, notice: '', refs: new Set(), hits: null, id: null, doc: null, view: null, panel: 'check', issues: null, checkError: '', polish: null, pstyle: 'formal', cmp: null, cmpA: null, cmpB: null, edit: null, editBaseVersion: null, checkVersion: null, polishVersion: null, editing: null, hl: null, cpara: 0, busy: false };
       // 起草要素按草稿隔离，仅在当前公文会话保存；不从正文猜字段，也不写入共享记录。
       const draftForms = new Map();
       let TPLS = [], GROUPS = [], DOCS = [], POLS = null, ENTS = null, loaded = false, loadErr = null;
-      let saving = false;
+      let saving = false, alive = true, recordInvalidated = false, refreshSequence = 0;
+      const ownerId = ctx.user.id;
       const $ = (s) => el.querySelector(s);
       const tplOf = (id) => TPLS.find((t) => t.id === id);
       const latest = () => S.doc.versions[S.doc.versions.length - 1];
@@ -72,6 +73,36 @@
         render();
       }
       async function refreshList() { try { DOCS = (await D.list()).items; } catch (e) { /* 列表刷新失败不影响当前稿 */ } }
+      const mountedForOwner = () => alive && ctx.user.id === ownerId && perms.can('view');
+      const externalNotice = () => recordInvalidated
+        ? `<div id="dc-external" class="callout h-amber" role="status"><div class="grow">文稿已在其他入口更新${S.edit ? '，未保存的修改仍保留；保存时将核对原版本' : '，请重新读取最新内容'}。</div><button class="btn sm" data-act="reloadDoc">重新读取</button></div>` : '';
+      function showExternalNotice() {
+        if (!$('#dc-external') && $('#ds') && S.doc) $('#ds').insertAdjacentHTML('afterbegin', externalNotice());
+      }
+      function clearDerived() {
+        S.issues = null; S.checkVersion = null; S.checkError = ''; S.polish = null; S.polishVersion = null; S.cmp = null;
+      }
+      async function refreshExternal() {
+        if (!recordInvalidated || !mountedForOwner() || !S.doc) return;
+        if (saving || S.busy || S.edit || S.editing != null) { showExternalNotice(); return; }
+        const id = S.id, sequence = ++refreshSequence;
+        try {
+          const { item } = await D.get(id);
+          if (!mountedForOwner() || sequence !== refreshSequence || S.id !== id || saving || S.busy || S.edit || S.editing != null) return;
+          if (latest().v !== item.versions.at(-1).v) clearDerived();
+          S.doc = item; recordInvalidated = false; updateSavedSummary(); body();
+        } catch (e) { if (mountedForOwner() && S.id === id) { showExternalNotice(); ui.toast(e.message || '文稿更新未读取，请重试', { type: 'err' }); } }
+      }
+      function documentChanged(event) {
+        if (!mountedForOwner() || event.detail?.userId !== ownerId) return;
+        void refreshList();
+        if (S.id === event.detail.id && S.doc) { recordInvalidated = true; void refreshExternal(); }
+      }
+      function workbenchChanged() {
+        if (!window.JKWorkbench?.current()) void refreshExternal();
+      }
+      window.addEventListener('jk:document:changed', documentChanged);
+      window.addEventListener('jk:workbench:changed', workbenchChanged);
       async function allowLeavingDraft() {
         if (saving) { ui.toast('正在保存，请稍候', { type: 'warn' }); return false; }
         flushEditor();
@@ -80,7 +111,7 @@
           title: '未保存的修改', danger: true, okText: '放弃修改',
         });
         if (!discard) return false;
-        S.edit = null; S.editing = null;
+        S.edit = null; S.editing = null; S.editBaseVersion = null;
         return true;
       }
       async function switchTab(tab) {
@@ -91,6 +122,7 @@
       }
       async function openDoc(id, step) {
         if (!await allowLeavingDraft()) return false;
+        recordInvalidated = false; refreshSequence++; S.editBaseVersion = null; S.checkVersion = null; S.polishVersion = null;
         S.id = id; S.doc = null; S.view = null; S.edit = null; S.editing = null; S.issues = null; S.checkError = ''; S.polish = null; S.cmp = null; S.hl = null; S.panel = 'check';
         S.inputs = {}; S.from = null; S.notice = ''; S.refs = new Set(); S.hits = [];
         S.tab = 'flow'; S.step = step == null ? 2 : step; render();
@@ -222,13 +254,13 @@
           ${c.paragraphs.map((p, i) => S.editing === i && editable ? `<textarea class="textarea dc-ed" data-ed="${i}" data-op="document.ed-${i}">${esc(p)}</textarea>` : `<div class="dc-pw">${badge(i)}<p class="dc-p ${S.hl === i ? 'dc-hl' : ''} ${mode === 'comment' && S.cpara === i ? 'sel' : ''}" ${editable ? `data-pe="${i}"` : mode === 'comment' ? `data-cpara="${i}"` : ''} data-op="document.p-${i}" style="white-space:pre-wrap">${paraHtml(p)}</p></div>`).join('')}
           ${field('sign', 'dc-sign')}${field('date', 'dc-sign')}</div>`;
       }
-      function startEdit(k) { if (saving || !canOp || locked() || S.view != null) return; if (!S.edit) S.edit = JSON.parse(JSON.stringify(latest().content)); S.editing = Object.hasOwn(fieldLabels, k) ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
+      function startEdit(k) { if (saving || !canOp || locked() || S.view != null) return; if (!S.edit) { S.edit = JSON.parse(JSON.stringify(latest().content)); S.editBaseVersion = latest().v; } S.editing = Object.hasOwn(fieldLabels, k) ? k : +k; step2(); const t = el.querySelector('.dc-ed'); if (t) { t.focus(); t.style.height = t.scrollHeight + 4 + 'px'; } }
       function endEdit(t) {
         if (!S.edit || String(S.editing) !== t.dataset.ed) return;
         const k = t.dataset.ed, value = t.value.trim();
         if (Object.hasOwn(fieldLabels, k)) S.edit[k] = value; else S.edit.paragraphs[+k] = value;
         S.editing = null;
-        if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) S.edit = null;
+        if (JSON.stringify(S.edit) === JSON.stringify(latest().content)) { S.edit = null; S.editBaseVersion = null; }
         // 失焦只替换正在编辑的字段，不能移除同一次点击的保存按钮或其他控件。
         if (t.isConnected) {
           const template = document.createElement('template');
@@ -259,18 +291,20 @@
         if (saving) return false;
         flushEditor();
         if (!S.edit) return true;
+        if (!Number.isInteger(S.editBaseVersion)) { ui.toast('编辑版本未确认，修改仍保留，请重新读取后核对', { type: 'err' }); return false; }
         saving = true;
         try {
-          const r = await D.save(S.id, { content: S.edit, note: note || '手动修改' });
-          S.doc = r.item; S.edit = null; S.issues = null; S.checkError = '';
+          const r = await D.save(S.id, { content: S.edit, note: note || '手动修改', baseVersion: S.editBaseVersion });
+          S.doc = r.item; S.edit = null; S.editBaseVersion = null; recordInvalidated = false; clearDerived();
           updateSavedSummary();
           ctx.audit('保存公文', `${S.doc.title} · 第 ${latest().v} 版`);
           ui.toast(`已保存为第 ${latest().v} 版`, { type: 'ok' });
           return true;
         } catch (e) {
+          if (['STALE_VERSION', 'VERSION_CONFLICT'].includes(e.code)) { recordInvalidated = true; showExternalNotice(); }
           ui.toast(e.code === 'LOCKED' ? '已定稿文稿不能修改，请另存新稿' : e.message || '保存失败，修改仍保留', { type: 'err' });
           return false;
-        } finally { saving = false; }
+        } finally { saving = false; if (recordInvalidated && !S.edit) void refreshExternal(); }
       }
 
       /* ---------- 第 3 步：初稿与核查 ---------- */
@@ -278,7 +312,7 @@
         const ds = $('#ds'); if (!ds) return; if (!S.doc) { ds.innerHTML = skel(); foot(); return; }
         const c = shown(); const vs = S.doc.versions;
         ds.innerHTML = `<div class="row" style="margin-bottom:var(--s3)"><div class="grow"><div class="q" style="margin:0">${esc(T.draftQ)} ${tag(S.doc.status, 'docStatus')} <span class="meta">第 ${S.view ?? latest().v} 版${S.view != null ? '（只读）' : ''}</span></div><div class="q-sub" style="margin:2px 0 0">${esc(locked() ? '已定稿，内容已锁定' : T.draftSub)}</div></div></div>
-          ${submitNotice()}${S.view != null ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(updatedLabel(vs.find((v) => v.v === S.view).at))}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
+          ${externalNotice()}${submitNotice()}${S.view != null ? `<div class="callout h-amber" style="margin-bottom:var(--s3)">${icon('history')}<div class="grow">正在看第 ${S.view} 版（${esc(vs.find((v) => v.v === S.view).by)} · ${esc(updatedLabel(vs.find((v) => v.v === S.view).at))}）</div><button class="btn sm" data-act="latest">回到最新</button>${canOp && !locked() ? `<button class="btn sm" data-act="restore" data-op="document.restore">恢复这一版</button>` : ''}</div>` : ''}
           ${S.edit ? `<div id="dc-unsaved" class="callout h-blue" style="margin-bottom:var(--s3)">${icon('edit')}<div class="grow">有未保存的修改</div><button class="btn sm" data-act="discard">放弃</button><button class="btn sm" data-act="saveEdit" data-op="document.save">保存为第 ${latest().v + 1} 版</button></div>` : ''}
           <div class="dc-split"><div>${paper(c, 'edit')}</div><div class="dc-side">${sidePanel()}</div></div>`;
         foot(`<button class="btn ghost" data-step="1" ${S.tpl ? '' : 'disabled'}>${icon('chevron-left')}要素</button><button class="btn" data-act="word" data-op="document.word">${icon('download')}导出 Word</button>`,
@@ -323,7 +357,8 @@
       }
       async function runCheck(silent) {
         if (!canOp || !await saveEdit()) return;
-        try { S.issues = (await D.check(S.id)).issues; S.checkError = ''; }
+        const id = S.id, checkedVersion = latest().v;
+        try { const result = await D.check(id); if (S.id !== id || latest().v !== checkedVersion) return; S.issues = result.issues; S.checkVersion = checkedVersion; S.checkError = ''; }
         catch (e) {
           S.issues = null;
           S.checkError = e.status === 404 || e.status === 503 ? '暂时无法核查当前文稿' : e.message;
@@ -336,14 +371,26 @@
         return S.issues;
       }
       async function fix(ids) {
+        const checkedVersion = S.checkVersion;
+        if (!Number.isInteger(checkedVersion)) { ui.toast('请先核查当前已保存版本，再执行修正', { type: 'warn' }); return; }
         if (!await saveEdit()) return;
-        try { const r = await D.fix(S.id, { ids }); S.doc = r.item; S.issues = r.issues; S.view = null; S.checkError = ''; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${latest().v} 版`, { type: 'ok' }); step2(); return r; }
-        catch (e) { ui.toast(e.message, { type: 'err' }); }
+        saving = true;
+        try { const r = await D.fix(S.id, { ids, baseVersion: checkedVersion }); S.doc = r.item; S.issues = r.issues; S.checkVersion = latest().v; S.view = null; S.checkError = ''; ctx.audit('一键修正', `${S.doc.title} · ${ids.length} 处`); ui.toast(`已修正 ${ids.length} 处，生成第 ${latest().v} 版`, { type: 'ok' }); step2(); return r; }
+        catch (e) { if (['STALE_VERSION', 'VERSION_CONFLICT'].includes(e.code)) recordInvalidated = true; ui.toast(e.message, { type: 'err' }); }
+        finally { saving = false; if (recordInvalidated) void refreshExternal(); }
       }
-      async function polishPreview() { if (S.edit) await saveEdit(); try { S.polish = await D.polish(S.id, { style: S.pstyle }); S.panel = 'polish'; step2(); return S.polish; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
-      async function polishApply() { S.edit = S.polish.preview; S.polish = null; await saveEdit(`润色·${(C.polishStyles.find((x) => x[0] === S.pstyle) || [, ''])[1]}`); step2(); }
+      async function polishPreview() {
+        if (!await saveEdit()) return;
+        const id = S.id, previewVersion = latest().v;
+        try {
+          const result = await D.polish(id, { style: S.pstyle });
+          if (S.id !== id || latest().v !== previewVersion) return;
+          S.polish = result; S.polishVersion = previewVersion; S.panel = 'polish'; step2(); return S.polish;
+        } catch (e) { ui.toast(e.message, { type: 'err' }); }
+      }
+      async function polishApply() { if (!S.polish || !Number.isInteger(S.polishVersion)) return; S.edit = S.polish.preview; S.editBaseVersion = S.polishVersion; S.polish = null; S.polishVersion = null; await saveEdit(`润色·${(C.polishStyles.find((x) => x[0] === S.pstyle) || [, ''])[1]}`); step2(); }
       async function compare(a, b) { S.cmpA = a; S.cmpB = b; try { const r = await D.compare({ a: { id: S.id, v: a }, b: { id: S.id, v: b } }); S.cmp = Object.assign(r, { a, b }); S.panel = 'versions'; step2(); return S.cmp; } catch (e) { ui.toast(e.message, { type: 'err' }); } }
-      async function restore() { const v = S.view; S.edit = JSON.parse(JSON.stringify(S.doc.versions.find((x) => x.v === v).content)); S.view = null; await saveEdit(`恢复第 ${v} 版`); step2(); }
+      async function restore() { const v = S.view; S.editBaseVersion = latest().v; S.edit = JSON.parse(JSON.stringify(S.doc.versions.find((x) => x.v === v).content)); S.view = null; await saveEdit(`恢复第 ${v} 版`); step2(); }
       async function exportWord() {
         try {
           const r = await D.exportWord(S.id);
@@ -359,7 +406,7 @@
       function step3() {
         const ds = $('#ds'); if (!ds) return; if (!S.doc) { ds.innerHTML = skel(); foot(); return; }
         const d = S.doc; const cm = d.comments || []; const open = cm.filter((x) => !x.resolved).length;
-        ds.innerHTML = `<div class="q">${esc(T.reviewQ)}</div><div class="q-sub">${esc(T.reviewSub)}</div>${submitNotice()}
+        ds.innerHTML = `<div class="q">${esc(T.reviewQ)}</div><div class="q-sub">${esc(T.reviewSub)}</div>${externalNotice()}${submitNotice()}
           ${locked() ? `<div class="callout h-green" style="margin-bottom:var(--s3)">${icon('lock')}<div class="grow">已定稿 · ${esc(latest().content.docNo || numberLabel)}。内容已锁定，需要改请另存新稿</div>${canOp ? '<button class="btn sm" data-act="saveAs" data-op="document.save-as">另存新稿</button>' : ''}</div>` : d.status === '已退回' ? `<div class="callout h-red" style="margin-bottom:var(--s3)">${icon('alert')}<div>审签退回${d.returnReason ? '：' + esc(d.returnReason) : '，请核对批注并修改后重新送审'}</div></div>` : ''}
           <div class="dc-split"><div>${paper(latest().content, 'comment')}</div><div class="dc-side">
             <div class="dc-status"><div class="row gap2">${tag(d.status, 'docStatus')}<span class="meta">第 ${latest().v} 版 · ${esc(d.author)}</span></div>
@@ -386,14 +433,14 @@
       async function addComment(text) { const t = (text || ($('#dcn') || {}).value || '').trim(); if (!t) return; const r = await D.comment(S.id, { para: S.cpara, text: t }); S.doc.comments.push(r.item); ctx.audit('添加批注', `${S.doc.title} · 第 ${S.cpara + 1} 段`); step3(); return r.item; }
       function submitModal() {
         if (S.edit) { S.step = 2; body(); ui.toast('请先保存修改，核对版本后再送审', { type: 'warn' }); return; }
-        const open = (S.doc.comments || []).filter((c) => !c.resolved).length;
+        const open = (S.doc.comments || []).filter((c) => !c.resolved).length, submittedVersion = latest().v;
         return ui.modal({ title: '送审签', okText: '确认送审', body: `<div class="field"><label for="dsa">审签人</label><select class="select" id="dsa">${C.approvers.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div><div>《${esc(S.doc.title)}》 · 第 ${latest().v} 版</div><div class="meta">${open ? `还有 ${open} 条批注未解决。` : ''}确认后才会送审；取消不提交。</div>`, ok: async (box) => {
           box.querySelector('[data-ok]').disabled = true;
-          await doSubmit(box.querySelector('#dsa').value);
+          await doSubmit(box.querySelector('#dsa').value, submittedVersion);
         } });
       }
-      async function doSubmit(assignee) {
-        try { const r = await D.submit(S.id, { assignee }); S.doc = r.item; ctx.audit('送审签', `${S.doc.title} → ${assignee}`); ctx.bus.emit('inbox:changed', { app: 'document', ref: S.id }); await refreshList(); ui.toast(`已送 ${assignee} 审签`, { type: 'ok' }); step3(); return r; }
+      async function doSubmit(assignee, version = latest().v) {
+        try { const r = await D.submit(S.id, { assignee, version }); S.doc = r.item; ctx.audit('送审签', `${S.doc.title} → ${assignee}`); ctx.bus.emit('inbox:changed', { app: 'document', ref: S.id }); await refreshList(); ui.toast(`已送 ${assignee} 审签`, { type: 'ok' }); step3(); return r; }
         catch (e) {
           const message = (e.status >= 400 && e.status < 500 ? '未送审：' : '送审结果未确认：') + (e.message || '请求失败，请刷新文稿核对');
           submitFailure = { doc: S.doc, message };
@@ -420,7 +467,7 @@
           if (e.status !== 404 || e.code !== 'NOT_FOUND' || !policyId) throw e;
           return D.draft({ templateId, inputs: {} });
         });
-        await D.save(r.item.id, { content: { ...c, docNo: '' }, note: '另存自已定稿文稿' });
+        await D.save(r.item.id, { content: { ...c, docNo: '' }, note: '另存自已定稿文稿', baseVersion: r.item.versions.at(-1).v });
         ui.toast('已另存为新稿', { type: 'ok' });
         await refreshList();
         return openDoc(r.item.id, 2);
@@ -466,7 +513,8 @@
         if (a === 'latest') { S.view = null; step2(); return; }
         if (a === 'restore') return restore();
         if (a === 'saveEdit') { await saveEdit(); step2(); return; }
-        if (a === 'discard' && !saving) { S.edit = null; S.editing = null; step2(); return; }
+        if (a === 'discard' && !saving) { S.edit = null; S.editing = null; S.editBaseVersion = null; if (recordInvalidated) await refreshExternal(); else step2(); return; }
+        if (a === 'reloadDoc') return openDoc(S.id, S.step);
         if (a === 'word') return exportWord();
         if (a === 'addCm') return addComment();
         if (a === 'submit') return submitModal();
@@ -550,8 +598,8 @@
           await ready(); if (!canOp) return noPerm(run); if (!(await needDoc(text, run, 3))) return;
           if (S.doc.status === '审签中' || locked()) { run && run.done(`这份文稿${S.doc.status}，不需要再送审`); return; }
           if (!run) return submitModal();
-          await run.step(1); const iss = (await D.check(S.id)).issues; const errs = iss.filter((i) => i.level === 'error');
-          if (errs.length) { S.issues = iss; S.step = 2; body(); await run.highlight('.dc-side'); run.fail(`还有 ${errs.length} 处必须改的问题：${errs.map((e) => e.text).join('；')}`); return; }
+          await run.step(1); const checkedVersion = latest().v, iss = (await D.check(S.id)).issues; const errs = iss.filter((i) => i.level === 'error');
+          if (errs.length) { S.issues = iss; S.checkVersion = checkedVersion; S.step = 2; body(); await run.highlight('.dc-side'); run.fail(`还有 ${errs.length} 处必须改的问题：${errs.map((e) => e.text).join('；')}`); return; }
           await run.step(2); await run.highlight('[data-op="document.submit"]', '确认后才送审');
           const open = (S.doc.comments || []).filter((c) => !c.resolved).length;
           const c = await run.ask(`送 ${C.approvers[0]} 审签第 ${latest().v} 版「${S.doc.title}」${open ? `（还有 ${open} 条批注未解决）` : ''}，确认吗？`, ['确认送审', '再看看']);
@@ -630,7 +678,7 @@
           render();
         },
         actions,
-        unmount() {},
+        unmount() { alive = false; refreshSequence++; window.removeEventListener('jk:document:changed', documentChanged); window.removeEventListener('jk:workbench:changed', workbenchChanged); },
       };
     },
   });

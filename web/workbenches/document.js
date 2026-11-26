@@ -22,7 +22,7 @@
     async function run(fn,message,refresh=true) {
       if(!live()||busy)return;busy=true;el.setAttribute('aria-busy','true');
       el.querySelectorAll('button').forEach(b=>{if(!b.disabled){b.disabled=true;b.dataset.waitDisabled='1';}});
-      try { await fn();if(!live())return;if(refresh)await load();if(message)notice(message); }
+      try { await fn();if(!live())return;if(refresh){ window.dispatchEvent(new CustomEvent('jk:document:changed',{detail:{id,userId:ctx.userId}})); await load(); }if(message)notice(message); }
       catch(error){notice(error.message||'操作未完成，请重试',true);}
       finally {busy=false;if(alive){el.removeAttribute('aria-busy');el.querySelectorAll('[data-wait-disabled]').forEach(b=>{b.disabled=false;delete b.dataset.waitDisabled;});}}
     }
@@ -88,9 +88,9 @@
       if(b.dataset.citation){JKShell.openApp('kb','doc',{fileId:b.dataset.citation,version:draft.refs.find(r=>r.id===b.dataset.citation)?.version});return;}
       if(b.dataset.resolve){run(()=>api.patchComment(id,b.dataset.resolve,{resolved:b.dataset.resolved==='true'}),'批注状态已更新');return;}
       const a=b.dataset.action;if(!a)return;
-      if(a==='new'){JKWorkbench.hide();JKShell.openApp('document','home');return;}
+      if(a==='new'){JKWorkbench.hide();JKShell.openApp('document','new');return;}
       if(a==='reload'){run(()=>{},'',true);return;}
-      if(a==='source'){JKWorkbench.open('meeting',{recordId:draft.source.id});return;}
+      if(a==='source'){JKWorkbench.open('meeting',{recordId:`${draft.source.id}~minutes~${draft.source.version}`});return;}
       if(a==='download'){run(async()=>{const r=await api.exportWord(id);if(live())JK.download(r.filename,r.blob);},'',false);return;}
       if(a==='paragraph'&&editable()){const list=el.querySelector('.dw-paragraphs'),n=list.children.length+1;list.insertAdjacentHTML('beforeend',`<label class="dw-field">第 ${n} 段<textarea class="input" name="para" rows="3"></textarea></label>`);list.lastElementChild.querySelector('textarea').focus();dirty=true;return;}
       if(!saved())return;
