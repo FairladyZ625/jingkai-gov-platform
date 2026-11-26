@@ -793,11 +793,39 @@
   // 公文协作
   on('GET', '/api/apps/document/templates', () => ({ items: S.docTemplates, groups: [['A', '发布政策与安排'], ['B', '面向企业组织事项'], ['C', '公开结果与回应']] }));
   on('GET', '/api/apps/document/documents', () => ({ items: Object.values(S.drafts).map(docSummary).sort((a, b) => b.updated.localeCompare(a.updated)) }));
-  on('POST', '/api/apps/document/drafts', (b) => { const model = pickModel(window.JK_CONFIG.modelRouting.taskModels.writing, false).used; const t = S.docTemplates.find((x) => x.id === b.templateId); const c = genDoc(t, b.inputs || {}); if (b.extra) c.paragraphs.push(...b.extra); const id = nid('DOC'); S.drafts[id] = { id, title: c.title, templateId: t.id, policyId: policyDocumentId(t.id, b.inputs?.policy), status: '草稿', author: me().name, versions: [{ v: 1, at: now(), by: me().name + '（AI 初稿）', content: c }], comments: [], refs: b.refs || [] }; audit('公文协作', `生成初稿 · ${t.name}`, model.name); return { item: S.drafts[id] }; });
+  const docAuthorId = d => d.authorId || S.users.find(u => u.name === d.author)?.id || null;
+  on('GET', '/api/apps/document/workbench', () => ({
+    items: Object.values(S.drafts).map(d => ({...docSummary(d), authorId:docAuthorId(d), project:'jkq', source:d.source || null})).sort((a,b) => b.updated.localeCompare(a.updated)),
+    reviewers: S.users.filter(u => u.status === 'active' && can('document','view',u) && can('document','approve',u)).map(u => ({id:u.id,name:u.name})),
+    reviews: S.inbox.filter(r => r.type === 'review' && r.app === 'document' && (r.submitter === me().id || (r.status === 'pending' && can('document','approve') && docAuthorId(S.drafts[r.ref] || {}) !== me().id && (!r.assignee || [me().id,me().name].includes(r.assignee))))).map(r => ({...r, status:r.status === 'pending' && r.version !== undefined && r.version !== S.drafts[r.ref]?.versions.at(-1).v ? 'stale' : r.status, recordId:r.ref, assignee:S.users.find(u => u.id === r.assignee || u.name === r.assignee)?.id || r.assignee}))
+  }));
+  on('POST', '/api/apps/document/workbench/reviews/:id', (b,p) => {
+    if (!can('document','approve')) err(403,'FORBIDDEN','没有公文审核权限');
+    if (!['approve','reject'].includes(b.decision) || !Number.isInteger(b.version)) err(400,'INVALID_REQUEST','请指定审签版本与决定');
+    if (b.decision === 'reject' && !String(b.comment || '').trim()) err(400,'INVALID_REQUEST','请说明退回原因');
+    return callSync('POST', '/api/v1/reviews/' + p.id + '/decisions', b);
+  });
+  on('POST', '/api/apps/document/drafts', (b) => {
+    const t = S.docTemplates.find(x => x.id === b.templateId);
+    if (!t) err(404,'NOT_FOUND','模板不存在');
+    let c = genDoc(t,b.inputs || {}), source;
+    if (b.source) {
+      if (window.JKHttp && window.JKHttp.mode('meeting') !== window.JKHttp.mode('document')) err(409,'SOURCE_TRANSPORT_MISMATCH','会议和公文需要使用同一数据环境后才能转入');
+      if (b.source.app !== 'meeting' || !Number.isInteger(b.source.version) || b.source.version < 1 || b.templateId !== 'T02') err(400,'INVALID_REQUEST','会议来源无效');
+      if (!can('meeting','view')) err(403,'FORBIDDEN','没有会议查看权限');
+      const result = callSync('GET','/api/apps/meeting/workbench/meetings/' + encodeURIComponent(b.source.id) + '?version=' + b.source.version);
+      if (result.item.minutesStatus !== '已定稿' || result.item.finalizedVersion !== b.source.version || !result.minutes?.body?.length) err(422,'INVALID_REFERENCE','只能从已定稿会议的固定版本转入公文');
+      source = {app:'meeting',id:b.source.id,version:b.source.version,title:result.minutes.title};
+      c = {title:source.title,docNo:'【待补：发文字号】',to:'【待补：主送机关】',paragraphs:result.minutes.body.flatMap(part => [part.h,part.p].filter(Boolean)),sign:'【待补：发文机关】',date:'【待补：成文日期】'};
+    } else if (b.extra) c.paragraphs.push(...b.extra);
+    const id = nid('DOC');
+    S.drafts[id] = {id,title:c.title,templateId:t.id,policyId:policyDocumentId(t.id,b.inputs?.policy),status:'草稿',author:me().name,authorId:me().id,project:'jkq',...(source ? {source} : {}),versions:[{v:1,at:now(),by:me().name+'（模板初稿）',content:c}],comments:[],refs:b.refs || []};
+    audit('公文协作',`模板起草 · ${t.name}`); return {item:S.drafts[id]};
+  });
   on('GET', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404, 'NOT_FOUND', '文稿不存在'); return { item: d }; });
-  on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
+  on('PUT', '/api/apps/document/drafts/:id', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404,'NOT_FOUND','文稿不存在'); if (b.baseVersion !== undefined && b.baseVersion !== d.versions.at(-1).v) err(409,'STALE_VERSION','文稿已有新版本，请刷新后核对再保存'); if (d.status === '已定稿') err(409, 'LOCKED', '已定稿文稿不能修改，请另存新稿'); d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + (b.note ? '（' + b.note + '）' : ''), content: b.content }); d.title = b.content.title; if (d.status === '审签中' || d.status === '已退回') d.status = '草稿'; return { item: d }; });
   on('POST', '/api/apps/document/drafts/:id/check', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; return { issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
-  on('POST', '/api/apps/document/drafts/:id/fix', (b, p) => { const d = S.drafts[p.id]; const c = clone(d.versions[d.versions.length - 1].content);
+  on('POST', '/api/apps/document/drafts/:id/fix', (b, p) => { const d = S.drafts[p.id]; if (!d) err(404,'NOT_FOUND','文稿不存在'); if (d.status === '已定稿') err(409,'LOCKED','已定稿文稿不能修改'); const c = clone(d.versions[d.versions.length - 1].content);
     (b.ids || []).forEach((id) => { const m = /^c-([dts])(\d+)$/.exec(id); if (m) { const i = +m[2]; if (m[1] === 'd') c.paragraphs[i] = c.paragraphs[i].replace(/(\d{4})-(\d{2})-(\d{2})/g, (s, y, mo, da) => `${+y}年${+mo}月${+da}日`); if (m[1] === 't') c.paragraphs[i] = c.paragraphs[i].replace('的的', '的').replace('申报申报', '申报').replace('载止', '截止').replace('截至日期', '截止日期'); if (m[1] === 's') c.paragraphs[i] = polishText(c.paragraphs[i], 'formal'); } if (id === 'c-ni') c.title = c.title.replace('关于', '关于拟'); if (id === 'c-bb') c.paragraphs.push('除上述调整外，原通知其他事项不变。'); });
     d.versions.push({ v: d.versions.length + 1, at: now(), by: me().name + '（一键修正）', content: c }); return { item: d, issues: checkDoc({ ...c, templateId: d.templateId, policyId: d.policyId }) }; });
   on('POST', '/api/apps/document/drafts/:id/polish', (b, p) => {
@@ -818,14 +846,15 @@
     if (!can('document', 'operate')) err(403, 'FORBIDDEN', '没有公文操作权限');
     const d = S.drafts[p.id];
     if (!d) err(404, 'NOT_FOUND', '文稿不存在');
+    if (b.version !== undefined && b.version !== d.versions.at(-1).v) err(409,'STALE_VERSION','文稿已有新版本，请刷新后重新送审');
     requireCheckedDraft(d, '请先在“核查”中处理。');
     if (!['草稿', '已退回'].includes(d.status)) err(409, 'INVALID_STATE', '只有草稿或已退回的文稿可以送审');
-    const name = b.assignee || '李阳', reviewer = S.users.find(u => u.name === name);
+    const name = b.assignee || '李阳', reviewer = S.users.find(u => u.status === 'active' && (u.id === name || u.name === name));
     if (!reviewer) err(404, 'NOT_FOUND', '审签人不存在');
     if (reviewer.id === me().id || reviewer.name === d.author) err(409, 'SELF_REVIEW', '提交人不能确认自己的记录');
     if (!can('document', 'approve', reviewer)) err(403, 'FORBIDDEN', '指定用户没有审签权限');
     d.status = '审签中';
-    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: name, submitter: me().id };
+    const r = { id: nid('R'), type: 'review', app: 'document', title: '审签：' + d.title, meta: `公文协作 · ${me().name}提交 · 第 ${d.versions.length} 版`, ref: d.id, status: 'pending', approver: true, assignee: reviewer.id, submitter: me().id, version: d.versions.at(-1).v };
     S.inbox.unshift(r); audit('公文协作', `送审签 · ${d.title.slice(0, 14)} v${d.versions.length}`); return { item: d, review: r };
   });
   on('GET', '/api/apps/document/drafts/:id/export', (b, p) => { const d = S.drafts[p.id]; const c = d.versions[d.versions.length - 1].content; const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${escapeHtml(c.title)}</title><style>body{font-family:仿宋_GB2312,FangSong,serif;font-size:16pt;line-height:28pt}h1{font-family:方正小标宋简体,SimSun;font-size:22pt;text-align:center}.no{text-align:center}.sign{text-align:right}</style></head><body>${d.status !== '已定稿' ? '<p style="color:#c00">【未定稿 · 仅供内部讨论】</p>' : ''}<p class="no">${escapeHtml(c.docNo) || '发文字号（请填写）'}</p><h1>${escapeHtml(c.title)}</h1><p>${escapeHtml(c.to)}</p>${c.paragraphs.map((x) => `<p>　　${escapeHtml(x)}</p>`).join('')}<p class="sign">${escapeHtml(c.sign)}</p><p class="sign">${escapeHtml(c.date)}</p></body></html>`; audit('公文协作', `导出 Word · ${c.title.slice(0, 14)}`); return { filename: c.title + '.doc', html, final: d.status === '已定稿' }; });
@@ -833,6 +862,8 @@
   on('GET', '/api/v1/reviews', () => ({ items: S.inbox }));
   on('POST', '/api/v1/reviews/:id/decisions', (b, p) => {
     const r = S.inbox.find((x) => x.id === p.id);
+    if (!r) err(404,'NOT_FOUND','审签单不存在');
+    if (b.version !== undefined && b.version !== r.version) err(409,'STALE_VERSION','请刷新后核对当前审签版本');
     if (r.approver && !can(r.app, 'approve')) err(403, 'FORBIDDEN', '需要审签权限：请用审签领导账号（如 李阳）处理');
     const approve = b.decision === 'approve';
     if (r.type === 'review') {
@@ -841,12 +872,14 @@
       if (r.assignee && r.assignee !== me().name && r.assignee !== me().id) err(403, 'FORBIDDEN', '此待办已指定其他确认人');
       const pending = S.inbox.find((item) => item.type === 'review' && item.ref === r.ref && item.status === 'pending');
       if (d?.status !== '审签中' || pending?.id !== r.id) err(409, 'REVIEW_STALE', '这份审签单已失效，请打开最新的待审文稿。');
+      if (r.version !== undefined && r.version !== d.versions.at(-1).v) err(409,'STALE_VERSION','文稿已有新版本，旧审签单已失效');
       if (approve) requireCheckedDraft(d, '请退回修订后重新送审。');
       d.status = approve ? '已定稿' : '已退回';
       if (!approve) d.returnReason = b.reason ?? b.comment ?? '';
     }
     r.status = approve ? 'done' : 'rejected';
-    r.reason = b.reason;
+    r.reason = b.reason ?? b.comment;
+    r.decisions = [...(r.decisions || []),{decision:approve ? 'confirm':'return',comment:r.reason || '',actor:me().id}];
     if (r.type === 'skill') { const s = S.skills.find((x) => x.id === r.ref); s.status = b.decision === 'approve' ? 'published' : 'draft'; s.visibility = b.decision === 'approve' ? 'recommended' : 'team'; }
     audit(r.app === 'document' ? '公文协作' : '技能中心', `${b.decision === 'approve' ? '通过' : '退回'} · ${r.title.slice(0, 16)}`); return { item: r }; });
   on('GET', '/api/v1/todos', () => ({ items: S.myTodos }));

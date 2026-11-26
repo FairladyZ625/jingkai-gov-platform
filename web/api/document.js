@@ -1,8 +1,6 @@
 /* 接口适配 · 公文协作（接口规范 §4.4）。审签走平台 reviews；定稿后 PUT 返回 409 LOCKED。 */
 (function () {
   const H = window.JKHttp; window.JKApi = window.JKApi || {};
-  // 界面按姓名选审签人；真后端要账号 ID，按演示账号表换算，模拟后端仍收姓名。
-  const toUserId = (b) => { const name = b && b.assignee; const u = name && ((window.JK_DATA || {}).users || []).find((x) => x.name === name); return u ? Object.assign({}, b, { assignee: u.id }) : (b || {}); };
   const wordType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   async function readWord(response) {
     const invalid = { status: 502, code: 'INVALID_WORD_RESPONSE', message: '未收到可用的 Word 文件' };
@@ -21,10 +19,15 @@
   window.JKApi.document = {
     /** → {items:DocTemplate[], groups:[[id,name]]} 10 类“要办什么事” */
     templates: () => H.get('/api/apps/document/templates'),
+    workspace: () => H.get('/api/apps/document/workbench'),
+    review: (id, b) => H.post('/api/apps/document/workbench/reviews/' + encodeURIComponent(id), b),
     /** → {items:DocSummary[]} 我的文稿 */
     list: () => H.get('/api/apps/document/documents'),
-    /** {templateId, inputs:{}, extra?:string[], refs?:[]} → {item:Draft} AI 初稿（缺要素写【待补：x】） */
-    draft: (b) => H.post('/api/apps/document/drafts', b),
+    /** {templateId, inputs:{}, extra?:string[], refs?:[]} → {item:Draft} 模板初稿（缺要素写【待补：x】） */
+    draft: async (b) => {
+      if (b.source && H.mode('meeting') !== H.mode('document')) throw {status:409,code:'SOURCE_TRANSPORT_MISMATCH',message:'会议和公文需要使用同一数据环境后才能转入'};
+      return H.post('/api/apps/document/drafts', b);
+    },
     /** id → {item:Draft(versions[], comments[], status)} */
     get: (id) => H.get('/api/apps/document/drafts/' + id),
     /** (id, {content, note?}) → {item}  保存为新版本；已定稿 409 */
@@ -42,8 +45,18 @@
     /** (id, cid, {reply?, resolved?}) → {item:Comment} */
     patchComment: (id, cid, b) => H.patch(`/api/apps/document/drafts/${id}/comments/${cid}`, b),
     /** (id, {assignee?}) → {item, review}  有“必须改”问题时 422 CHECK_FAILED */
-    submit: (id, b) => H.post(`/api/apps/document/drafts/${id}/submit`, H.mode('document') === 'http' ? toUserId(b) : (b || {})),
-    /** HTTP → {filename, blob} 的 .docx；离线模拟仍返回 {filename, html, final} 的 .doc。 */
-    exportWord: (id) => H.getFile(`/api/apps/document/drafts/${encodeURIComponent(id)}/export`, readWord),
+    submit: async (id, b = {}) => {
+      // 兼容旧应用按姓名选择；仅由当前授权成员接口解析，不读取演示账号表。
+      const members = (await window.JKApi.document.workspace()).reviewers;
+      const member = members.find(u => u.id === b.assignee) || members.find(u => u.name === b.assignee);
+      return H.post(`/api/apps/document/drafts/${id}/submit`, {...b, ...(member ? {assignee:member.id} : {})});
+    },
+    /** HTTP 与离线均返回真实 OOXML .docx。 */
+    exportWord: async (id) => {
+      if (H.mode("document") === "http") return H.getFile(`/api/apps/document/drafts/${encodeURIComponent(id)}/export`, readWord);
+      const {item} = await window.JKApi.document.get(id);
+      if (!window.JKWord) throw {code:"EXPORT_UNAVAILABLE",message:"Word 导出组件未加载，请刷新页面"};
+      return {...window.JKWord.export(item.versions.at(-1).content, {draft:item.status !== "已定稿"}), final:item.status === "已定稿"};
+    },
   };
 })();

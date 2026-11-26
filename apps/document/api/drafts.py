@@ -42,11 +42,12 @@ def resolve_citations(knowledge, user, references, content):
     return citations
 
 
-def create(ctx, template_id, policy_id, content, citations, *, provider="mock"):
-    label = "政策模板初稿" if provider == "policy-template" else "AI 初稿"
+def create(ctx, template_id, policy_id, content, citations, *, provider="mock", source=None):
+    label = "政策模板初稿" if provider == "policy-template" else "模板初稿"
     record = ctx.records.save(project=PROJECT, type=RECORD_TYPE, data={
-        "templateId": template_id, "policyId": policy_id, "author": ctx.user.name,
+        "templateId": template_id, "policyId": policy_id, "author": ctx.user.name, "authorId": ctx.user.id,
         "by": f"{ctx.user.name}（{label}）", "content": content, "citations": citations, "comments": [],
+        **({"source": source} if source else {}),
     })
     ctx.audit(f"document.draft.{provider}", {"recordId": record["id"], "provider": provider})
     return _draft(record, [_edition(record)])
@@ -68,6 +69,7 @@ def _draft(current, editions):
         "id": current["id"], "title": data["content"]["title"], "templateId": data["templateId"],
         "policyId": data["policyId"], "status": STATUSES[current["status"]], "author": data["author"],
         "versions": editions, "comments": data["comments"], "refs": data["citations"],
+        **({"source": data["source"]} if data.get("source") else {}),
     }
 
 
@@ -100,17 +102,19 @@ def _locked():
     return DataError("locked", "已定稿文稿不能修改，请另存新稿")
 
 
-def save(ctx, identity, content, note):
+def save(ctx, identity, content, note, base_version=None):
     editor = f"{ctx.user.name}（{note}）" if note else ctx.user.name
     for attempt in range(3):
         current = _record(ctx, identity)
         if current["status"] == "confirmed":
             raise _locked()
+        if base_version is not None and current["version"] - 1 != base_version:
+            raise DataError("stale_version", "文稿已有新版本，请刷新后核对再保存")
         try:
             record = ctx.records.save(id=identity, baseVersion=current["version"],
                                       data={**current["data"], "by": editor, "content": content})
         except DataError as exc:
-            if exc.code != "version_conflict" or attempt == 2:
+            if exc.code != "version_conflict" or attempt == 2 or base_version is not None:
                 raise
         else:
             return _present(ctx, record)

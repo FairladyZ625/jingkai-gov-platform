@@ -3,7 +3,7 @@
  *       v1 核查分级（必须改/建议改/提示）+ 一键修正、润色预览、批注回复/解决、审签（复用卫华 reviews）、定稿锁定（409）。
  * 人把关点：送审签、审签通过（领导）。外部协作者：无此应用权限。 */
 (function () {
-  const DEF = { name: '公文协作', summary: '选事项、填要素，AI 起草并核查', steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'], tabs: [['flow', '起草'], ['list', '可见文稿']], redHead: '', approvers: ['李阳'], inputTypes: {}, intentMap: [], levels: { error: '必须改', warn: '建议改', info: '提示', ok: '通过' }, polishStyles: [['formal', '更正式']], text: {} };
+  const DEF = { name: '公文协作', summary: '选模板、填要素，起草文稿并核查', steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'], tabs: [['flow', '起草'], ['list', '可见文稿']], redHead: '', approvers: ['李阳'], inputTypes: {}, intentMap: [], levels: { error: '必须改', warn: '建议改', info: '提示', ok: '通过' }, polishStyles: [['formal', '更正式']], text: {} };
   const C = Object.assign({}, DEF, (window.JK_APPCFG || {}).document || {});
   const T = Object.assign({ pickQ: '要办什么事？', pickSub: '', fillQ: '填要素', fillSub: '', draftQ: '初稿', draftSub: '', reviewQ: '批注与送审', reviewSub: '', watermark: '未定稿' }, C.text);
   const CN = '一二三四五六七八九十';
@@ -286,7 +286,7 @@
       }
       function sidePanel() {
         const n = S.issues ? S.issues.filter((i) => i.level !== 'ok').length : null;
-        const tabs = [['check', `核查${n ? ` <span class="num">${n}</span>` : ''}`], ['polish', '润色'], ['versions', `版本 <span class="num">${S.doc.versions.length}</span>`]];
+        const tabs = [['check', `核查${n ? ` <span class="num">${n}</span>` : ''}`], ['polish', '规则润色'], ['versions', `版本 <span class="num">${S.doc.versions.length}</span>`]];
         return `<div class="seg dc-seg">${tabs.map(([k, l]) => `<button class="${S.panel === k ? 'on' : ''}" data-panel="${k}" data-op="document.panel-${k}">${l}</button>`).join('')}</div><div class="dc-pan">${S.panel === 'check' ? checkPanel() : S.panel === 'polish' ? polishPanel() : versionsPanel()}</div>`;
       }
       const fixable = (i) => i.fix || /^c-(ni|bb)$/.test(i.id);
@@ -311,8 +311,8 @@
       function polishPanel() {
         const p = S.polish;
         return `<div class="seg" style="margin-bottom:var(--s3)">${C.polishStyles.map(([k, l]) => `<button class="${S.pstyle === k ? 'on' : ''}" data-pstyle="${k}" data-op="document.pstyle-${k}">${esc(l)}</button>`).join('')}</div>
-          ${!p ? `<div class="dc-empty">${icon('sparkles', 20)}<div class="meta">先预览修改，满意再采用；不会直接改稿</div><button class="btn sm" data-act="polish" data-op="document.polish" ${canOp && !locked() ? '' : 'disabled'}>预览润色</button></div>`
-            : p.changed ? `${diffHtml(shortEq(p.parts))}<div class="row" style="margin-top:var(--s3)"><button class="btn sm" data-act="polishNo">放弃</button><span class="sp"></span><button class="btn sm" data-act="polishYes" data-op="document.polish-yes">采用（存为新版）</button></div>` : '<div class="dc-empty"><div class="meta">已经很规范，没有需要润色的地方</div></div>'}`;
+          ${!p ? `<div class="dc-empty">${icon('sparkles', 20)}<div class="meta">按固定规则预览文字修改，核对后再采用</div><button class="btn sm" data-act="polish" data-op="document.polish" ${canOp && !locked() ? '' : 'disabled'}>预览润色</button></div>`
+            : p.changed ? `${diffHtml(shortEq(p.parts))}<div class="row" style="margin-top:var(--s3)"><button class="btn sm" data-act="polishNo">放弃</button><span class="sp"></span><button class="btn sm" data-act="polishYes" data-op="document.polish-yes">采用（存为新版）</button></div>` : '<div class="dc-empty"><div class="meta">当前正文没有适用的规则替换</div></div>'}`;
       }
       function versionsPanel() {
         const vs = S.doc.versions; const a = S.cmpA ?? (vs.at(-2) || latest()).v, b = S.cmpB ?? latest().v;
@@ -534,7 +534,7 @@
           const st = style || (/精简|简洁|压缩/.test(text || '') ? 'concise' : 'formal');
           if (!run) { S.pstyle = st; return polishPreview(); }
           await run.step(1); await run.click('[data-op="document.panel-polish"]'); await run.click(`[data-op="document.pstyle-${st}"]`); await run.click('[data-op="document.polish"]'); await run.wait(() => S.polish);
-          await run.step(2); if (!S.polish.changed) { run.done('已经很规范，没有需要润色的地方'); return; }
+          await run.step(2); if (!S.polish.changed) { run.done('当前正文没有适用的规则替换'); return; }
           const c = await run.ask('润色修改已标出（绿色新增、红色删除），采用吗？', ['采用', '放弃']);
           if (c === '采用') { await run.click('[data-op="document.polish-yes"]'); await run.wait(() => !S.polish && !S.edit); run.done(`已采用，存为第 ${latest().v} 版`); } else { S.polish = null; step2(); run.done('已放弃，原稿未改'); }
         },
