@@ -18,6 +18,16 @@ async function setup(t, width = 1280) {
   return page;
 }
 
+test('政策参考清单和旧告知单问法都路由到转公文动作', async t => {
+  const page = await setup(t);
+  const routed = await page.evaluate(() => ['把政策参考清单转成公文答复', '把告知单转成公文答复']
+    .map(text => ({ text, intent: JKOp.understand(text).best?.intent.id })));
+  assert.deepEqual(routed, [
+    { text: '把政策参考清单转成公文答复', intent: 'policy.toDocument' },
+    { text: '把告知单转成公文答复', intent: 'policy.toDocument' },
+  ]);
+});
+
 test('政策岗位在当前会话持续使用真实查询，原文可打开，模式不抢走旧应用位置', { timeout: 60000 }, async t => {
   const page = await setup(t);
   const apps = await page.locator('#shell-side [data-app]').evaluateAll(es => es.map(e => e.dataset.app));

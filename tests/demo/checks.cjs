@@ -1,6 +1,6 @@
 const labels = [
   ['开场', '王敏工作台与开场字幕'],
-  ['政策兑现', '企业核对、补填再算、告知单'],
+  ['政策兑现', '企业筛选、补填再算、政策参考清单'],
   ['企业走访', '一企一档、走访写入、台账筛选'],
   ['会议纪要', '录音转写与纪要、重新派发待办'],
   ['公文协作', '新文稿、核查、同一文稿送审签、版本比对'],
@@ -124,8 +124,8 @@ function installChecks() {
     [
       ['企业核对', () => reply(/项可进一步核对/)],
       ['补填并重新核对', () => reply(/重新核对：\d+ 项可核对/)],
-      ['告知单列出事项', () => visible(panel('policy') + '[data-op="policy.notice-text"]')
-        .some(el => /^1\. .+/m.test(el.value)) && reply(/告知单已生成/)],
+      ['政策参考清单列出所选支持', () => visible(panel('policy') + '[data-op="policy.notice-text"]')
+        .some(el => /^政策参考清单\n/.test(el.value) && /^1\. .+/m.test(el.value)) && reply(/政策参考清单已生成/)],
     ],
     [
       ['打开一企一档', () => visible(panel('enterprise') + '[data-op="enterprise.profile"]')
