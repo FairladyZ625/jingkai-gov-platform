@@ -407,3 +407,32 @@ def test_shared_sample_preview_checks_actual_audio_content(owner_client):
     detail = client.get(f"{old}/{item['id']}").json()
     assert detail['item']['status'] == 'new' and not detail['item'].get('readOnlySample')
     assert detail['minutes'] is None
+
+
+def test_completed_shared_sample_keeps_existing_content_readonly(owner_client):
+    from apps.meeting.tests.isolated_instance import wait_job
+    client = owner_client
+    old = '/api/apps/meeting/meetings'
+    sample = {'source': 'demo', 'sampleId': 'park-service-v1'}
+    item = client.post(old, data=sample).json()['item']
+    url = f"{old}/{item['id']}"
+    job = client.post(url + '/transcribe')
+    assert job.status_code == 202, job.text
+    result = wait_job(client, job.json()['job']['id'], lambda j: j['status'] in ('done', 'failed'))[-1]
+    assert result['status'] == 'done'
+    edited = client.patch(url, json={'line': {'index': 0, 'text': '负责人核对后的原有正文，不应被公开样本覆盖。'}})
+    assert edited.status_code == 200, edited.text
+    before = client.get(f"{BASE}/{item['id']}").json()['item']
+    login(client, 'meeting-other')
+    reused = client.post(old, data=sample).json()['item']
+    detail = client.get(url).json()
+    assert reused['id'] == item['id'] and reused.get('readOnlySample') is True
+    assert detail['item']['readOnlySample'] is True
+    assert detail['item']['transcript'] == before['transcript']
+    assert '负责人核对后的原有正文' in detail['minutes']['body'][0]['p']
+    assert client.patch(url, json={'line': {'index': 0, 'text': '越权'}}).status_code == 403
+    assert client.post(url + '/todos/commit', json={'ids': []}).status_code == 403
+    login(client)
+    after = client.get(f"{BASE}/{item['id']}").json()['item']
+    assert after['version'] == before['version'] and after['transcript'] == before['transcript']
+    assert after['jobId'] == before['jobId']
