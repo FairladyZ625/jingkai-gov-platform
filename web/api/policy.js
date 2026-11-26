@@ -10,7 +10,7 @@
     match: (b) => H.post('/api/apps/policy/match', b),
     /** {itemId, amount(元)} → {item, rule, result:{amount,text,capped}|null, note} */
     calc: (b) => H.post('/api/apps/policy/calc', b),
-    /** {entId | profile:{subjectType}, itemIds[], amounts?:{[itemId]:金额(元)|null}} → {text} 一次性告知单 */
+    /** {entId | profile:{subjectType}, itemIds[], amounts?:{[itemId]:金额(元)|null}} → {text} 政策参考清单 */
     notice: (b) => H.post('/api/apps/policy/notice', b),
   };
 })();

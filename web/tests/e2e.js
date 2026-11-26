@@ -15,7 +15,7 @@ const segments = [
   }],
   ['政策兑现', async page => {
     await expect(reply(page, /项可进一步核对/)).toBeVisible({ timeout: 25_000 });
-    await expect(reply(page, /告知单已生成/)).toBeVisible({ timeout: 25_000 });
+    await expect(reply(page, /政策参考清单已生成/)).toBeVisible({ timeout: 25_000 });
     await expect(panel(page, 'policy').locator('[data-op="policy.notice-text"]')).toHaveValue(/^1\. .+/m);
   }],
   ['企业走访', async page => {
