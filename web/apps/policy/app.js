@@ -29,7 +29,7 @@
         { id: 'policy.notice', requires: 'operate', action: 'notice', examples: [`给${seedShort('E002')}生成政策参考清单`, '生成政策参考清单', '生成一次性告知单'], keywords: ['政策参考清单', '参考清单', '告知单', '告知书', '告知'], slots: { ent: 'enterprise' }, plan: ['核对事项', '试算额度', '生成政策参考清单', '等你确认'] },
         { id: 'policy.detail', action: 'detail', examples: ['实体书店房租补贴的条件是什么', '数据券的申报条件'], keywords: ['条件是什么', '什么条件', '怎么申请', '要求'], slots: { policy: 'policy' }, plan: ['打开事项库', '找到事项', '展示条件与原文'] },
         { id: 'policy.items', action: 'items', examples: ['看看面向个人的政策', '打开政策事项库'], keywords: ['事项库', '有哪些政策', '个人政策'], plan: ['打开事项库', '筛选'] },
-        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把政策参考清单转成公文答复'], keywords: ['转公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
+        { id: 'policy.toDocument', requires: 'operate', action: 'toDocument', examples: ['把政策参考清单转成公文答复', '把告知单转成公文答复'], keywords: ['转公文', '转成公文', '答复函', '答复意见'], plan: ['带上企业与政策', '打开公文协作'] },
       ],
       starters: [`${seedShort('E001')}能申请哪些支持？`, '数据采购 200 万能补多少', '实体书店房租补贴的条件是什么'],
       // 一键演示主演企业 E020：无数据采购额，补填 30 万后数据券两项可核对并出额度。
