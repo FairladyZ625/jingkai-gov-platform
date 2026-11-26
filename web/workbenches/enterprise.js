@@ -16,8 +16,11 @@
     const view = [...Object.keys(views), 'company', 'issue'].includes(pieces[0]) ? pieces[0] : 'overview';
     const params = new URLSearchParams(pieces.slice(1).join('?'));
     let alive = true, sequence = 0, companies = [], issues = [], detail = null, form = null, notice = '', error = '', busy = false;
+    let meetingSources = [], meetingSourcesError = '';
+    const canReadMeeting = () => !!window.JKShell?.can('meeting', 'view');
     const live = () => alive && ctx.can('view');
     const canWrite = () => live() && ctx.can('operate');
+    if (view === 'issues' && params.get('action') === 'new' && canWrite()) form = 'new-issue';
     const go = (v, p) => { const next = route(v, p); if (next === ctx.recordId) { form = null; return load(); } return ctx.open(next); };
     const name = id => { const e = companies.find(c => c.id === id); return e?.short || e?.name || '企业档案'; };
     const activeTab = view === 'company' ? 'companies' : view === 'issue' ? 'issues' : view;
@@ -27,8 +30,8 @@
     const empty = message => `<div class="ew-empty">${esc(message)}</div>`;
     const field = (label, key, value = '', type = 'text', required = false) => `<label class="ew-field">${label}<input class="input" name="${key}" type="${type}" value="${esc(value)}" ${required ? 'required' : ''} ${type === 'number' ? 'min="0" step="1"' : ''}></label>`;
     const area = (label, key, value = '', required = false) => `<label class="ew-field ew-wide">${label}<textarea class="input" name="${key}" rows="4" ${required ? 'required' : ''}>${esc(value)}</textarea></label>`;
-    const select = (label, key, values, selected = '') => `<label class="ew-field">${label}<select class="select" name="${key}">${values.map(v => option(v, v || '未指定', selected)).join('')}</select></label>`;
-    const companySelect = (selected = '', required = false) => `<label class="ew-field">选择企业<select class="select" name="company" ${required ? 'required' : ''}>${option('', '请选择企业', selected)}${companies.map(c => option(c.id, c.name, selected)).join('')}</select></label>`;
+    const select = (label, key, values, selected = '') => `<label class="ew-field">${label}<select class="select" aria-label="${esc(label)}" name="${key}">${values.map(v => option(v, v || '未指定', selected)).join('')}</select></label>`;
+    const companySelect = (selected = '', required = false) => `<label class="ew-field">选择企业<select class="select" aria-label="选择企业" name="company" ${required ? 'required' : ''}>${option('', '请选择企业', selected)}${companies.map(c => option(c.id, c.name, selected)).join('')}</select></label>`;
 
     function shell(content) {
       el.innerHTML = `<div class="ew-top"><nav class="ew-tabs" aria-label="企业服务导航">${Object.entries(views).map(([v, title]) => `<button type="button" class="${activeTab === v ? 'on' : ''}" data-route="${v}" ${activeTab === v ? 'aria-current="page"' : ''}>${title}</button>`).join('')}</nav>${JKHttp.mode('enterprise') === 'mock' ? '<span class="tag">演示数据 · 本机保存</span>' : ''}</div>
@@ -36,7 +39,7 @@
         <div data-view="${view}">${content}</div>`;
     }
     async function load(message = '') {
-      const ticket = ++sequence; error = ''; notice = message;
+      const ticket = ++sequence; error = ''; notice = message; meetingSources = []; meetingSourcesError = '';
       shell('<div class="ew-empty" role="status">正在读取企业服务记录…</div>');
       try {
         const [c, i] = await Promise.all([api.list({ sort: 'name' }), api.issues()]);
@@ -44,6 +47,10 @@
         companies = c.items; issues = i.items;
         const cid = view === 'company' ? params.get('id') : view === 'visits' ? params.get('company') : null;
         detail = cid ? await api.get(cid) : null;
+        if (view === 'issue' && issues.some(i => i.id === params.get('id')) && canReadMeeting() && window.JKApi.meeting?.backlinks) {
+          try { meetingSources = (await JKApi.meeting.backlinks({ app: 'enterprise', id: params.get('id') })).items; }
+          catch (_) { meetingSourcesError = '会议来源暂时无法读取；可继续办理诉求，稍后重试。'; }
+        }
         if (!live() || ticket !== sequence) return;
         render();
       } catch (e) {
@@ -106,12 +113,16 @@
         <form class="ew-filter" data-form="filter-issues">${companySelect(company)}${select('筛选状态', 'status', ['', ...statuses], status)}<label class="ew-check"><input type="checkbox" name="overdue" ${onlyLate ? 'checked' : ''}>只看逾期</label><button class="btn" type="submit">筛选</button><span class="t-3">${rows.length} 项诉求</span></form>
         <div class="ew-board">${statuses.map(s => `<section data-column="${s}"><header>${pill(s)}<span>${rows.filter(i => i.status === s).length}</span></header>${rows.filter(i => i.status === s).map(issueCard).join('') || '<p class="ew-column-empty">暂无诉求</p>'}</section>`).join('')}</div>`;
     }
+    function meetingSourceList() {
+      if (!canReadMeeting() || (!meetingSources.length && !meetingSourcesError)) return '';
+      return `<section class="ew-meeting-sources"><div class="ew-section-head"><h3>会议来源依据</h3></div><p class="t-3">查看关联时的纪要或原始资料，后续修订保留历史依据。</p>${meetingSourcesError ? `<p role="status">${esc(meetingSourcesError)}</p>` : meetingSources.map(s => `<p><button class="btn" data-meeting-source="${esc(s.meetingId + '~' + (s.finalized ? 'minutes' : 'sources') + '~' + s.version)}">${esc(s.title)} · ${s.finalized ? '定稿' : '来源'} v${esc(s.version)}${s.sourceRef ? ' · ' + esc(s.sourceRef) : ''}</button></p>`).join('')}</section>`;
+    }
     function issueDetail() {
       const i = issues.find(i => i.id === params.get('id'));
       if (!i) return empty('诉求不存在或当前账号无权查看。');
       return `<button class="btn ghost" data-route="issues">${icon('arrow-left', 14)} 返回诉求看板</button><div class="ew-heading"><div><p>${esc(i.entName || name(i.entId))} · ${esc(i.from || '来源待补充')} · ${text(i.created)}</p><h2>${esc(i.title)}</h2></div><div class="ew-actions"><span data-issue-status>${esc(i.status)}</span>${overdue(i) ? '<span class="tag">已逾期</span>' : ''}<button class="btn" data-company-row="${esc(i.entId)}">查看企业档案</button></div></div>
         <div class="ew-detail-grid"><section><h3>办理进展</h3><ol class="ew-timeline">${(i.steps || []).map(([date, content]) => `<li><time>${text(date)}</time><p>${esc(content)}</p></li>`).join('') || '<li>暂无办理记录</li>'}</ol></section><section>
-        ${canWrite() ? `<form class="ew-form" data-form="update-issue" data-id="${esc(i.id)}"><h3 class="ew-wide">更新办理进展</h3>${field('负责人', 'owner', i.owner)}${field('办理期限', 'due', i.due, 'date')}${select('办理状态', 'status', statuses, i.status)}${field('下一步安排', 'next', i.next)}${area('本次进展与依据', 'note')}<p class="ew-wide t-3">可记录沟通结果、收到的材料和下一步安排；保存后保留修改记录。</p><div class="ew-wide ew-form-error" role="alert"></div><button class="btn primary" data-write type="submit">保存办理进展</button></form>` : `<dl class="ew-profile">${[['负责人', i.owner], ['办理期限', i.due], ['下一步安排', i.next]].map(([a, b]) => `<div><dt>${a}</dt><dd>${text(b)}</dd></div>`).join('')}</dl>`}</section></div>`;
+        ${canWrite() ? `<form class="ew-form" data-form="update-issue" data-id="${esc(i.id)}"><h3 class="ew-wide">更新办理进展</h3>${field('负责人', 'owner', i.owner)}${field('办理期限', 'due', i.due, 'date')}${select('办理状态', 'status', statuses, i.status)}${field('下一步安排', 'next', i.next)}${area('本次进展与依据', 'note')}<p class="ew-wide t-3">可记录沟通结果、收到的材料和下一步安排；保存后保留修改记录。</p><div class="ew-wide ew-form-error" role="alert"></div><button class="btn primary" data-write type="submit">保存办理进展</button></form>` : `<dl class="ew-profile">${[['负责人', i.owner], ['办理期限', i.due], ['下一步安排', i.next]].map(([a, b]) => `<div><dt>${a}</dt><dd>${text(b)}</dd></div>`).join('')}</dl>`}</section></div>${meetingSourceList()}`;
     }
     function editForm() {
       const cid = currentCompany() || '', e = form === 'edit-company' ? detail.item : {};
@@ -142,6 +153,7 @@
     }
     el.onclick = event => {
       const b = event.target.closest('button'); if (!b || !el.contains(b) || busy) return;
+      if (b.dataset.meetingSource && canReadMeeting()) return JKWorkbench.open('meeting', { recordId: b.dataset.meetingSource });
       if (b.dataset.route) return go(b.dataset.route);
       if (b.dataset.target) return ctx.open(b.dataset.target);
       if (b.dataset.companyRow) return go('company', { id: b.dataset.companyRow });
