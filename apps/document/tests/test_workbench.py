@@ -90,3 +90,13 @@ def test_replaced_review_does_not_duplicate_pending_work(flow):
     login(client, 'sampleoperator')
     history = client.get(APP + '/workbench').json()['reviews']
     assert next(r for r in history if r['id'] == first['id'])['status'] == 'recheck'
+
+
+def test_rule_fix_rejects_version_changed_since_check(document_client):
+    client = document_client
+    draft = item(create(client))
+    url = APP + '/drafts/' + draft['id']
+    old_version = draft['versions'][-1]['v']
+    saved = item(client.put(url, json={'content': {**content(draft), 'title': '核查后别人已修改'}, 'baseVersion': old_version}))
+    assert_error(client.post(url + '/fix', json={'ids': [], 'baseVersion': old_version}), 409, 'STALE_VERSION')
+    assert item(client.get(url))['versions'][-1]['v'] == saved['versions'][-1]['v']

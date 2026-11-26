@@ -50,3 +50,10 @@ test('会议与公文处于不同传输模式时拒绝来源转入',async()=>{
  const {c,api}=await setup();c.JK_CONFIG.api.modules={meeting:'http',document:'mock'};
  await assert.rejects(api.draft({templateId:'T02',inputs:{},source:{app:'meeting',id:'M-remote',version:1}}),e=>e.code==='SOURCE_TRANSPORT_MISMATCH');
 });
+test('规则修正拒绝核查后已变化的版本',async()=>{
+ const {api}=await setup();const d=(await api.draft({templateId:'T06',inputs:{orig:'核验通知',oldEnd:'2026-11-01',newEnd:'2026-11-30'}})).item;
+ const version=d.versions.at(-1).v, content={...d.versions.at(-1).content,title:'核查后别人已修改'};
+ await api.save(d.id,{content,baseVersion:version});
+ await assert.rejects(api.fix(d.id,{ids:['c-bb'],baseVersion:version}),e=>e.code==='STALE_VERSION');
+ assert.equal((await api.get(d.id)).item.versions.at(-1).v,version+1);
+});

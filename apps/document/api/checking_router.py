@@ -1,7 +1,8 @@
 """公文核查与修正的 §4.4 路由。由公文应用路由统一挂载。"""
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from haiknow_sdk import DataError
 
 from . import checks, templates
 from .drafting_router import DocumentRoute, Operator, Viewer
@@ -12,6 +13,7 @@ router = APIRouter(route_class=DocumentRoute)
 
 class FixIn(BaseModel):
     ids: list[str]
+    baseVersion: int | None = Field(default=None, ge=0, strict=True)
 
 
 def inspect(ctx, request, record):
@@ -44,6 +46,8 @@ def fix_draft(identity: str, body: FixIn, ctx: Operator, request: Request):
     current = get_record(ctx, identity)
     if current["status"] == "confirmed":
         raise locked()
+    if body.baseVersion is not None and body.baseVersion != current["version"] - 1:
+        raise DataError("stale_version", "文稿已有新版本，请重新核查后再修正")
     findings = inspect(ctx, request, current)
     data = current["data"]
     content, citations, ignored, unfixable = checks.apply(data, findings, body.ids)
