@@ -58,3 +58,33 @@ test('公文页面拒绝过期覆盖，核查与比对可用，只读成员无�
   await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  }finally{await browser.close();}
 });
+
+test('采用规则润色产生新版本后清除旧核查和预览，同版本重新核查保留预览',{timeout:60000},async()=>{
+ const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROME_PATH || undefined,headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1280,height:900}});page.setDefaultTimeout(12000);
+  await page.goto('file://'+root+'/index.html');await page.locator('[data-u="wangmin"]').click();await page.locator('[data-op="shell.me"]').waitFor({state:'attached'});
+  const saved=await page.evaluate(async()=>{
+   const a=JKApi.document,d=(await a.draft({templateId:'T06',inputs:{orig:'公开资料核验通知',oldEnd:'2026-11-01',newEnd:'2026-11-30'}})).item;
+   const revised=(await a.save(d.id,{content:{title:'关于调整公开资料核验期限的通知',docNo:'演示〔2026〕1号',to:'各有关单位：',paragraphs:['咱们要赶紧搞资料核验。','除上述调整外，原通知其他事项不变。'],sign:'公文工作组',date:'2026年11月26日'},baseVersion:d.versions.at(-1).v})).item;
+   JKWorkbench.open('document',{recordId:new URLSearchParams({id:d.id,tab:'check'}).toString()});return {id:d.id,version:revised.versions.at(-1).v};
+  });
+  await page.getByRole('button',{name:'重新核查',exact:true}).waitFor();assert.ok(await page.locator('.dw-check').count());
+  await page.getByRole('button',{name:'预览政务语体',exact:true}).click();
+  const adopt=page.getByRole('button',{name:'采用润色并存为新版本',exact:true});await adopt.waitFor();
+  const previewText=await page.locator('.dw-polish .dw-diff').innerText();
+  await page.getByRole('button',{name:'重新核查',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('.wb-document').hasAttribute('aria-busy'));
+  assert.equal(await page.locator('.dw-polish .dw-diff').innerText(),previewText);
+  assert.equal(await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1).v,saved.id),saved.version);
+  await adopt.click();await page.getByText('润色已另存为新版本',{exact:true}).waitFor();
+  const changed=await page.evaluate(async id=>(await JKApi.document.get(id)).item.versions.at(-1),saved.id);
+  assert.equal(changed.v,saved.version+1);assert.equal(changed.content.paragraphs[0],'我局要及时开展资料核验。');
+  assert.equal(await adopt.count(),0,'已采用的旧预览不能继续作为当前版本被重复采用');
+  assert.equal(await page.locator('.dw-polish .dw-diff').count(),0,'新版本不保留旧润色差异');
+  assert.equal(await page.locator('.dw-check').count(),0,'旧版本的核查结论不能显示为新版本结论');
+  await page.getByText('文稿已更新，请重新核查当前版本。',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'运行核查',exact:true}).click();await page.getByRole('button',{name:'重新核查',exact:true}).waitFor();
+  assert.ok(await page.locator('.dw-check').count());assert.equal(await adopt.count(),0);
+ }finally{await browser.close();}
+});

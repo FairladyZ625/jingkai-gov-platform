@@ -7,7 +7,7 @@
   const button = (label,action,primary=false,disabled=false) => `<button type="button" class="btn ${primary?'primary':''}" data-action="${action}" ${disabled?'disabled':''}>${label}</button>`;
   const input = (label,name,value,disabled=false) => `<label class="dw-field">${label}<input class="input" name="${name}" value="${esc(value)}" ${disabled?'disabled':''}></label>`;
   JKWorkbench.register('document',{mount(el,ctx) {
-    let alive=true, busy=false, dirty=false, workspace, draft, issues, preview, comparison;
+    let alive=true, busy=false, dirty=false, workspace, draft, issues, preview, comparison, loadedVersion, resultsInvalidated=false;
     const api=ctx.api, route=new URLSearchParams(ctx.recordId.includes('=')?ctx.recordId:'');
     const id=route.get('id') || (ctx.recordId && !ctx.recordId.includes('=')?ctx.recordId:''), view=route.get('view') || 'overview', tab=route.get('tab') || 'content';
     const live=()=>alive && ctx.can('view');
@@ -49,7 +49,7 @@
     }
     const diffHTML=parts=>(parts||[]).map(p=>`<span class="dw-diff-${esc(p.op)}">${esc(p.t??p.text??'')}</span>`).join('');
     function checkPanel() {
-      return `<div class="dw-section-head"><div><h3>核查当前已保存版本</h3><p>检查必填要素、文字格式和引用依据；结论仍需经办人核对。</p></div>${ctx.can('operate')?button(issues?'重新核查':'运行核查','check'):''}</div>${issues?`<div class="dw-checks">${issues.length?issues.map(i=>`<div class="dw-check"><span class="dw-status">${({error:'必须修改',warn:'请核对',info:'提示',ok:'通过'})[i.level]||esc(i.level)}</span><div><strong>${esc(i.title||i.message||i.rule||i.id)}</strong><p>${esc(i.detail||i.message||i.desc||i.suggestion||'')}</p></div></div>`).join(''):'<p>未发现规则核查问题，仍需人工核对内容。</p>'}</div>`:'<p class="dw-muted">尚未核查。请先保存修改，再运行核查。</p>'}${editable()?`<div class="dw-polish"><h3>规则润色</h3><p>按固定文字规则提供预览，采用后另存新版本。</p><div class="dw-actions">${button('预览政务语体','formal')}${button('预览精简表达','concise')}</div>${preview?`<div class="dw-diff">${diffHTML(preview.parts)}</div><p>${preview.changed?'请核对差异后再采用。':'当前正文没有适用的规则替换。'}</p>${preview.changed?button('采用润色并存为新版本','adopt',true):''}`:''}</div>`:''}`;
+      return `<div class="dw-section-head"><div><h3>核查当前已保存版本</h3><p>检查必填要素、文字格式和引用依据；结论仍需经办人核对。</p></div>${ctx.can('operate')?button(issues?'重新核查':'运行核查','check'):''}</div>${issues?`<div class="dw-checks">${issues.length?issues.map(i=>`<div class="dw-check"><span class="dw-status">${({error:'必须修改',warn:'请核对',info:'提示',ok:'通过'})[i.level]||esc(i.level)}</span><div><strong>${esc(i.title||i.message||i.rule||i.id)}</strong><p>${esc(i.detail||i.message||i.desc||i.suggestion||'')}</p></div></div>`).join(''):'<p>未发现规则核查问题，仍需人工核对内容。</p>'}</div>`:`<p class="dw-muted">${resultsInvalidated?'文稿已更新，请重新核查当前版本。':'尚未核查。请先保存修改，再运行核查。'}</p>`}${editable()?`<div class="dw-polish"><h3>规则润色</h3><p>按固定文字规则提供预览，采用后另存新版本。</p><div class="dw-actions">${button('预览政务语体','formal')}${button('预览精简表达','concise')}</div>${preview?`<div class="dw-diff">${diffHTML(preview.parts)}</div><p>${preview.changed?'请核对差异后再采用。':'当前正文没有适用的规则替换。'}</p>${preview.changed?button('采用润色并存为新版本','adopt',true):''}`:''}</div>`:''}`;
     }
     function commentsPanel() {
       const c=draft.versions.at(-1).content;
@@ -69,7 +69,11 @@
     }
     async function load() {
       const results=await Promise.all([api.workspace(),id?api.get(id):Promise.resolve(null)]);if(!live())return;
-      workspace=results[0];draft=results[1]?.item;dirty=false;
+      const nextDraft=results[1]?.item, nextVersion=nextDraft?.versions.at(-1).v;
+      if(loadedVersion!==undefined && nextVersion!==loadedVersion) {
+        issues=preview=comparison=undefined;resultsInvalidated=true;
+      }
+      loadedVersion=nextVersion;workspace=results[0];draft=nextDraft;dirty=false;
       if(id)detail();else listing();
     }
     const saved=()=>{if(dirty){notice('请先保存正文修改，再执行此操作。',true);return false;}return true;};
