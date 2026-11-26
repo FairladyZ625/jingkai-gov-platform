@@ -21,7 +21,12 @@ for (const [rel, info] of Object.entries(manifest.files)) {
 const start = pathToFileURL(path.join(root,manifest.entry));
 function load(entry = start) {
   const loaded = new Set(), document = {readyState:'loading', documentElement:{dataset:{}}, addEventListener(){}};
+  // 支持入口脚本注册窗口事件；本检查不派发导航或 DOMContentLoaded。
+  const events = new EventTarget();
   const w = {document, location:entry, navigator:{platform:'fixture'}, URL, URLSearchParams, crypto,
+    addEventListener:events.addEventListener.bind(events),
+    removeEventListener:events.removeEventListener.bind(events),
+    dispatchEvent:events.dispatchEvent.bind(events),
     setTimeout, clearTimeout, setInterval, clearInterval, AbortController, performance, console};
   for (const s of ['localStorage','sessionStorage']) Object.defineProperty(w,s,{
     configurable:true, get(){throw Error('不应读取原存储')},
