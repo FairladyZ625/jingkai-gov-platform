@@ -373,3 +373,37 @@ def test_original_and_generic_job_paths_check_original_owner(owner_client):
     assert result['status'] == 'failed'
     detail = client.get(url).json()['item']
     assert detail['title'] == '原入口所有权' and not detail['transcript'] and not detail.get('jobId')
+
+
+def test_shared_public_sample_is_readonly_and_never_changes_owner_record(owner_client):
+    client = owner_client
+    old = '/api/apps/meeting/meetings'
+    item = client.post(old, data={'source': 'demo', 'title': '【示例】文化企业座谈会录音_1117'}).json()['item']
+    before = client.get(f"{BASE}/{item['id']}").json()['item']
+    login(client, 'meeting-other')
+    reused = client.post(old, data={'source': 'demo', 'sampleId': 'park-service-v1'}).json()['item']
+    assert reused['id'] == item['id'] and reused['status'] == 'done'
+    detail = client.get(f"{old}/{item['id']}").json()
+    assert detail['item']['readOnlySample'] is True
+    assert '核对园区服务清单' in detail['minutes']['body'][0]['p']
+    assert client.post(f"{old}/{item['id']}/transcribe").status_code == 403
+    assert client.patch(f"{old}/{item['id']}", json={'line': {'index': 0, 'text': '越权'}}).status_code == 403
+    assert client.post(f"{old}/{item['id']}/todos/commit", json={'ids': []}).status_code == 403
+    login(client)
+    after = client.get(f"{BASE}/{item['id']}").json()['item']
+    assert after['version'] == before['version'] and after['transcript'] == []
+    assert not after.get('jobId') and after['ownerId'] == 'meeting-writer'
+
+
+def test_shared_sample_preview_checks_actual_audio_content(owner_client):
+    client = owner_client
+    old = '/api/apps/meeting/meetings'
+    item = client.post(old, data={'title': '同名非示例'}, files={'file': ('demo.webm', b'\x1aE\xdf\xa3NOT-THE-PUBLIC-SAMPLE', 'audio/webm')}).json()['item']
+    platform = client.app.state.platform
+    user = platform.rbac.users['meeting-writer']
+    record = platform.data.get_record(user, 'meeting', item['id'])
+    platform.data.save_record(user, 'meeting', {'baseVersion': record['version'], 'data': {**record['data'], 'source': 'demo', 'sampleId': 'park-service-v1'}}, record['id'])
+    login(client, 'meeting-other')
+    detail = client.get(f"{old}/{item['id']}").json()
+    assert detail['item']['status'] == 'new' and not detail['item'].get('readOnlySample')
+    assert detail['minutes'] is None
