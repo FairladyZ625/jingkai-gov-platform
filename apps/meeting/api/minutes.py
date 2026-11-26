@@ -15,6 +15,20 @@ DECISION = re.compile(r'^(?:结论|会议议定|会议决定|议定|决定)[：:
 ACTION = re.compile(r'^(?:待办[：:]\s*|(?:我会|我们会|请)(?=\S))(.+)')
 
 
+def decision_heading(words):
+    """只将句首明确宣布的决定归类；否定、疑问、建议保持讨论。"""
+    statement = str(words).strip()
+    heads = r'(?:会议决定|会议明确|一致同意|会议议定|议定|决定|结论)'
+    if not re.match(heads, statement):
+        statement = re.sub(r'^[^：:\n]{1,40}[：:]\s*', '', statement, count=1)
+    match = re.match(heads + r'[：:\s]*(.+)', statement)
+    if not match or re.search(r'[？?]', statement):
+        return '讨论要点'
+    if re.match(r'(?:尚未|仍未|还未|未|没有|尚不|不明确|是否|尚待|待确认|拟|可能|建议)', match[1]):
+        return '讨论要点'
+    return '已明确的决定'
+
+
 class Input(BaseModel):
     model_config = ConfigDict(extra='forbid')
 

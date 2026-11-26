@@ -58,10 +58,23 @@ def meeting_assignments(service, user):
             raise
         return []
     done = {row[0] for row in service.store._db.execute(
-        'select id from jkq_meeting_todo_done where owner=?', (user.id,))}
+        "select id from jkq_meeting_todo_done where owner=? and status in ('已完成','已取消')", (user.id,))}
     return [dict(item, at=feed.local_time(datetime.fromisoformat(item['at']).timestamp()),
                  done=item['id'] in done, status='done' if item['id'] in done else 'pending')
             for item in assigned_todos(records, user.id)]
+
+
+def meeting_change_notices(service, user):
+    """旧外壳通过 todos 读取收件箱；仅投影本功能通知，阅读标记仍用平台通知表。"""
+    result = []
+    for note in service.list_notifications(user)['items']:
+        if not note['id'].startswith('meeting-adjust:'):
+            continue
+        result.append({'id': note['id'], 'kind': 'notice', 'app': 'meeting', 'title': note.get('message', '会议事项调整'),
+                       'from': note.get('senderId', ''), 'at': feed.local_time(note['createdAt']),
+                       'ref': {'meetingId': note['source']['recordId']}, 'done': note['read'],
+                       'status': 'done' if note['read'] else 'pending'})
+    return result
 
 
 def person_todos(service, user):
@@ -146,6 +159,8 @@ def ensure_tables(db):
         done integer not null default 0 check(done in (0,1)))""")
     db.execute('create index if not exists jkq_todos_owner on jkq_todos(owner, at)')
     db.execute('create table if not exists jkq_meeting_todo_done (owner text not null, id text not null, primary key(owner,id))')
+    from .meeting_tasks import ensure_columns
+    ensure_columns(db)
     feed.ensure_table(db)
 
 
@@ -165,7 +180,7 @@ def todos(request: Request, user=Depends(current_user)):
     platform = request.app.state.platform
     store = platform.store
     with store._lock:
-        items = person_todos(platform.data, user)
+        items = person_todos(platform.data, user) + meeting_change_notices(platform.data, user)
     return {'items': items, 'total': len(items)}
 
 
@@ -173,6 +188,14 @@ def todos(request: Request, user=Depends(current_user)):
 def patch_todo(id: str, body: TodoPatch, request: Request, user=Depends(current_user)):
     platform = request.app.state.platform
     store = platform.store
+    if id.startswith('meeting-adjust:'):
+        notice = next((n for n in meeting_change_notices(platform.data, user) if n['id'] == id), None)
+        if notice is None:
+            return error(404, 'NOT_FOUND', '通知不存在')
+        if not body.done:
+            return error(422, 'INVALID_REQUEST', '调整通知只能标记已读')
+        platform.data.read_notification(user, id)
+        return {'item': {**notice, 'done': True, 'status': 'done'}}
     with store._lock, store._db as db:
         store.begin_write()
         row = db.execute(f'select {TODO_FIELDS} from jkq_todos where id=? and owner=?',
@@ -181,11 +204,15 @@ def patch_todo(id: str, body: TodoPatch, request: Request, user=Depends(current_
             item = next((task for task in meeting_assignments(platform.data, user) if task['id'] == id), None)
             if item is None:
                 return error(404, 'NOT_FOUND', '待办不存在')
+            if item['done'] and not body.done:
+                record = platform.data.get_record(user, 'meeting', item['ref']['meetingId'])
+                task = next((t for t in record['data'].get('todos', []) if (t.get('assignment') or {}).get('id') == id), None)
+                if task and task['assignment'].get('finalizedVersion'):
+                    return error(409, 'INVALID_STATE', '请在会议纪要工作台填写原因后重开事项')
             if item['done'] != body.done:
-                if body.done:
-                    db.execute('insert into jkq_meeting_todo_done(owner,id) values (?,?)', (user.id, id))
-                else:
-                    db.execute('delete from jkq_meeting_todo_done where owner=? and id=?', (user.id, id))
+                from .meeting_tasks import update_task
+                update_task(store, {'recipientId': user.id, 'id': id},
+                            '已完成' if body.done else '待处理', '在个人收件箱更新', user.id)
                 store.audit('meeting', user.id, 'todo.patch', {'id': id, 'done': body.done}, connection=db)
                 item.update(done=body.done, status='done' if body.done else 'pending')
             return {'item': item}

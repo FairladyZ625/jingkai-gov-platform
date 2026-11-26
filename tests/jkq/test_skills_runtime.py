@@ -480,8 +480,8 @@ def test_instance_run_executes_real_kb_then_configured_model_then_business_tool(
     api, sign_in = instance
     error(api.get(ROOT), 401, "UNAUTHENTICATED")
     sign_in()
-    meeting = api.post("/api/v1/apps/meeting/records", json={
-        "project": "jkq", "type": "meeting", "data": {"title": "公开演练会议概要"},
+    meeting = api.post("/api/apps/meeting/workbench/meetings", json={
+        "title": "公开演练会议概要", "date": "2026-11-26",
     })
     assert meeting.status_code == 201, meeting.text
     draft_skill = {
@@ -501,7 +501,7 @@ def test_instance_run_executes_real_kb_then_configured_model_then_business_tool(
     assert result["model"] == "acceptance-local"
     assert result["missing"] == ["scope"]
     assert "核查范围：**待确认**" in result["markdown"]
-    for value in ("可查阅公开政策依据", "公开演练会议概要", meeting.json()["id"]):
+    for value in ("可查阅公开政策依据", "公开演练会议概要", meeting.json()["item"]["id"]):
         assert value in result["markdown"]
     assert result["citations"][0]["id"] == PUBLIC_SOURCE
     assert [step["type"] for step in calls[0]["prior"]] == ["kb"]

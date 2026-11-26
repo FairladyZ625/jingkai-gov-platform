@@ -1,4 +1,5 @@
 """会议转写的持久步骤，调用卫华 jobs 检查点。"""
+import asyncio
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Literal
@@ -14,6 +15,13 @@ DEMO_AUDIO = Path(__file__).resolve().parents[1] / 'samples' / 'demo.webm'
 MeetingType = Literal['企业座谈会', '局务会', '专题推进会']
 MEETING_TYPES = ('企业座谈会', '局务会', '专题推进会')
 MEETING_LOCK = Lock()
+TRANSCRIBE_AUDIO = None
+
+
+def configure_transcriber(provider):
+    """实例安装真实转写能力；未接入时拒绝用示例内容代替。"""
+    global TRANSCRIBE_AUDIO
+    TRANSCRIBE_AUDIO = provider
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
 
 
@@ -34,8 +42,21 @@ def meeting_record(ctx, meeting_id):
     return record
 
 
+def meeting_owner(ctx, record):
+    if record['data'].get('ownerId'):
+        return record['data']['ownerId']
+    # 老记录没有负责人字段时回看创建者，不能把最近写入者变成负责人。
+    return record['submitter'] if record['version'] == 1 else ctx.records.get(record['id'], 1)['submitter']
+
+
+def require_owner(ctx, record):
+    if not ctx.can('operate') or (meeting_owner(ctx, record) != ctx.user.id and not ctx.can('admin')):
+        raise DataError('forbidden', '只有会议整理负责人可修改或定稿')
+
+
 def attach_job(ctx, record, job_id):
     """调用方持有 MEETING_LOCK。队列先落盘，重启后准备步骤可补写关联。"""
+    require_owner(ctx, record)
     data = record['data']
     active_id = data.get('jobId')
     if active_id == job_id:
@@ -72,19 +93,20 @@ def transcribe_part(part, *, hotwords, step_key):
     return [[part['offset'], speaker, words]]
 
 
-def publish_transcript(ctx, job_id, inputs, transcript):
+def publish_transcript(ctx, job_id, inputs, transcript, mode="demo"):
     with MEETING_LOCK:
         record = meeting_record(ctx, inputs.ref)
+        require_owner(ctx, record)
         data = record['data']
         if data.get('jobId') != job_id:
             raise DataError('invalid_state', '转写任务与会议当前记录不一致')
         if not data.get('transcript'):
             data = {
                 **data, 'title': inputs.title or data['title'], 'type': inputs.type or data['type'],
-                'transcript': transcript, 'transcriptMode': 'demo',
+                'transcript': transcript, 'transcriptMode': mode,
             }
             ctx.records.save(id=inputs.ref, baseVersion=record['version'], data=data)
-    return {'ref': inputs.ref, 'transcriptMode': 'demo'}
+    return {'ref': inputs.ref, 'transcriptMode': mode}
 
 
 @operation(OPERATION, version='1')
@@ -101,14 +123,27 @@ def transcribe(job, body):
             if record['project'] != job.project:
                 raise DataError('not_found', '会议不存在')
             attach_job(ctx, record, job.id)
-        return demo_parts()
+        audio = ctx.data_files.read(record['data']['fileId'])
+        # 只有明确示例，或内容逐字节相同的公开合成录音，才使用示例逐字稿。
+        if record['data'].get('source') == 'demo' or audio == DEMO_AUDIO.read_bytes():
+            return demo_parts()
+        return [{'number': 1, 'fileId': record['data']['fileId'], 'real': True}]
 
     parts = job.step('分片', prepare)
     transcript = []
+    real = bool(parts and parts[0].get('real'))
+
+    def recognize(part):
+        if TRANSCRIBE_AUDIO is None:
+            raise DataError('invalid_state', '未接入真实转写服务；录音已保留，可补录文字继续')
+        result = asyncio.run(TRANSCRIBE_AUDIO(ctx.data_files.read(part['fileId'])))
+        return [[f"{line['startMs']//60000:02d}:{line['startMs']//1000%60:02d}.{line['startMs']%1000:03d}",
+                 line.get('speaker') or '待核对发言人', line['text']] for line in result['sentences']]
+
     for part in parts:
         lines = job.step(
             f"转写第 {part['number']} 片",
-            lambda key: transcribe_part(part, hotwords=inputs.hotwords, step_key=key),
+            lambda key: recognize(part) if real else transcribe_part(part, hotwords=inputs.hotwords, step_key=key),
         )
         transcript.extend(lines)
-    return job.step('合并逐字稿', lambda _: publish_transcript(ctx, job.id, inputs, transcript))
+    return job.step('合并逐字稿', lambda _: publish_transcript(ctx, job.id, inputs, transcript, "provider" if real else "demo"))
