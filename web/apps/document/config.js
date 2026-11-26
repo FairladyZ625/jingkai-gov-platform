@@ -4,7 +4,7 @@
 window.JK_APPCFG = window.JK_APPCFG || {};
 window.JK_APPCFG.document = {
   name: '公文协作',
-  summary: '选事项、填要素，AI 起草并核查',
+  summary: '选模板、填要素，起草文稿并核查',
   steps: ['要办什么事', '填要素', '初稿与核查', '批注与送审'],
   tabs: [['flow', '起草'], ['list', '可见文稿']],
   /* 红头（版头）文字与发文机关 */
@@ -22,7 +22,7 @@ window.JK_APPCFG.document = {
   levels: { error: '必须改', warn: '建议改', info: '提示', ok: '通过' },
   polishStyles: [['formal', '更正式'], ['concise', '更精简']],
   text: {
-    pickQ: '要办什么事？', pickSub: '选一类事项，AI 按经开区公开公文的写法起草',
+    pickQ: '要办什么事？', pickSub: '选择适用模板，按填写的要素生成初稿',
     fillQ: '填几个要素', fillSub: '没填的地方会标【待补】，核查时会提醒',
     draftQ: '初稿', draftSub: '点任意段落直接改；右侧核查、润色、看版本',
     reviewQ: '批注与送审', reviewSub: '处理完批注再送审；定稿后锁定，只能另存新稿',

@@ -10,7 +10,7 @@ from playwright.sync_api import expect, sync_playwright
 from tests.demo_http.password_ui import login
 
 
-def test_offline_document_export_still_downloads_html_word():
+def test_offline_document_export_downloads_valid_docx():
     entry = Path(__file__).resolve().parents[2] / "web/index.html"
     with sync_playwright() as pw, pw.chromium.launch() as browser:
         page = browser.new_page(offline=True, accept_downloads=True)
@@ -25,8 +25,12 @@ def test_offline_document_export_still_downloads_html_word():
         with page.expect_download() as downloaded:
             page.locator('[data-op="document.word"]').click()
         artifact = downloaded.value
-        assert artifact.suggested_filename == draft["title"] + ".doc"
-        assert "离线验收" in Path(artifact.path()).read_text(encoding="utf-8")
+        assert artifact.suggested_filename == draft["title"] + "（草稿）.docx"
+        file = Path(artifact.path())
+        assert file.read_bytes()[:4] == b"PK\x03\x04"
+        paragraphs = [p.text for p in Document(str(file)).paragraphs]
+        assert paragraphs[0] == draft["title"] + "（草稿）"
+        assert any("离线验收" in paragraph for paragraph in paragraphs)
 
 
 @pytest.mark.parametrize("server", [()], indirect=True)

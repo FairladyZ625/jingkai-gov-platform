@@ -2,7 +2,7 @@
 
 > 负责人：summerchaserwwz ｜ 关联 Issue：#38、#40 ｜ 场景编号：（后续业务 Issue 补 scenes）
 
-按模板起草公文、保存历史版本，定稿后锁定。本轮先提供后端接口；页面入口只做打开与提示，完整界面随后续任务接入。
+按模板起草公文、保存历史版本，定稿后锁定。现有四步应用保留新建入口，工作台从文稿档案直接进入修改、核查、批注、版本比对和审核。
 
 ## 需求七问
 
@@ -13,7 +13,7 @@
 ### 2. 使用者与确认人
 
 - 经办人（member）：查看模板、起草和保存，需要 `view` + `operate`。
-- 审签领导（leader）：查看、办理并做审签确认，需要 `view` + `operate` + `approve`。
+- 审签领导（leader）：查看、审签确认需要 `view` + `approve`；修改正文另需 `operate`。
 - 管理员（admin）：全部动作。外部协作者默认无本应用授权，访问返回 403。
 
 角色与动作写在 `app.json` 的 `defaultRoles`；平台在服务端再判一次。
@@ -64,3 +64,17 @@
 python3 scripts/check.py --app document
 python3 -m pytest -q apps/document/tests
 ```
+
+
+## 公文工作台（#228）
+
+- 工作概览汇总待我修改、待我审核、定稿和档案；档案支持标题/起草人搜索、状态筛选及只看本人。待我修改以真实 `authorId` 判断，待我审核以授权与实际审签分配判断。
+- 打开已有文稿即可编辑，保存生成新版本；有未保存修改时阻止页面内切换。核查与规则润色展示当前已保存版本，润色先预览再由经办人采用。
+- 批注可新增、回复和解决；版本对比直接调用既有差异接口；审核提供通过定稿与带理由退回。定稿禁止保存和规则修正，仍可保留批注讨论。
+- `GET /api/apps/document/workbench` 返回 `{items, reviewers, reviews}`，是同一文稿记录与同一审签单的投影。成员来自项目授权查询，不从演示姓名推断 HTTP 账号。
+- `PUT /drafts/{id}` 新增可选 `baseVersion`；`POST /drafts/{id}/submit` 新增可选 `version`，均使用详情中的 `versions[].v`。旧调用兼容；工作台必传，过期返回 409 `STALE_VERSION`。`POST /workbench/reviews/{id}` 接收审签单自身的 `{version, decision: approve|reject, comment}`；审签版本不要与文稿展示版本混用。
+- 会议转公文可传 `source={app:"meeting", id, version}` 和 `templateId:"T02", inputs:{}`。服务端读取当前用户可见的固定会议定稿记录，要求 `type=meeting`、`minutesStatus=已定稿`、`finalizedVersion=version`，正文取 `data.minutesEdit`。来源保存在文稿 `data.source`，详情返回 `item.source`。客户端附带的来源标题和额外正文不会冒充会议原文。
+- HTTP 导出沿用服务端真实 DOCX；离线导出使用 `web/assets/word-export.js` 生成真实 OOXML ZIP，由 `python-docx` 回读测试。未定稿文件标注“草稿”。原始 mock 导出端点仍保留旧契约，页面适配器不再下载伪 `.doc`。
+- 新建文稿沿用原四步应用。工作台未扩展多级 OA、电子签章、发文和归档制度，也不把确定性模板与规则润色称为模型创作。
+
+验证：`python3 -m pytest -q apps/document/tests`；`node --test web/tests/contract/document-workbench.test.cjs web/tests/contract/word-export.test.cjs`；`node --test web/tests/e2e/document-workbench.cjs`（需要安装 `web` 的 Playwright 依赖与 Chromium）。浏览器验收已加入 CI；可用 `DOCUMENT_SCREENSHOTS` 指定 1440/1280 截图目录。
