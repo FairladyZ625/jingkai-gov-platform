@@ -15,7 +15,7 @@ from starlette.formparsers import MultiPartParser
 from .minutes import minutes_for, public_todos
 from .transcription import (
     DEMO_AUDIO, MEETING_LOCK, MEETING_TYPES, OPERATION, RECORD_TYPE, Options,
-    __haiknow_jobs__, attach_job, demo_parts, meeting_record, transcribe_part,
+    __haiknow_jobs__, attach_job, demo_parts, meeting_record, meeting_owner, transcribe_part,
 )
 
 
@@ -113,12 +113,23 @@ def preferred_sample(records):
 
 def meeting_view(ctx, record):
     data = record['data']
+    # 共享合成样本可只读预览，不能因复用档案而让另一成员启动或写入原会议。
+    # 既核对样本身份，也逐字节核对实际音频；普通同名录音与自定义记录不适用。
+    preview = False
+    if is_demo_sample(data) and meeting_owner(ctx, record) != ctx.user.id:
+        if data.get('fileId') and ctx.data_files.read(data['fileId']) == DEMO_AUDIO.read_bytes():
+            data = {**data, 'readOnlySample': True}
+            if not data.get('transcript'):
+                data.update(transcript=[line for part in demo_parts()
+                            for line in transcribe_part(part, hotwords=[], step_key='readonly-public-sample')],
+                            transcriptMode='demo')
+            preview = True
     item = {key: value for key, value in data.items() if key != 'minutesEdit'}
     if is_demo_sample(data):
         item.update(sampleId=DEMO_SAMPLE_ID, title=DEMO_SAMPLE_TITLE, type=DEMO_SAMPLE_TYPE)
     item.update(id=record['id'], todos=public_todos(data))
     item['status'] = 'done' if item.get('transcript') else 'new'
-    if item.get('jobId'):
+    if item.get('jobId') and not preview:
         try:
             job = ctx.preview.jobs.get(item['jobId'])
         except DataError as exc:
@@ -294,7 +305,7 @@ def save_meeting(ctx, title, type, people, source, name, audio, *, sample_id=Non
 
 def meeting_detail(ctx, record):
     item = meeting_view(ctx, record)
-    projected = {**record['data'], 'title': item['title'], 'type': item['type']}
+    projected = {**record['data'], **item}
     return {'item': item, 'minutes': minutes_for(projected)}
 
 
@@ -314,6 +325,10 @@ def start_transcription(meeting_id: str, options: Options | None = None,
     inputs = {'ref': meeting_id, **options.model_dump(exclude_none=True)}
     with MEETING_LOCK:
         record = meeting_record(ctx, meeting_id)
+        if record['data'].get('ownerId') and record['data']['ownerId'] != ctx.user.id and not ctx.can('admin'):
+            raise DataError('forbidden', '仅会议整理负责人可启动转写')
+        from .transcription import require_owner
+        require_owner(ctx, record)
         current_id = record['data'].get('jobId')
         job_key = key if key is not None else f'meeting:{meeting_id}'
         if current_id:

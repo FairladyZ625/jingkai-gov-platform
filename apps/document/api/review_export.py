@@ -7,7 +7,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from fastapi import APIRouter, Request, Response
 from haiknow_sdk import DataError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .drafting_router import DocumentRoute, Operator, Text, Viewer, _with_comments, error
 from .drafts import _present as present, _record as get_record
@@ -39,6 +39,7 @@ def add_text(document, text, alignment=None):
 
 class Submission(BaseModel):
     assignee: Text | None = None
+    version: int | None = Field(default=None, ge=0, strict=True)
 
 
 def check_issues(ctx, request, record):
@@ -55,6 +56,8 @@ def check_issues(ctx, request, record):
 @router.post("/drafts/{identity}/submit")
 def submit(identity: str, body: Submission, ctx: Operator, request: Request):
     record = get_record(ctx, identity)
+    if body.version is not None and body.version != record["version"] - 1:
+        raise DataError("stale_version", "文稿已有新版本，请刷新后重新核查送审")
     problems = [i["id"] for i in check_issues(ctx, request, record) if i["level"] == "error"]
     if problems:
         return error(422, "CHECK_FAILED", "请先处理核查发现的问题", issueIds=problems)

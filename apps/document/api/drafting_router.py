@@ -1,5 +1,5 @@
 """公文协作 §4.4 API。"""
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -52,11 +52,18 @@ class Reference(BaseModel):
     id: Text
 
 
+class MeetingSource(BaseModel):
+    app: Literal["meeting"]
+    id: Text
+    version: Annotated[int, Field(strict=True, ge=1)]
+
+
 class DraftIn(BaseModel):
     templateId: Text
     inputs: dict[str, str | None]
     refs: list[Reference] = Field(default_factory=list)
     extra: list[str] = Field(default_factory=list)
+    source: MeetingSource | None = None
 
 
 class Content(BaseModel):
@@ -71,6 +78,7 @@ class Content(BaseModel):
 class SaveIn(BaseModel):
     content: Content
     note: str = ""
+    baseVersion: Annotated[int, Field(strict=True, ge=0)] | None = None
 
 
 router = APIRouter(route_class=DocumentRoute)
@@ -96,17 +104,24 @@ def _with_comments(ctx, draft):
 
 @router.post("/drafts")
 def create_draft(body: DraftIn, ctx: Operator, request: Request):
-    spec = templates.draft_template(body.templateId, body.inputs)
     platform = request.app.state.platform
     platform.data.projects.require(ctx.user, drafts.PROJECT)
+    source = None
     reward_notice = body.templateId == "T03"
-    lookup = getattr(request.app.state, "public_policy_lookup", None)
-    content = (policy_draft.reward_notice(spec, body.inputs, body.extra, lookup=lookup) if reward_notice
-               else templates.mock_draft(spec, body.inputs, body.extra))
+    if body.source:
+        from .workbench import meeting_content
+        if body.templateId != "T02":
+            raise DataError("invalid_request", "会议转公文使用工作方案模板")
+        content, source = meeting_content(platform, ctx.user, body.source)
+    else:
+        spec = templates.draft_template(body.templateId, body.inputs)
+        lookup = getattr(request.app.state, "public_policy_lookup", None)
+        content = (policy_draft.reward_notice(spec, body.inputs, body.extra, lookup=lookup)
+                   if reward_notice else templates.mock_draft(spec, body.inputs, body.extra))
     citations = drafts.resolve_citations(getattr(platform, "kb", None), ctx.user, body.refs, content)
     policy_id = (body.inputs.get("policy") or "").strip() or None
     return {"item": drafts.create(ctx, body.templateId, policy_id, content, citations,
-                                  provider="policy-template" if reward_notice else "mock")}
+                                  provider="policy-template" if reward_notice else "mock", source=source)}
 
 
 @router.get("/drafts/{identity}")
@@ -125,4 +140,4 @@ def get_draft(identity: str, ctx: Viewer, version: Annotated[int | None, Query(g
 
 @router.put("/drafts/{identity}")
 def save_draft(identity: str, body: SaveIn, ctx: Operator):
-    return {"item": _with_comments(ctx, drafts.save(ctx, identity, body.content.model_dump(), body.note))}
+    return {"item": _with_comments(ctx, drafts.save(ctx, identity, body.content.model_dump(), body.note, body.baseVersion))}

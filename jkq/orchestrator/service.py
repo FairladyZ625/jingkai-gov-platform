@@ -222,7 +222,12 @@ async def respond(
     request: Request, user, *, text: str, app: str | None, model: str | None,
     history: list[dict], gateway: ModelGateway | None, bridge: ToolBridge | None,
     classification: Classification, on_event: EventSink | None = None, on_meta: MetaSink | None = None,
+    mode: str = "general", enterprise_id: str | None = None,
 ) -> Reply:
+    if mode == "policy_service":
+        from .policy_service import respond_policy
+        return await respond_policy(request, user, text=text, enterprise_id=enterprise_id,
+                                    history=history, bridge=bridge, on_event=on_event)
     reply = Reply(intent=app)
     recent = [message for message in history if not message.get("incomplete")]
     last_reply = next((message for message in reversed(recent) if message["role"] == "assistant"), {})

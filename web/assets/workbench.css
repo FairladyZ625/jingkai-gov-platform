@@ -1,0 +1,18 @@
+/* 工作台使用独立主区；隐藏底层对话控件，避免键盘进入不可见区域。 */
+.main.workbench-open > .chatcol,
+.main.workbench-open > .panel { display: none; }
+.workbench { display: none; flex: 1; min-width: 0; overflow: auto; padding: var(--s8); }
+.workbench.active { display: block; }
+.wb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s4); border-bottom: 1px solid var(--border); padding-bottom: var(--s6); }
+.wb-head h1 { font-size: var(--fs-2xl); font-weight: var(--fw-m); letter-spacing: var(--track-tight); margin: var(--s2) 0 0; }
+.wb-head h1:focus { outline: none; }
+.wb-body { max-width: 1100px; margin: var(--s8) auto; }
+.wb-empty { max-width: 620px; margin: 12vh auto; padding: var(--s8); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+.wb-empty h2 { font-size: var(--fs-xl); font-weight: var(--fw-m); margin: var(--s4) 0 var(--s2); }
+.wb-empty p { color: var(--text-2); line-height: var(--lh); margin: 0 0 var(--s6); }
+@media (max-width: 700px) {
+  .workbench { padding: var(--s4); }
+  .wb-head { flex-wrap: wrap; }
+  .wb-head h1 { font-size: var(--fs-xl); }
+  .wb-empty { padding: var(--s5); margin: var(--s8) auto; }
+}

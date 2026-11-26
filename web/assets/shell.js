@@ -6,12 +6,20 @@
   const { $, $$, h, esc, md, icon, sleep, tag, toast, modal, menu, appIcon } = JK;
   const API = window.JKApi; const H = window.JKHttp; const CFG = window.JK_CONFIG || {};
   const Op = window.JKOp;
+  const Workbench = window.JKWorkbench;
   const S = { me: null, role: null, grants: {}, models: [], model: 'auto', convs: [], cur: null, open: [], active: null, mounted: {}, inbox: [], todos: [], layout: 'home' };
   const root = () => $('#root');
   let conversationEpoch = 0;
   let switchingAccount = false;
   let afterReauthentication = null;
   const pendingConversations = new WeakMap();
+  let draftContext = { mode: 'general', enterpriseId: '' };
+  const chatContext = () => {
+    const current = conv();
+    const saved = current ? current.context || {} : draftContext;
+    return { mode: saved.mode === 'policy_service' ? 'policy_service' : 'general', enterpriseId: saved.mode === 'policy_service' ? saved.enterpriseId || '' : '' };
+  };
+  const messageContext = context => ({ mode: context.mode, ...(context.mode === 'policy_service' && context.enterpriseId ? { enterpriseId: context.enterpriseId } : {}) });
   const loginDemoAccounts = () => offlineDemo() || CFG.demoMode === true ? CFG.demoAccounts || [] : [];
 
   window.addEventListener?.('jk:api:notice', ({ detail }) => {
@@ -31,6 +39,7 @@
     afterReauthentication = { userId: S.me.id, conversation: S.cur, panel, layout: S.layout };
     conversationEpoch++;
     Op.running?.stop(true);
+    Workbench?.reset();
     Object.keys(S.mounted).forEach(unmountApp);
     const username = S.me.username;
     S.me = null;
@@ -63,6 +72,12 @@
   const startersFor = id => can(id, 'view') ? (mf(id).starters || []).filter(recommendText) : [];
   const greet = () => { const hr = new Date().getHours(); return hr < 6 ? '夜深了' : hr < 11 ? '早上好' : hr < 13 ? '中午好' : hr < 18 ? '下午好' : '晚上好'; };
   const appsVisible = (group) => (window.JK_APP_LIST || []).filter((a) => a.enabled !== false && JK.registry[a.id] && (!group || a.group === group) && can(a.id, 'view'));
+  const workbenchCan = (id, action = 'view') => !!JK.registry[id] && appsVisible().some(a => a.id === id) && can(id, action);
+  const workbenchEntries = () => Object.entries(Workbench?.names || {}).filter(([id]) => workbenchCan(id));
+  window.addEventListener?.('jk:workbench:changed', () => {
+    if (!S.me || !$('#side-sc')) return;
+    setSidebarDrawer(false); renderSide();
+  });
   const mf = (id) => (JK.registry[id] ? JK.registry[id].manifest : JK.BUILTIN[id] || { name: id });
   const roleHue = () => JK.hue(roleName(), 'role');
   const storeKey = (userId = S.me?.id || '') => 'jk4-convs:' + userId;
@@ -84,6 +99,7 @@
     }
   }
   async function afterLogin(finishPreviousAccount, identityReady) {
+    const previousUserId = S.me?.id;
     const profile = await API.me.get();
     const models = await API.models.list().catch((error) => {
       if (error?.status === 401) throw error;
@@ -93,10 +109,18 @@
     finishPreviousAccount?.();
     conversationEpoch++;
     S.me = profile.user; S.role = profile.role; S.grants = profile.grants || {};
+    if (previousUserId && previousUserId !== S.me.id) history.replaceState(null, '', location.pathname + location.search);
+    draftContext = { mode: 'general', enterpriseId: '' };
     S.inbox = []; S.todos = [];
     if (models) { S.models = models.items || []; S.model = models.current || 'auto'; }
     loadConvs(); S.cur = null; S.open = []; S.active = null; S.layout = 'home'; Object.values(S.mounted).forEach((x) => { try { x.ctl && x.ctl.unmount && x.ctl.unmount(); } catch (e) {} }); S.mounted = {};
     Op.loadDict(app => !!JK.registry[app] && can(app, 'view')); renderShell();
+    Workbench?.bind($('#workbench'), S.me.id, workbenchCan, () => {
+      Workbench.hide();
+      if (S.layout === 'max') setLayout('split');
+      if (S.layout === 'split') $('#main').classList.add('mobile-chat');
+      $('#chatcol textarea')?.focus();
+    }, id => openApp(id));
     const resume = afterReauthentication;
     afterReauthentication = null;
     if (resume?.userId === S.me.id) {
@@ -235,7 +259,7 @@
       unlock();
     }
   }
-  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); S.me = null; Op.loadDict(); renderLogin(); }
+  async function logout() { conversationEpoch++; Op.running?.stop(true); await API.auth.logout().catch(() => {}); Workbench?.reset(); history.replaceState(null, '', location.pathname + location.search); S.me = null; Op.loadDict(); renderLogin(); }
 
   /* ---------------- 外壳骨架 ---------------- */
   const drawerViewport = typeof matchMedia === 'function' ? matchMedia('(max-width:1180px)') : { matches: false, addEventListener() {} };
@@ -272,6 +296,7 @@
       <main class="main" id="main">
         <section class="chatcol" id="chatcol"><button class="btn ghost mobile-view-switch" id="btn-mobile-app" aria-controls="panel">${icon('arrow-right')} 返回应用</button><div class="dropmask">${icon('upload', 22)}&nbsp;松开，AI 识别文件并帮你处理</div></section>
         <section class="panel" id="panel"><div class="bar-h"><button class="btn ghost mobile-view-switch" id="btn-mobile-chat" aria-controls="chatcol">${icon('chat')} 返回对话</button><div class="ptabs" id="ptabs"></div><button class="btn icon sm ghost" id="btn-chat-toggle" title="显示 / 隐藏对话">${icon('chat')}</button><button class="btn icon sm ghost" id="btn-max" title="最大化">${icon('maximize')}</button><button class="btn icon sm ghost" id="btn-pclose" title="关闭面板">${icon('x')}</button></div><div class="pbody" id="pbody"></div></section>
+        <section class="workbench" id="workbench" aria-label="业务工作台"></section>
       </main></div>`;
     renderSide(); renderChat(); bindShell();
   }
@@ -283,40 +308,43 @@
     const has = (id) => appsVisible('platform').some((a) => a.id === id);
     const pending = pendingCount();
     el.innerHTML = `<button class="rail-logo" data-act="side" title="${esc(CFG.platformName)} · 展开/收起侧栏" aria-controls="shell-side" aria-expanded="${sidebarExpanded()}">${icon('cube')}</button>
-      ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !S.active || work)}
-      ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
+      ${it('data-nav="chat" data-op="rail.chat"', icon('chat'), '对话', !Workbench?.current() && (!S.active || work))}
+      ${it('data-nav="inbox" data-op="rail.inbox"', icon('inbox'), '收件箱', !Workbench?.current() && S.active === 'inbox', pending ? `<span class="rb">${pending}</span>` : '')}
       ${it('data-nav="cmdk" data-op="rail.cmdk"', icon('search'), '搜索', false)}
-      ${has('kb') ? it('data-app="kb" data-op="rail.kb"', icon(mf('kb').icon || 'book'), '知识库', S.active === 'kb') : ''}
-      ${has('skills') ? it('data-app="skills" data-op="rail.skills"', icon(mf('skills').icon || 'wand'), '技能', S.active === 'skills') : ''}
-      ${has('computer') ? it('data-app="computer" data-op="rail.computer"', icon(mf('computer').icon || 'computer'), '电脑', S.active === 'computer') : ''}
-      ${isAdmin() ? it('data-nav="admin" data-op="rail.admin"', icon('shield'), '后台', S.active === 'admin') : ''}
+      ${workbenchEntries().map(([id, name]) => it(`data-workbench="${id}"`, icon(id === 'enterprise' ? 'building' : id === 'meeting' ? 'meeting' : 'doc'), name + '工作台', Workbench?.current()?.id === id)).join('')}
+      ${has('kb') ? it('data-app="kb" data-op="rail.kb"', icon(mf('kb').icon || 'book'), '知识库', !Workbench?.current() && S.active === 'kb') : ''}
+      ${has('skills') ? it('data-app="skills" data-op="rail.skills"', icon(mf('skills').icon || 'wand'), '技能', !Workbench?.current() && S.active === 'skills') : ''}
+      ${has('computer') ? it('data-app="computer" data-op="rail.computer"', icon(mf('computer').icon || 'computer'), '电脑', !Workbench?.current() && S.active === 'computer') : ''}
+      ${isAdmin() ? it('data-nav="admin" data-op="rail.admin"', icon('shield'), '后台', !Workbench?.current() && S.active === 'admin') : ''}
       <span class="sp"></span>
       ${canPresentDemo() ? it('data-act="demo" data-op="rail.demo"', icon('play'), '演示', false) : ''}`;
   }
   function renderSide() {
     renderRail();
     const el = $('#side-sc'); if (!el) return;
-    const navApp = (a) => { const m = mf(a.id); return `<button class="nav-i ${S.active === a.id ? 'on' : ''}" data-app="${a.id}" data-op="nav.${a.id}" title="${esc(m.summary || m.name)}">${appIcon(a.id, 'sm')}<span class="t">${esc(m.name)}</span></button>`; };
+    const navApp = (a) => { const m = mf(a.id); return `<button class="nav-i ${!Workbench?.current() && S.active === a.id ? 'on' : ''}" data-app="${a.id}" data-op="nav.${a.id}" title="${esc(m.summary || m.name)}">${appIcon(a.id, 'sm')}<span class="t">${esc(m.name)}</span></button>`; };
     const pending = pendingCount();
     el.innerHTML = `
       <button class="nav-i entry" data-nav="chat" data-op="nav.chat" title="新对话">${icon('chat')}<span class="t">总控对话</span><span class="kbd">新</span></button>
       <button class="nav-i" data-nav="cmdk" data-op="nav.cmdk">${icon('search')}<span class="t">搜索与命令</span><span class="kbd">⌘K</span></button>
-      <button class="nav-i ${S.active === 'inbox' ? 'on' : ''}" data-nav="inbox" data-op="nav.inbox">${icon('inbox')}<span class="t">收件箱</span>${pending ? `<span class="count">${pending}</span>` : ''}</button>
+      <button class="nav-i ${!Workbench?.current() && S.active === 'inbox' ? 'on' : ''}" data-nav="inbox" data-op="nav.inbox">${icon('inbox')}<span class="t">收件箱</span>${pending ? `<span class="count">${pending}</span>` : ''}</button>
       ${appsVisible('work').length ? `<div class="side-h">应用</div>${appsVisible('work').map(navApp).join('')}` : ''}
-      ${appsVisible('platform').length || isAdmin() ? `<div class="side-h">平台</div>${appsVisible('platform').map(navApp).join('')}${isAdmin() ? `<button class="nav-i ${S.active === 'admin' ? 'on' : ''}" data-nav="admin" data-op="nav.admin">${appIcon('admin', 'sm')}<span class="t">管理后台</span></button>` : ''}` : ''}
+      ${workbenchEntries().length ? `<div class="side-h">工作台</div>${workbenchEntries().map(([id, name]) => `<button class="nav-i ${Workbench?.current()?.id === id ? 'on' : ''}" ${Workbench?.current()?.id === id ? 'aria-current="page"' : ''} data-workbench="${id}" data-op="workbench.${id}" title="${name}工作台">${icon(id === 'enterprise' ? 'building' : id === 'meeting' ? 'meeting' : 'doc')}<span class="t">${name}</span></button>`).join('')}` : ''}
+      ${appsVisible('platform').length || isAdmin() ? `<div class="side-h">平台</div>${appsVisible('platform').map(navApp).join('')}${isAdmin() ? `<button class="nav-i ${!Workbench?.current() && S.active === 'admin' ? 'on' : ''}" data-nav="admin" data-op="nav.admin">${appIcon('admin', 'sm')}<span class="t">管理后台</span></button>` : ''}` : ''}
       <div class="side-h">最近对话</div>
       <div class="hist">${S.convs.slice(0, 6).map((c) => `<button class="nav-i ${S.cur === c.id ? 'on' : ''}" data-conv="${c.id}"><span class="t">${esc(c.title)}</span><span class="tm">${esc(c.at || '')}</span><span class="del" data-del="${c.id}" title="删除对话">${icon('x')}</span></button>`).join('') || '<div class="t-3 t-xs" style="padding:4px 10px">还没有对话</div>'}</div>`;
   }
   function bindShell() {
     $('#side-sc').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
-      if (b.dataset.app) return openApp(b.dataset.app, Op.running ? undefined : 'home');
+      if (b.dataset.workbench) return Workbench.open(b.dataset.workbench);
+      if (b.dataset.app) { Workbench?.hide(); return openApp(b.dataset.app, Op.running ? undefined : 'home'); }
       const del = e.target.closest('[data-del]'); if (del) { const id = del.dataset.del; const old = S.convs.slice(); if (S.cur === id) switchConversation(null); S.convs = S.convs.filter((c) => c.id !== id); saveConvs(); renderSide(); renderChatBody(); toast('对话已删除', { action: { label: '撤销', fn: () => { S.convs = old; saveConvs(); renderSide(); } } }); return; }
       if (b.dataset.conv || b.dataset.nav) setSidebarDrawer(false);
       if (b.dataset.conv) return openConv(b.dataset.conv);
-      const n = b.dataset.nav; if (n === 'chat') newChat(); else if (n === 'cmdk') cmdk(b); else if (n) openBuiltin(n);
+      const n = b.dataset.nav; if (n === 'chat') { Workbench?.hide(); newChat(); } else if (n === 'cmdk') cmdk(b); else if (n) { Workbench?.hide(); openBuiltin(n); }
     };
-    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.app) return openApp(b.dataset.app); const n = b.dataset.nav; if (n === 'chat') return newChat(); if (n === 'cmdk') return cmdk(b); if (n) openBuiltin(n); };
+    $('#rail').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.act === 'demo') return window.JKDemo && JKDemo.start(); if (b.dataset.act === 'side') return $('#btn-side').click(); if (b.dataset.workbench) return Workbench.open(b.dataset.workbench); if (b.dataset.app) { Workbench?.hide(); return openApp(b.dataset.app); } const n = b.dataset.nav; if (n === 'chat') { Workbench?.hide(); return newChat(); } if (n === 'cmdk') return cmdk(b); if (n) { Workbench?.hide(); openBuiltin(n); } };
     $('#btn-side').onclick = () => {
       if (drawerViewport.matches) return setSidebarDrawer(!sidebarExpanded(), sidebarExpanded());
       const s = $('.shell'); s.classList.toggle('side-min');
@@ -402,6 +430,7 @@
   async function openApp(id, route, params, restoring = false) {
     if (!JK.registry[id]) { toast('该应用还没有启用', { type: 'warn' }); return; }
     if (!can(id, 'view')) { toast(`你的角色没有「${mf(id).name}」的使用权限`, { type: 'err' }); return; }
+    Workbench?.hide();
     const pending = S.mounted[id];
     if (pending?.restoring) {
       await pending.restoring;
@@ -453,6 +482,7 @@
     return slot;
   }
   async function openBuiltin(id, tab) {
+    Workbench?.hide();
     if (id === 'admin' && !isAdmin()) { toast('需要管理员权限', { type: 'err' }); return; }
     snapshotPanel(S.mounted[S.active]);
     if (!S.open.includes(id)) { S.open.push(id); S.lru = (S.lru || []).filter((x) => x !== id); }
@@ -671,6 +701,7 @@
   function rememberActivePanel() { rememberPanel(snapshotPanel(S.mounted[S.active])); }
   function switchConversation(id) {
     if (switchingAccount) return;
+    Workbench?.hide();
     conversationEpoch++;
     rememberActivePanel();
     if (Op.running) Op.running.stop(true);
@@ -682,12 +713,13 @@
     if (panel) return openApp(panel.app, panel.route, panel.params, true);
   }
   function newChat() {
+    draftContext = { mode: 'general', enterpriseId: '' };
     switchConversation(null);
     const t = $('#chatcol textarea');
     if (t) t.focus();
   }
-  function openConv(id) { if (id !== S.cur) return switchConversation(id); }
-  function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [] }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
+  function openConv(id) { Workbench?.hide(); if (id !== S.cur) return switchConversation(id); }
+  function ensureConv(title) { let c = conv(); if (!c) { c = { id: 'c' + Date.now().toString(36), title: title.slice(0, 18), at: nowHM(), msgs: [], context: { ...draftContext } }; S.convs.unshift(c); S.cur = c.id; renderSide(); } return c; }
   function renderChat() { renderChatBody(); }
   function renderChatBody() {
     const cc = $('#chatcol'); if (!cc) return; const mask = cc.querySelector('.dropmask');
@@ -721,7 +753,7 @@
     return v;
   }
   function composerHTML(big) {
-    return `<div class="composer" data-op="chat.composer"><div class="pending-file hide"></div><textarea rows="${big ? 2 : 1}" data-op="chat.input" placeholder="${esc(CFG.composerPlaceholder || '说一句要办的事')}"></textarea>
+    return `<div class="composer" data-op="chat.composer"><div class="agent-context" data-agent-context></div><div class="pending-file hide"></div><textarea rows="${big ? 2 : 1}" data-op="chat.input" placeholder="${esc(CFG.composerPlaceholder || '说一句要办的事')}"></textarea>
       <div class="tools"><button class="btn icon sm ghost" data-act="attach" data-op="chat.attach" title="添加文件（也可以直接拖进来或粘贴）">${icon('paperclip')}</button><button class="btn icon sm ghost" data-act="at" title="指定应用">${icon('grid')}</button><span class="sp"></span><span class="t-3 t-xs" data-hint></span><button class="send" data-act="send" data-op="chat.send" disabled title="发送（Enter）">${icon('send')}</button></div></div>`;
   }
   function composer() { const w = h(`<div class="composer-wrap">${composerHTML(false)}</div>`); bindComposer(w); return w; }
@@ -740,7 +772,32 @@
     sendB.onclick = go;
     scope.querySelector('[data-act="attach"]').onclick = (e) => attachMenu(e.currentTarget, (f) => { pendingFile = f; showPF(); upd(); ta.focus(); });
     scope.querySelector('[data-act="at"]').onclick = (e) => menu(e.currentTarget, [{ head: '让 AI 用哪个应用' }, ...[...appsVisible('work'), ...appsVisible('platform')].map((a) => ({ v: a.id, lead: appIcon(a.id, 'sm'), label: mf(a.id).name, desc: mf(a.id).summary || '' }))], (v) => { const st = startersFor(v)[0]; ta.value = st || ('打开' + mf(v).name); upd(); ta.focus(); });
-    showPF(); upd();
+    bindAgentContext(scope); showPF(); upd();
+  }
+  function bindAgentContext(scope) {
+    const bar = scope.querySelector('[data-agent-context]'); if (!bar) return;
+    const context = chatContext(), userId = S.me?.id, conversationId = S.cur;
+    const policy = context.mode === 'policy_service';
+    bar.innerHTML = `<div class="agent-context-row"><label>助手模式<select aria-label="助手模式"><option value="general">通用助手</option><option value="policy_service" ${!can('policy', 'view') ? 'disabled' : ''}>政策服务专员</option></select></label>${policy ? `<label class="agent-company">服务企业<select aria-label="服务企业" ${!can('enterprise', 'view') ? 'disabled' : ''}><option value="">${can('enterprise', 'view') ? '不指定，先咨询政策' : '当前账号无权读取企业台账'}</option></select></label>` : ''}</div>${policy ? '<p class="agent-context-note">先查政策依据，再结合企业需求核对条件、材料和办理步骤。</p>' : ''}`;
+    const mode = bar.querySelector('[aria-label="助手模式"]'); mode.value = context.mode;
+    const save = next => { const c = conv(); if (c) { c.context = next; saveConvs(); } else draftContext = next; };
+    mode.onchange = () => { save({ mode: mode.value, enterpriseId: '' }); bindAgentContext(scope); };
+    const company = bar.querySelector('[aria-label="服务企业"]');
+    if (!company || !can('enterprise', 'view')) return;
+    if (context.enterpriseId) company.add(new Option('已选择企业 · 正在读取名称', context.enterpriseId));
+    company.value = context.enterpriseId;
+    company.onchange = () => save({ mode: 'policy_service', enterpriseId: company.value });
+    API.enterprise.list({ sort: 'name' }).then(({ items }) => {
+      if (!company.isConnected || userId !== S.me?.id || conversationId !== S.cur) return;
+      const selected = chatContext().enterpriseId;
+      company.innerHTML = `<option value="">不指定，先咨询政策</option>${items.map(e => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}`;
+      if (selected && !items.some(e => e.id === selected)) company.add(new Option('所选企业暂不可读取，可重新选择', selected));
+      company.value = selected;
+    }).catch(error => {
+      if (!company.isConnected || userId !== S.me?.id || conversationId !== S.cur) return;
+      const note = document.createElement('span'); note.className = 'agent-context-note'; note.setAttribute('role', 'status');
+      note.textContent = '企业列表未能读取，可先咨询政策。' + (error.message || ''); bar.appendChild(note);
+    });
   }
   function attachMenu(anchor, pick) {
     const samples = (window.JK_SAMPLE_FILES || []).map(sampleFileView);
@@ -785,8 +842,8 @@
     (m.cards || []).forEach((card) => body.appendChild(renderReplyCard(card)));
     if (m.cites && m.cites.length) {
       body.appendChild(h(`<div class="srcs">${m.cites.slice(0, 4).map((c) => `<div class="src" data-cid="${esc(c.id || '')}" data-hl="${esc((c.snippet || '').slice(0, 60))}"><span class="n">${c.n}</span><span class="grow" style="min-width:0"><div class="st clip">${esc(c.title || '')}</div><div class="sm clip">${esc([c.source && c.source.docNo, c.source && c.source.org, c.source && c.source.date].filter(Boolean).join(' · ') || (c.snippet || '').slice(0, 40))}</div></span>${c.source && /^https?:\/\//i.test(c.source.url) ? `<a class="btn icon sm ghost" href="${esc(c.source.url)}" target="_blank" rel="noopener" title="官网原文">${icon('external')}</a>` : ''}</div>`).join('')}</div>`));
-      body.querySelectorAll('.src').forEach((s) => (s.onclick = (e) => { if (e.target.closest('a')) return; openCite(s.dataset.cid, s.dataset.hl); }));
-      body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openCite(x.id, (x.snippet || '').slice(0, 60)); }));
+      body.querySelectorAll('.src').forEach((s, index) => (s.onclick = (e) => { if (e.target.closest('a')) return; openChatCitation(m.cites[index]); }));
+      body.querySelectorAll('.cite').forEach((c) => (c.onclick = () => { const x = m.cites.find((y) => String(y.n) === c.dataset.cite); if (x) openChatCitation(x); }));
     }
     const nextButtons = (m.next || []).map((a, i) => {
       if ((a.say && !recommendText(a.say)) || (a.open && !can(a.open, 'view')) || (a._run && !canIntent(a._run.intent))) return '';
@@ -800,7 +857,7 @@
     if (m.model) { const meta = h(`<div class="meta"><span>${esc(m.model)}${m.routeNote ? ' · ' + esc(m.routeNote) : ''}</span><span class="sp"></span><button class="btn sm ghost" data-a="copy" title="复制">${icon('copy')}</button>${m.q ? `<button class="btn sm ghost" data-a="redo" title="换个模型重答">${icon('refresh')}</button>${JK.registry.skills ? `<button class="btn sm ghost" data-a="skill" title="存为我的技能">${icon('skill')}</button>` : ''}` : ''}</div>`); body.appendChild(meta);
       meta.onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a;
         if (a === 'copy') { const t = (m.text || '').replace(/\*\*/g, ''); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('已复制'), () => toast('已复制')); }
-        if (a === 'redo') { const others = S.models.filter((x) => x.enabled && x.id !== S.model && x.kind !== 'route').slice(0, 6); menu(b, [{ head: '换个模型重答' }, ...others.map((x) => ({ v: x.id, label: x.name }))], async (v) => { await API.models.setCurrent(v); S.model = v; $$('.model-chip').forEach((c) => (c.outerHTML = modelChip())); $$('#chatcol .bar-h, #chatcol .home').forEach(bindModelChip); answer(m.q); }); }
+        if (a === 'redo') { const others = S.models.filter((x) => x.enabled && x.id !== S.model && x.kind !== 'route').slice(0, 6); menu(b, [{ head: '换个模型重答' }, ...others.map((x) => ({ v: x.id, label: x.name }))], async (v) => { await API.models.setCurrent(v); S.model = v; $$('.model-chip').forEach((c) => (c.outerHTML = modelChip())); $$('#chatcol .bar-h, #chatcol .home').forEach(bindModelChip); m.context?.mode === 'policy_service' ? answerHttp(m.q, m.context) : answer(m.q); }); }
         if (a === 'skill') send('帮我做一个技能：' + m.q); }; }
     return el;
   }
@@ -847,6 +904,7 @@
     }
     return view;
   }
+  function openChatCitation(c) { if (!c) return; if (c.source?.app === 'policy' && c.source.itemId) { if (can('policy', 'view')) return openApp('policy', 'detail', { itemId: c.source.itemId }); return; } openCite(c.id, (c.snippet || '').slice(0, 60)); }
   function openCite(id, hl) { if (!id) return; if (JK.services.kb && JK.services.kb.open) JK.services.kb.open(id, { highlight: hl }); else if (JK.registry.kb) openApp('kb', 'doc', { fileId: id, highlight: hl }); }
   function postAI(o) { return push({ role: 'ai', text: o.text, cites: o.cites, next: o.next, model: o.model, routeNote: o.routeNote, q: o.q }); }
   function planEl(m) {
@@ -888,7 +946,12 @@
   async function send(text, opt = {}) {
     if (switchingAccount) return;
     text = String(text || '').trim(); if (!text) return;
-    if (!opt.silentUser) push({ role: 'user', text });
+    const context = chatContext();
+    if (!opt.silentUser) push({ role: 'user', text, context });
+    if (context.mode === 'policy_service') {
+      if (!can('policy', 'view')) return postAI({ text: '当前身份没有政策查询权限，请切回通用助手或联系管理员。' });
+      return answerHttp(text, context);
+    }
     const epoch = conversationEpoch;
     // 带明确指代的知识库追问走已打开面板的引用范围，不让“审签/材料”误触发其他应用。
     const scope = S.active === 'kb' && JK.services.kb?.followScope?.(text);
@@ -945,7 +1008,7 @@
     if (saved.route === 'home' && intent.route) return save(intent.route, intent.params);
     rememberPanel(saved);
   }
-  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: c.source || {} })); }
+  function citesOf(r) { return ((r && r.citations) || []).map((c, i) => ({ n: Number.isSafeInteger(c.n) && c.n > 0 ? c.n : i + 1, id: c.id || c.fileId, title: c.title || c.name, snippet: c.snippet, source: { ...(c.url ? { url: c.url } : {}), ...(c.source || {}) } })); }
   async function answer(text, scope) {
     if (!scope && H.mode() === 'http') return answerHttp(text);
     const thinking = postAI({ text: '…' }); const node = $$('#chatcol .msgs-in > .msg').pop();
@@ -967,11 +1030,13 @@
       finish({ q: text, text: (rep.content || '好的。').replace(/（演示环境[^）]*）/g, '').trim(), cites: (rep.citations || []).map((x, i) => ({ n: i + 1, id: x.fileId, title: x.name, snippet: x.snippet })), model: rep.model, routeNote: rep.routeNote, next: suggestFor(rep.intent) });
     } catch (e) { finish({ text: '抱歉，这个问题我暂时答不上来：' + (e.message || '出错了') }); }
   }
-  async function answerHttp(text) {
+  async function answerHttp(text, selectedContext = chatContext()) {
+    const context = { ...selectedContext };
     const c = ensureConv(text);
     const userId = S.me.id;
     const conversations = S.convs;
-    const message = postAI({ text: '正在生成回复…', q: text });
+    const message = postAI({ text: context.mode === 'policy_service' ? '正在查询政策依据…' : '正在生成回复…', q: text });
+    message.context = context;
     let receivedText = false;
     let streamed = false;
     let pending = pendingConversations.get(c);
@@ -1001,14 +1066,14 @@
         text: reply.content ?? (receivedText ? message.text : '回复已完成'),
         model: reply.model ?? message.model, routeNote: reply.routeNote ?? message.routeNote,
         cards: reply.cards ?? message.cards, cites: reply.citations ? citesOf(reply) : message.cites,
-        next: suggestFor(reply.intent),
+        next: context.mode === 'policy_service' ? [] : suggestFor(reply.intent),
       });
     }
 
     try {
       const cid = c.sid || await pending;
       if (userId !== S.me?.id || S.convs !== conversations) return;
-      const result = await API.chat.send(cid, { text, model: S.model, stream: true }, (type, data) => {
+      const result = await API.chat.send(cid, { text, model: S.model, stream: true, ...messageContext(context) }, (type, data) => {
         streamed = true;
         if (type === 'meta') {
           message.model = data.model;

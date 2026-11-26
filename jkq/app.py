@@ -61,6 +61,8 @@ def install_platform(app: FastAPI) -> None:
 
     apps_bridge.install(app, current_user, list_skills=list_skills, register_catalog=False)
     demo.install(app)
+    from .meeting_bridge import install as install_meeting
+    install_meeting(app)
     admin.install(app)
     if "document" in app.state.platform.data.apps:
         # 公文协作：定稿锁定的存储约束，以及禁止绕过核查的通用送审入口（#38、#41）。

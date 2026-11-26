@@ -17,6 +17,30 @@
     return form;
   };
   window.JKApi.meeting = {
+    workbenchList: () => H.get('/api/apps/meeting/workbench/meetings'),
+    workbenchCreate: b => H.post('/api/apps/meeting/workbench/meetings', b),
+    workbenchGet: (id, version, snapshot=false) => H.get('/api/apps/meeting/workbench/meetings/' + id, version ? {version,snapshot:snapshot?1:undefined} : undefined),
+    workbenchPatch: (id, b) => H.patch('/api/apps/meeting/workbench/meetings/' + id, b),
+    finalize: (id, b) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/finalize', b),
+    dispatch: (id, ids) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/dispatch', {ids}),
+    attachAudio: (id,version,file) => {const form=new FormData();form.append('baseVersion',String(version));form.append('file',file,file.name);return H.post('/api/apps/meeting/workbench/meetings/' + id + '/audio',form);},
+    restore: (id,b) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/restore',b),
+    supplement: (id,b) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/supplements',b),
+    reassign: (id,todo,b) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/todos/' + todo + '/reassign',b),
+    progress: (id, todo, b) => H.patch('/api/apps/meeting/workbench/meetings/' + id + '/todos/' + todo + '/progress', b),
+    backlinks: q => H.get('/api/apps/meeting/workbench/links',q),
+    linkRecord: (id,b) => H.post('/api/apps/meeting/workbench/meetings/' + id + '/links',b),
+    retryTranscription: id => H.post('/api/apps/meeting/workbench/meetings/' + id + '/retry-transcription',{}),
+    candidate: id => H.post('/api/apps/meeting/workbench/meetings/' + id + '/candidate', {}),
+    members: () => H.get('/api/apps/meeting/workbench/members'),
+    exportMinutes: async (id, version, snapshot=false) => {
+      if (H.mode('meeting') === 'mock') {
+        const {item, minutes} = await window.JKApi.meeting.workbenchGet(id, version, snapshot);
+        if (!window.JKWord) throw Error('Word 导出组件未加载');
+        return window.JKWord.export({ title: minutes.title, paragraphs: minutes.body.flatMap(p => [p.h, p.p, ...(p.sources || []).map(s => '依据 ' + s.id + '：' + s.quote)]), date: item.date }, {draft: item.minutesStatus !== '已定稿'});
+      }
+      return H.getFile('/api/apps/meeting/workbench/meetings/' + encodeURIComponent(id) + '/export' + (version ? '?version=' + encodeURIComponent(version) + (snapshot?'&snapshot=1':'') : ''), async response => ({filename:'会议纪要.docx',blob:await response.blob()}));
+    },
     /** → {items:MeetingSummary[], templates:MeetingTemplate[], hotwords:string[]} */
     list: () => H.get('/api/apps/meeting/meetings'),
     /** {title, type, participants[], file, size, source, duration?} → {item:Meeting}（上传 / 现场录音登记） */

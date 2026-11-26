@@ -2,11 +2,12 @@
 
 import logging
 from collections.abc import Callable
+from typing import Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from haiknow_sdk import User
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 from starlette.types import Send
@@ -30,6 +31,18 @@ class MessageBody(BaseModel):
     files: list[dict] = Field(default_factory=list)
     classification: Utf8Text | None = None
     stream: bool = False
+    mode: Literal["general", "policy_service"] = "general"
+    enterpriseId: Utf8Text | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def valid_context(self):
+        if self.enterpriseId is not None:
+            self.enterpriseId = self.enterpriseId.strip()
+            if not self.enterpriseId:
+                raise ValueError("企业编号不能为空")
+        if self.mode == "policy_service" and self.app not in (None, "policy"):
+            raise ValueError("政策岗位只能使用政策应用上下文")
+        return self
 
     @field_validator("text")
     @classmethod
@@ -122,11 +135,15 @@ def install(
 
     @router.post("/{cid}/messages")
     async def messages(cid: str, body: MessageBody, request: Request, user=Depends(current_user)):
+        if body.mode == "policy_service" and "view" not in app.state.platform.rbac.actions(user, "policy"):
+            return JSONResponse({"error": {"code": "FORBIDDEN", "message": "无权使用政策服务岗位",
+                                           "details": {"app": "policy", "need": "view"}}}, status_code=403)
         app_classes = {app_id: entry.manifest.get("dataClass") for app_id, entry in app.state.platform.apps.copy().items()}
         input_class = classification if body.classification is None else strictest(classification, body.classification)
         pending = await run_in_threadpool(
             start_turn, store, user.id, cid, body.text, body.files,
             app=body.app, app_classes=app_classes, classification=input_class,
+            mode=body.mode, enterprise_id=body.enterpriseId,
         )
 
         async def generate_reply(on_event=None, on_meta=None):
@@ -135,6 +152,7 @@ def install(
                 gateway=gateway if gateway is not None else getattr(app.state, "chat_gateway", None),
                 bridge=bridge if bridge is not None else getattr(app.state, "apps_bridge", None),
                 classification=pending.user["classification"], on_event=on_event, on_meta=on_meta,
+                mode=body.mode, enterprise_id=body.enterpriseId,
             )
 
         async def complete(reply):

@@ -98,7 +98,8 @@
     const app = appOf(p); if (!app) return;
     const read = method === 'GET' || /\/(search|match|calc|compare)$/.test(p) ||
       (X.hasHttpPrincipal() && method === 'POST' && p === '/api/v1/kb/ask');
-    const act = read ? 'view' : 'operate';
+    const meetingProgress = method === 'PATCH' && /^\/api\/apps\/meeting\/workbench\/meetings\/[^/]+\/todos\/[^/]+\/progress$/.test(p);
+    const act = read || meetingProgress ? 'view' : (method === 'POST' && /^\/api\/apps\/document\/workbench\/reviews\/[^/]+$/.test(p) ? 'approve' : 'operate');
     if (!X.can(app, act)) X.err(403, 'FORBIDDEN', `你的角色没有「${APP_NAMES[app]}」的${act === 'view' ? '查看' : '操作'}权限`);
     // 这类跨模块效果不可只凭源模块的授权执行，尤其不能把模拟结果当成线上回执。
     if (X.hasHttpPrincipal()) {

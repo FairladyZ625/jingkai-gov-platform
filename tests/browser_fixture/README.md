@@ -35,3 +35,4 @@
 - file 模式不支持的事实不能用协议桩冒充：真实服务器版本检查、跨会话收件箱、密码校验和正式角色策略，要看独立的进程内 TestClient 回归；真实服务/线上未测。字体加载、焦点、窄屏、遮挡只有父级实际打开截图后才能下结论。
 - 本包冻结时，合作方可搜索授权条目，但统一 mock 鉴权可能在 scoped ask 进入引擎前就返回 403；记录为“请求被拒、未泄露”，不是“合作方问答质量通过”。探针统计的是页面经 mock 适配器发出的请求及耗时，不代表远程模型延迟；首次无权预加载若出现 403 应如实记录。
 - 仓库根运行 `node tests/browser_fixture/build.cjs /绝对路径/t38-browser-新目录名`，再 `node tests/browser_fixture/check.cjs /绝对路径/t38-browser-新目录名/browser-fixture`。不需 npm 安装。构建从当时 HEAD 的 Git blobs 读取 v4（拒绝软链接），测试脚本/说明来自本目录；不打包工作树未提交的生产逻辑。归档仅含修饰后的实际入口、声明的本地资源、夹具、本文及哈希清单。
+- `check.cjs` 在 Node VM 中加载全部包内脚本，支持窗口事件注册，但不派发导航事件或 `DOMContentLoaded`，不验证工作台挂载和布局。工作台的真实页面交互由 `web/tests/contract/workbench-browser.cjs` 验证；提交前运行归档检查时，须核对输出中的 revision，不能把旧 HEAD 的结果当作未提交生产改动的证据。

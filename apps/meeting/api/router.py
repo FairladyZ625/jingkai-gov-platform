@@ -38,3 +38,6 @@ from .workflow import router as workflow_router  # noqa: E402
 router.include_router(meetings_router)
 # §4.3 会议纪要、待办派发、企业诉求关联（#37）
 router.include_router(workflow_router)
+
+from .workbench import router as workbench_router
+router.include_router(workbench_router)

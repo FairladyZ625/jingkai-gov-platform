@@ -10,7 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, Request
 from haiknow_sdk import DataError, app_context
 
-from . import ledger
+from . import ledger, requests
 from .company import Duplicate, public
 from .ledger_store import BEIJING, TYPE, document, item, names_by_id, original, snapshots, write
 from .visit_extraction import CURRENCY, FIELDS, MOCK_EXTRACTOR, candidates, normalize, visible_text
@@ -231,8 +231,8 @@ def visit_detail(company_id, ctx, *, summary=False):
         return result
     result["visits"].extend(ledger.related(ctx, "visit", company_id))
     result["proposals"].extend(p for p in ledger.related(ctx, "proposal", company_id) if p.get("status") == "pending")
-    for kind in ("issue", "file"):
-        result[f"{kind}s"] = ledger.related(ctx, kind, company_id)
+    result["issues"] = requests.listing(entId=company_id, ctx=ctx)["items"]
+    result["files"] = ledger.related(ctx, "file", company_id)
     for version in range(company["version"], 1, -1):
         change = document(ctx, company_id, version)["data"].get("change")
         if change:

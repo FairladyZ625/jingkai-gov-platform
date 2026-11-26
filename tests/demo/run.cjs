@@ -155,7 +155,7 @@ async function company(page, id) {
 
 function matchReply(e) {
   const short = e.short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(short + '：(?:核对 \\d+ 项事项，)?\\d+ 项可进一步核对');
+  return new RegExp(short + '：从已收录的 \\d+ 项政策支持中筛选，\\d+ 项可进一步核对');
 }
 
 async function matchCompany(page, e) {
@@ -191,9 +191,10 @@ async function switchConversation(page, row) {
 async function firstDocument(page, row) {
   const e = await company(page, 'E002');
   await matchCompany(page, e);
-  await say(page, '给' + e.short + '生成政策告知单', /告知单已生成（/);
+  // 保留旧输入别名，确认更名后仍能生成并转入同一企业的公文。
+  await say(page, '给' + e.short + '生成政策告知单', /政策参考清单已生成（/);
   const notice = await page.locator('.pview.on [data-op="policy.notice-text"]').inputValue();
-  assert.ok(notice.startsWith(e.name + '：'), '告知单所用企业与 ' + e.id + ' 不符');
+  assert.ok(notice.startsWith('政策参考清单\n' + e.name + '：\n'), '政策参考清单所用企业与 ' + e.id + ' 不符');
   const firstLine = notice.split('\n').find(line => line.startsWith('1. '));
   assert.ok(firstLine, '告知单缺少第一项政策');
 
