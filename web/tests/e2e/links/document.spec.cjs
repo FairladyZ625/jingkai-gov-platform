@@ -134,7 +134,9 @@ test('公文真实保存、润色预览、版本对比、批注和异常回读',
     await expect(paragraph).toHaveText(value);
   }
 
-  await page.getByRole('button', { name: '润色', exact: true }).click();
+  const polishTab = page.locator('[data-op="document.panel-polish"]');
+  await expect(polishTab).toHaveText('规则润色');
+  await polishTab.click();
   const previewed = watch(page, 'POST', endpoint + '/polish');
   await page.getByRole('button', { name: '预览润色' }).click();
   const preview = await previewed;

@@ -7,6 +7,49 @@ async function setup() {
   const login = name => c.JKHttp.post('/api/v1/auth/login', c.JK_CONFIG.demoAccounts.find(a => a.username === name));
   await login('admin'); return {c, api:c.JKApi.document, login};
 }
+async function reviewable(api) {
+  const template = (await api.templates()).items.find(t => t.id === 'T06');
+  return (await api.draft({templateId: template.id,
+    inputs: Object.fromEntries(template.inputs.map(([key, , value]) => [key, value]))})).item;
+}
+for (const assignee of ['李阳', 'u-liyang']) test(`离线送审接受${assignee}，保留姓名协议并绑定成员编号`, async () => {
+  const {api, c, login} = await setup();
+  await login('wangmin');
+  const draft = await reviewable(api);
+  const {review} = await api.submit(draft.id, {assignee, version: draft.versions.at(-1).v});
+  assert.equal(review.assignee, '李阳');
+  assert.equal(review.assigneeId, 'u-liyang');
+  const stored = c.JKAPI.state().inbox.find(r => r.id === review.id);
+  assert.equal(stored.assignee, '李阳');
+  assert.equal(stored.assigneeId, 'u-liyang');
+  assert.equal((await api.workspace()).reviews.find(r => r.id === review.id).assignee, 'u-liyang');
+
+  // 展示姓名可以修改或同名，但新审签单的办理身份不能随之改变。
+  const users = c.JKAPI.state().users;
+  users.find(u => u.username === 'admin').name = '李阳';
+  users.find(u => u.id === 'u-liyang').name = '李阳（更新姓名）';
+  await login('admin');
+  assert.ok(!(await api.workspace()).reviews.some(r => r.id === review.id));
+  await assert.rejects(api.review(review.id, {version: review.version, decision: 'approve'}), e => e.status === 403);
+  await assert.rejects(c.JKHttp.post(`/api/v1/reviews/${review.id}/decisions`, {version: review.version, decision: 'approve'}), e => e.status === 403);
+  await login('liyang');
+  assert.equal((await api.workspace()).reviews.find(r => r.id === review.id).assignee, 'u-liyang');
+  await api.review(review.id, {version: review.version, decision: 'approve'});
+  assert.equal((await api.get(draft.id)).item.status, '已定稿');
+});
+for (const assignee of ['李阳', 'u-liyang']) test(`兼容既存仅含${assignee}的离线审签单`, async () => {
+  const {api, c, login} = await setup();
+  await login('wangmin');
+  const draft = await reviewable(api);
+  const {review} = await api.submit(draft.id, {assignee});
+  const stored = c.JKAPI.state().inbox.find(r => r.id === review.id);
+  delete stored.assigneeId;
+  stored.assignee = assignee;
+  await login('liyang');
+  assert.equal((await api.workspace()).reviews.find(r => r.id === review.id).assignee, 'u-liyang');
+  await api.review(review.id, {version: review.version, decision: 'approve'});
+  assert.equal((await api.get(draft.id)).item.status, '已定稿');
+});
 test('工作台读取同一文稿、真实授权成员并拒绝过期保存', async () => {
   const {api} = await setup();
   const d = (await api.draft({templateId:'T06',inputs:{orig:'公开资料通知',oldEnd:'2026-11-01',newEnd:'2026-11-30'}})).item;

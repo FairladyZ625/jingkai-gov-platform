@@ -90,7 +90,7 @@
       const a=b.dataset.action;if(!a)return;
       if(a==='new'){JKWorkbench.hide();JKShell.openApp('document','new');return;}
       if(a==='reload'){run(()=>{},'',true);return;}
-      if(a==='source'){JKWorkbench.open('meeting',{recordId:`${draft.source.id}~minutes~${draft.source.version}`});return;}
+      if(a==='source'){if(!saved())return;JKWorkbench.open('meeting',{recordId:`${draft.source.id}~minutes~${draft.source.version}`});return;}
       if(a==='download'){run(async()=>{const r=await api.exportWord(id);if(live())JK.download(r.filename,r.blob);},'',false);return;}
       if(a==='paragraph'&&editable()){const list=el.querySelector('.dw-paragraphs'),n=list.children.length+1;list.insertAdjacentHTML('beforeend',`<label class="dw-field">第 ${n} 段<textarea class="input" name="para" rows="3"></textarea></label>`);list.lastElementChild.querySelector('textarea').focus();dirty=true;return;}
       if(!saved())return;
