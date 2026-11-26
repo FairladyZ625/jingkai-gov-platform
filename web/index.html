@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="assets/workbench.css">
 <link rel="stylesheet" href="workbenches/enterprise.css">
 <link rel="stylesheet" href="workbenches/document.css">
+<link rel="stylesheet" href="workbenches/meeting.css">
 </head>
 <body>
 <div id="root">
@@ -53,6 +54,7 @@
 <script src="mock/mock-api.js"></script>
 <script src="mock/auth.js"></script>
 <script src="mock/platform-ext.js"></script>
+<script src="mock/meeting-workbench.js"></script>
 <!-- 3b. 接口适配层（界面只调这里；config/app.config.js 的 api.mode 切换 mock / http） -->
 <script src="api/http.js"></script>
 <!-- 平台接口适配；各应用的 mock/<id>.js 与 api/<id>.js 由 config/apps.js 决定是否加载 -->
@@ -82,6 +84,7 @@
 <script src="assets/workbench.js"></script>
 <script src="workbenches/enterprise.js"></script>
 <script src="workbenches/document.js"></script>
+<script src="workbenches/meeting.js"></script>
 <script src="assets/shell.js"></script>
 <script src="assets/demo.js"></script>
 </body>
